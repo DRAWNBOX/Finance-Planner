@@ -1,0 +1,4 @@
+1. Create a 4% rule calculator with gui. Include all features included in the screenshot
+2. Add Career income planning functionality and estimation
+3. Be able to add in events like buying or selling a house, job changes, or breaks, spending large amounts of money, etc.
+4. Add Docker packaging and replace the local placeholder historical series with sourced web-backed historical market data.

@@ -1,0 +1,306 @@
+:root {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #203040;
+  background: #edf2f8;
+  line-height: 1.4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.hero {
+  background: linear-gradient(90deg, #2752d6, #2a67e5);
+  color: #fff;
+  padding: 0.9rem 1.5rem;
+  font-size: 0.95rem;
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: minmax(330px, 380px) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+  align-items: start;
+}
+
+.sidebar {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.panel,
+.results-card,
+.footnote {
+  background: #fff;
+  border-radius: 0.9rem;
+  box-shadow: 0 10px 30px rgba(31, 51, 87, 0.08);
+  overflow: hidden;
+}
+
+.panel-title {
+  background: #39465b;
+  color: #fff;
+  font-weight: 700;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.95rem;
+}
+
+.panel-body {
+  padding: 0.85rem 0.9rem;
+}
+
+.control-row {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.8rem;
+}
+
+.control-inputs {
+  display: grid;
+  grid-template-columns: 1fr 92px;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+input[type="range"] {
+  accent-color: #19a6c1;
+}
+
+input[type="number"],
+select {
+  width: 100%;
+  border: 1px solid #d0d9e6;
+  border-radius: 0.45rem;
+  padding: 0.45rem 0.55rem;
+  background: #fff;
+}
+
+.radio-row {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #3b4757;
+}
+
+.checkbox-row input {
+  margin: 0;
+}
+
+.add-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 1rem;
+}
+
+.cashflow-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.9rem;
+}
+
+.cashflow-editor {
+  border: 1px solid #dde5ef;
+  border-radius: 0.8rem;
+  padding: 0.7rem;
+  background: #f8fbff;
+}
+
+.cashflow-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+
+.cashflow-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.cashflow-grid label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.text-button,
+.secondary-button,
+.tab {
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.text-button {
+  color: #295fd3;
+}
+
+.results {
+  display: grid;
+  gap: 1rem;
+}
+
+.results-card {
+  padding: 0 0 1rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.75rem 0.85rem 0;
+}
+
+.tab {
+  padding: 0.55rem 0.7rem;
+  color: #657488;
+  border-bottom: 2px solid transparent;
+}
+
+.tab.active {
+  color: #2b5fe2;
+  border-color: #2b5fe2;
+}
+
+.chart-shell {
+  padding: 0.6rem 0.5rem 0 0.2rem;
+}
+
+.chart-svg {
+  width: 100%;
+  height: auto;
+}
+
+.chart-grid-line {
+  stroke: #d5ddea;
+  stroke-width: 1;
+}
+
+.chart-grid-line.faint {
+  opacity: 0.45;
+}
+
+.chart-line {
+  fill: none;
+  stroke: #42a4ed;
+  stroke-width: 3;
+}
+
+.chart-area {
+  fill: rgba(66, 164, 237, 0.33);
+}
+
+.chart-point {
+  fill: #42a4ed;
+}
+
+.chart-axis-label,
+.chart-title {
+  font-size: 12px;
+  fill: #5a6779;
+}
+
+.table-wrap {
+  padding: 1rem;
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.6rem;
+  border-bottom: 1px solid #e3e9f2;
+  text-align: right;
+  white-space: nowrap;
+}
+
+th:first-child,
+td:first-child {
+  text-align: left;
+}
+
+.summary {
+  margin: 0 1rem;
+  border-radius: 0.8rem;
+  padding: 1rem 1.1rem;
+}
+
+.summary.success {
+  background: #edf9ee;
+  border: 1px solid #c8e7cf;
+  color: #215433;
+}
+
+.summary.warning {
+  background: #fff3ea;
+  border: 1px solid #f1d2b7;
+  color: #8b4d1f;
+}
+
+.summary p {
+  margin: 0 0 0.35rem;
+}
+
+.subtle,
+.allocation-value {
+  color: #647387;
+  font-size: 0.92rem;
+}
+
+.footnote {
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.secondary-button {
+  background: #2b5fe2;
+  color: #fff;
+  padding: 0.65rem 0.9rem;
+  border-radius: 0.65rem;
+}
+
+@media (max-width: 1080px) {
+  .app-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .add-grid,
+  .cashflow-grid,
+  .control-inputs,
+  .footnote {
+    grid-template-columns: 1fr;
+  }
+
+  .footnote {
+    display: grid;
+  }
+}
