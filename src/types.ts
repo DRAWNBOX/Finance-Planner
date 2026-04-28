@@ -46,6 +46,9 @@ export interface CareerEntry {
   label: string;
   enabled: boolean;
   usePreviousCareerStartAge: boolean;
+  useBirthdayBasedStartAge?: boolean;
+  startYearMonth?: string;
+  endYearMonth?: string;
   startAge: number;
   endAge: number;
   startingSalary: number;
@@ -105,29 +108,118 @@ export interface LargePurchase {
   id: string;
   label: string;
   enabled: boolean;
+  yearMonth: string;
   age: number;
   amount: number;
   sourceAmounts: SavingsBalances;
+}
+
+export type LongTermPurchaseEndMode = 'duration' | 'endDate';
+
+export interface LongTermPurchase {
+  id: string;
+  label: string;
+  enabled: boolean;
+  startYearMonth: string;
+  endMode: LongTermPurchaseEndMode;
+  durationMonths: number;
+  endYearMonth: string;
+  monthlyAmount: number;
+  sourceAmounts: SavingsBalances;
+}
+
+export type LoanPaymentSourceAccount = keyof SavingsBalances | 'income';
+
+export interface Loan {
+  id: string;
+  label: string;
+  enabled: boolean;
+  startYearMonth: string;
+  originalAmount: number;
+  currentBalance: number;
+  annualInterestRate: number;
+  minimumMonthlyPayment: number;
+  extraMonthlyPayment: number;
+  paymentSourceAccount: LoanPaymentSourceAccount;
 }
 
 export interface SavingsTrackerConfig {
   annualInterestRates: SavingsBalances;
 }
 
+export interface NetWorthCustomAccount {
+  id: string;
+  label: string;
+  balance: number;
+}
+
+export type NetWorthImportFileType = 'csv' | 'pdf' | 'unknown';
+export type NetWorthImportStatus = 'ready' | 'needs_review' | 'error' | 'applied';
+
+export interface NetWorthImportSourceAccount {
+  id: string;
+  label: string;
+  balance: number;
+}
+
+export interface BankImportParseResult {
+  detectedAccountId: string | null;
+  detectedBalance: number | null;
+  statementDate: string;
+  confidence: number;
+  status: Exclude<NetWorthImportStatus, 'applied'>;
+  parseNotes: string[];
+  previewText: string;
+}
+
+export interface NetWorthImportRecord {
+  id: string;
+  fileName: string;
+  fileType: NetWorthImportFileType;
+  previewText: string;
+  detectedAccountId: string | null;
+  detectedBalance: number | null;
+  statementDate: string;
+  selectedAccountId: string | null;
+  status: NetWorthImportStatus;
+  confidence: number;
+  parseNotes: string[];
+  applied: boolean;
+  appliedAt: string;
+}
+
+export interface NetWorthHistoryAccountSnapshot {
+  id: string;
+  label: string;
+  balance: number;
+}
+
+export interface NetWorthHistoryEntry {
+  id: string;
+  date: string;
+  accounts: NetWorthHistoryAccountSnapshot[];
+  totalNetWorth: number;
+}
+
 export interface NetWorthConfig {
   accountBalances: SavingsBalances;
+  customAccounts?: NetWorthCustomAccount[];
+  imports?: NetWorthImportRecord[];
+  history?: NetWorthHistoryEntry[];
   asOfDate: string;
 }
 
 export interface WithdrawalPlan {
   mode: WithdrawalMode;
   firstYearAmount: number;
+  minimumYearlyWithdrawal: number;
   firstYearAccountWithdrawals: SavingsBalances;
   firstYearAccountUseFourPercent: SavingsBalanceFlags;
   inflationAdjusted: boolean;
 }
 
 export interface ManualReturnModel {
+  inflationEnabled: boolean;
   inflationRate: number;
   preRetirementEquityReturn: number;
   postRetirementEquityReturn: number;
@@ -184,6 +276,8 @@ export interface Scenario {
   returnMode: ReturnMode;
   manualReturns: ManualReturnModel;
   largePurchases: LargePurchase[];
+  longTermPurchases: LongTermPurchase[];
+  loans: Loan[];
   cashflowItems: CashflowItem[];
   lifeEvents: LifeEvent[];
 }
@@ -191,6 +285,8 @@ export interface Scenario {
 export interface ProjectionYear {
   age: number;
   calendarYear: number;
+  isBaselineNow: boolean;
+  periodMonths: number;
   startBalance: number;
   salary: number;
   careerContribution: number;
@@ -217,6 +313,10 @@ export interface ProjectionResult {
   historicalWindowLabel?: string;
   careerEndSavingsBalances: Record<string, SavingsBalances>;
   firstRetirementYearPlannedAccountWithdrawals: SavingsBalances;
+  purchaseFundingShortfalls: Record<string, number>;
+  purchaseFirstAffordableAge: Record<string, number | null>;
+  purchasePostPurchaseDisplayBalances: Record<string, SavingsBalances | null>;
+  longTermPurchaseFundingShortfalls: Record<string, number>;
 }
 
 export interface HistoricalYear {

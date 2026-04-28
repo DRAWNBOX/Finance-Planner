@@ -62,6 +62,14 @@ select {
   align-items: start;
 }
 
+.app-grid.full-width-content {
+  grid-template-columns: 1fr;
+}
+
+.app-grid.full-width-content .results {
+  display: none;
+}
+
 .sidebar {
   display: grid;
   grid-template-columns: 1fr;
@@ -218,6 +226,45 @@ select {
   gap: 0.3rem;
 }
 
+.year-month-input {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 0.45rem;
+}
+
+.year-input-with-arrows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  gap: 0.25rem;
+  align-items: stretch;
+}
+
+.year-input-with-arrows input {
+  min-width: 0;
+}
+
+.year-stepper {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 0.1rem;
+}
+
+.year-stepper button {
+  border: 1px solid #d0d9e6;
+  border-radius: 0.3rem;
+  background: #f8fbff;
+  color: #425166;
+  padding: 0;
+  line-height: 1;
+  cursor: pointer;
+  font-size: 0.62rem;
+}
+
+.year-stepper button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .full-span {
   grid-column: 1 / -1;
   display: grid;
@@ -264,6 +311,12 @@ select {
   font-weight: 700;
 }
 
+.career-tab.retirement-item.active {
+  background: #2b5fe2;
+  color: #fff;
+  border-color: #2b5fe2;
+}
+
 .career-actions {
   display: flex;
   justify-content: flex-end;
@@ -279,6 +332,12 @@ select {
 .career-grid label {
   display: grid;
   gap: 0.28rem;
+}
+
+.panel-divider {
+  height: 1px;
+  background: #dde5ef;
+  margin: 0.7rem 0;
 }
 
 .career-savings-grid {
@@ -353,6 +412,62 @@ select {
 
 .career-summary p {
   margin: 0;
+}
+
+.networth-import-actions {
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.networth-import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.networth-import-item {
+  border: 1px solid #dbe4f2;
+  border-radius: 0.6rem;
+  padding: 0.7rem;
+  background: #f9fbff;
+}
+
+.networth-import-item-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  align-items: end;
+  margin-bottom: 0.45rem;
+}
+
+.networth-import-item-row label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.networth-file-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 13rem;
+  overflow: auto;
+  background: #f1f5fb;
+  padding: 0.55rem;
+  border-radius: 0.4rem;
+}
+
+.networth-history-header h3 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+  color: #2a3b57;
+}
+
+.history-range-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  margin-bottom: 0.45rem;
 }
 
 .career-enable {
@@ -523,6 +638,64 @@ td:first-child {
   text-align: left;
 }
 
+.purchase-row.invalid td {
+  background: #fdecec;
+  color: #9f2f2f;
+}
+
+.purchases-table th {
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
+.purchases-table td {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.purchases-table td input[type="text"] {
+  min-width: 8.5ch;
+  width: 100%;
+  text-align: right;
+  box-sizing: border-box;
+}
+
+.purchases-table td input[type="number"] {
+  width: 6ch;
+  min-width: 6ch;
+  max-width: 6ch;
+  text-align: right;
+  box-sizing: content-box;
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.purchases-table td input[type="number"]::-webkit-outer-spin-button,
+.purchases-table td input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.purchases-table .year-month-input input,
+.purchases-table .year-month-input select {
+  min-width: 6.5ch;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.purchases-legend {
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
 .summary {
   margin: 0 0.8rem;
   border-radius: 0.7rem;
@@ -614,6 +787,10 @@ td:first-child {
   .career-savings-row {
     border-top: 1px solid #e6edf6;
     padding: 0.35rem 0;
+  }
+
+  .networth-import-item-row {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -51,7 +51,16 @@ export const SavingsStackedChart = ({ years }: SavingsStackedChartProps) => {
       visible.reduce((sum, series) => sum + year.savingsBalances[series.key], 0)
     );
     const maxValue = Math.max(...totals, 1);
-    const yTicks = Array.from({ length: 5 }, (_, index) => (maxValue / 4) * index).reverse();
+    const yStep =
+      maxValue <= 1_000_000
+        ? 50_000
+        : maxValue <= 2_000_000
+          ? 100_000
+          : maxValue <= 10_000_000
+            ? 500_000
+            : 1_000_000;
+    const roundedMaxValue = Math.max(yStep, Math.ceil(maxValue / yStep) * yStep);
+    const yTicks = Array.from({ length: Math.floor(roundedMaxValue / yStep) + 1 }, (_, index) => index * yStep).reverse();
 
     let running = new Array(years.length).fill(0);
     const layers = visible.map((series) => {
@@ -66,7 +75,7 @@ export const SavingsStackedChart = ({ years }: SavingsStackedChartProps) => {
       };
     });
 
-    return { layers, maxValue, yTicks };
+    return { layers, maxValue: roundedMaxValue, yTicks };
   }, [visibleKeys, years]);
 
   if (years.length === 0) {

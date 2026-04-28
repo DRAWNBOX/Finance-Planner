@@ -1,4 +1,5 @@
-import type { CareerEntry, CashflowCategory, CashflowItem, LargePurchase, LifeEvent, LifeEventType, Scenario } from './types';
+import type { CareerEntry, CashflowCategory, CashflowItem, LargePurchase, Loan, LongTermPurchase, LifeEvent, LifeEventType, Scenario } from './types';
+import { formatYearMonthFromAge } from './utils/ageDate';
 
 const makeItemId = (category: CashflowCategory) => `${category}-default`;
 
@@ -142,6 +143,8 @@ const makeEventId = (type: LifeEventType) => `${type}-default`;
 
 const makeCareerId = (index: number) => `career-${index + 1}-default`;
 const makePurchaseId = () => `purchase-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+const makeLongTermPurchaseId = () => `long-term-purchase-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+const makeLoanId = () => `loan-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 
 export const createDefaultCareerEntry = (
   index: number,
@@ -152,6 +155,9 @@ export const createDefaultCareerEntry = (
   label: index === 0 ? 'Current Career' : `Career ${index + 1}`,
   enabled: true,
   usePreviousCareerStartAge: false,
+  useBirthdayBasedStartAge: false,
+  startYearMonth: '',
+  endYearMonth: '',
   startAge: index === 0 ? currentAge : currentAge + index * 5,
   endAge: index === 0 ? retirementAge : Math.min(retirementAge, currentAge + index * 5 + 4),
   startingSalary: index === 0 ? 98000 : 110000 + index * 12000,
@@ -182,10 +188,11 @@ export const createDefaultCareerEntry = (
   retirement401kMonthlyWithdrawal: 0
 });
 
-export const createDefaultLargePurchase = (currentAge: number): LargePurchase => ({
+export const createDefaultLargePurchase = (currentAge: number, dateOfBirth: string): LargePurchase => ({
   id: makePurchaseId(),
   label: 'Large Purchase',
   enabled: true,
+  yearMonth: formatYearMonthFromAge(currentAge + 1, dateOfBirth, currentAge),
   age: currentAge + 1,
   amount: 10000,
   sourceAmounts: {
@@ -194,6 +201,39 @@ export const createDefaultLargePurchase = (currentAge: number): LargePurchase =>
     investments: 10000,
     retirement401k: 0
   }
+});
+
+export const createDefaultLongTermPurchase = (
+  currentAge: number,
+  dateOfBirth: string
+): LongTermPurchase => ({
+  id: makeLongTermPurchaseId(),
+  label: 'Long-Term Purchase',
+  enabled: true,
+  startYearMonth: formatYearMonthFromAge(currentAge + 1, dateOfBirth, currentAge),
+  endMode: 'duration',
+  durationMonths: 12,
+  endYearMonth: formatYearMonthFromAge(currentAge + 2, dateOfBirth, currentAge),
+  monthlyAmount: 500,
+  sourceAmounts: {
+    emergencyFund: 0,
+    hsa: 0,
+    investments: 500,
+    retirement401k: 0
+  }
+});
+
+export const createDefaultLoan = (currentAge: number, dateOfBirth: string): Loan => ({
+  id: makeLoanId(),
+  label: 'Loan',
+  enabled: true,
+  startYearMonth: formatYearMonthFromAge(currentAge, dateOfBirth, currentAge),
+  originalAmount: 25000,
+  currentBalance: 25000,
+  annualInterestRate: 6.5,
+  minimumMonthlyPayment: 350,
+  extraMonthlyPayment: 0,
+  paymentSourceAccount: 'investments'
 });
 
 export const createDefaultLifeEvent = (
@@ -349,6 +389,9 @@ export const defaultScenario: Scenario = {
       investments: 0,
       retirement401k: 0
     },
+    customAccounts: [],
+    imports: [],
+    history: [],
     asOfDate: ''
   },
   futureRetirement: {
@@ -359,6 +402,7 @@ export const defaultScenario: Scenario = {
   withdrawal: {
     mode: 'specified',
     firstYearAmount: 40000,
+    minimumYearlyWithdrawal: 0,
     firstYearAccountWithdrawals: {
       emergencyFund: 0,
       hsa: 0,
@@ -375,12 +419,15 @@ export const defaultScenario: Scenario = {
   },
   returnMode: 'manual',
   manualReturns: {
+    inflationEnabled: true,
     inflationRate: 2.9,
     preRetirementEquityReturn: 5,
     postRetirementEquityReturn: 5,
     fixedIncomeReturn: 2.9
   },
   largePurchases: [],
+  longTermPurchases: [],
+  loans: [],
   cashflowItems: [],
   lifeEvents: []
 };

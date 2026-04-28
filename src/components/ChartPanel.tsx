@@ -16,6 +16,15 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
   const values = years.map((year) => year.endBalance);
   const maxValue = Math.max(...values, 1);
   const minValue = 0;
+  const yStep =
+    maxValue <= 1_000_000
+      ? 50_000
+      : maxValue <= 2_000_000
+        ? 100_000
+        : maxValue <= 10_000_000
+          ? 500_000
+          : 1_000_000;
+  const roundedMaxValue = Math.max(yStep, Math.ceil(maxValue / yStep) * yStep);
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
 
@@ -23,7 +32,7 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
     const year = years[index];
     const x = padding.left + (index / Math.max(years.length - 1, 1)) * plotWidth;
     const y =
-      padding.top + plotHeight - ((year.endBalance - minValue) / Math.max(maxValue - minValue, 1)) * plotHeight;
+      padding.top + plotHeight - ((year.endBalance - minValue) / Math.max(roundedMaxValue - minValue, 1)) * plotHeight;
 
     return { x, y };
   };
@@ -37,7 +46,7 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
   const areaPath = `${linePath} L ${pointFor(years.length - 1).x} ${height - padding.bottom} L ${pointFor(0).x} ${
     height - padding.bottom
   } Z`;
-  const yTicks = Array.from({ length: 5 }, (_, index) => minValue + ((maxValue - minValue) / 4) * index).reverse();
+  const yTicks = Array.from({ length: Math.floor(roundedMaxValue / yStep) + 1 }, (_, index) => index * yStep).reverse();
   const xTickIndexes = years
     .map((_, index) => index)
     .filter((index) => {
@@ -52,7 +61,7 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
     <div className="chart-shell">
       <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Portfolio value over time">
         {yTicks.map((tick) => {
-          const y = padding.top + plotHeight - ((tick - minValue) / Math.max(maxValue - minValue, 1)) * plotHeight;
+          const y = padding.top + plotHeight - ((tick - minValue) / Math.max(roundedMaxValue - minValue, 1)) * plotHeight;
 
           return (
             <g key={tick}>

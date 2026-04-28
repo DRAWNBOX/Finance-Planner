@@ -1,9 +1,14 @@
 import { BufferedNumberInput } from './BufferedNumberInput';
 import type { LifeEvent } from '../types';
+import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
+import { YearMonthInput } from './YearMonthInput';
 
 interface LifeEventEditorProps {
   event: LifeEvent;
   retirementEndAge: number;
+  dateOfBirth: string;
+  currentAge: number;
+  inflationControlsDisabled: boolean;
   onChange: (next: LifeEvent) => void;
   onRemove: (id: string) => void;
 }
@@ -14,7 +19,15 @@ const numberFormat = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0
 });
 
-export const LifeEventEditor = ({ event, retirementEndAge, onChange, onRemove }: LifeEventEditorProps) => {
+export const LifeEventEditor = ({
+  event,
+  retirementEndAge,
+  dateOfBirth,
+  currentAge,
+  inflationControlsDisabled,
+  onChange,
+  onRemove
+}: LifeEventEditorProps) => {
   const isRecurring = event.cadence === 'recurring';
   const isJobChange = event.type === 'job_change';
   const isBreak = event.type === 'career_break';
@@ -37,11 +50,55 @@ export const LifeEventEditor = ({ event, retirementEndAge, onChange, onRemove }:
           <span>Start Age</span>
           <BufferedNumberInput value={event.startAge} min={18} max={retirementEndAge} onCommit={(next) => onChange({ ...event, startAge: next })} />
         </label>
+        <label>
+          <span>Start (Year-Month)</span>
+          <YearMonthInput
+            label="Start"
+            value={formatYearMonthFromAge(event.startAge, dateOfBirth, currentAge)}
+            onChange={(nextValue) => {
+              const derivedAge = ageFromYearMonth(nextValue, dateOfBirth, currentAge, 18, retirementEndAge);
+
+              if (derivedAge === null) {
+                return;
+              }
+
+              onChange({
+                ...event,
+                startAge: derivedAge,
+                endAge: isRecurring ? Math.max(event.endAge, derivedAge) : derivedAge
+              });
+            }}
+          />
+        </label>
         {isRecurring ? (
-          <label>
-            <span>End Age</span>
-            <BufferedNumberInput value={event.endAge} min={event.startAge} max={retirementEndAge} onCommit={(next) => onChange({ ...event, endAge: next })} />
-          </label>
+          <>
+            <label>
+              <span>End Age</span>
+              <BufferedNumberInput value={event.endAge} min={event.startAge} max={retirementEndAge} onCommit={(next) => onChange({ ...event, endAge: next })} />
+            </label>
+            <label>
+              <span>End (Year-Month)</span>
+              <YearMonthInput
+                label="End"
+                value={formatYearMonthFromAge(event.endAge, dateOfBirth, currentAge)}
+                onChange={(nextValue) => {
+                  const derivedAge = ageFromYearMonth(
+                    nextValue,
+                    dateOfBirth,
+                    currentAge,
+                    event.startAge,
+                    retirementEndAge
+                  );
+
+                  if (derivedAge === null) {
+                    return;
+                  }
+
+                  onChange({ ...event, endAge: derivedAge });
+                }}
+              />
+            </label>
+          </>
         ) : null}
         {isCashflowStyle ? (
           <label>
@@ -72,6 +129,7 @@ export const LifeEventEditor = ({ event, retirementEndAge, onChange, onRemove }:
             <input
               type="checkbox"
               checked={event.inflationAdjusted}
+              disabled={inflationControlsDisabled}
               onChange={(e) => onChange({ ...event, inflationAdjusted: e.target.checked })}
             />
             <span>Adjust for inflation</span>

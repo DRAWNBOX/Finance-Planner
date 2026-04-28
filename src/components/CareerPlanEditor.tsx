@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { BufferedNumberInput } from './BufferedNumberInput';
+import { YearMonthInput } from './YearMonthInput';
 import type { CareerEntry, CareerPlan, ProjectionYear, SavingsBalances } from '../types';
+import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
 
 interface CareerPlanEditorProps {
   value: CareerPlan;
   selectedCareerId: string;
   isRetirementSelected: boolean;
+  showRetirementItem?: boolean;
   onSelectRetirementItem: () => void;
   onSelectCareer: (careerId: string) => void;
   onChangeCareer: (career: CareerEntry) => void;
@@ -17,6 +20,9 @@ interface CareerPlanEditorProps {
   previewYear?: ProjectionYear;
   savingsAnnualRates: SavingsBalances;
   netWorthBalances: SavingsBalances;
+  birthdayBasedCareerStartAge: number;
+  dateOfBirth: string;
+  currentAge: number;
 }
 
 const formatCurrency = (value: number) =>
@@ -26,6 +32,7 @@ export const CareerPlanEditor = ({
   value,
   selectedCareerId,
   isRetirementSelected,
+  showRetirementItem = true,
   onSelectRetirementItem,
   onSelectCareer,
   onChangeCareer,
@@ -36,14 +43,23 @@ export const CareerPlanEditor = ({
   onRemoveCareer,
   previewYear,
   savingsAnnualRates,
-  netWorthBalances
+  netWorthBalances,
+  birthdayBasedCareerStartAge,
+  dateOfBirth,
+  currentAge
 }: CareerPlanEditorProps) => {
   const selectedCareer = value.entries.find((career) => career.id === selectedCareerId) ?? value.entries[0];
+  const retirementSelected = showRetirementItem && isRetirementSelected;
   const [dragCareerId, setDragCareerId] = useState<string | null>(null);
   const selectedCareerIndex = selectedCareer ? value.entries.findIndex((career) => career.id === selectedCareer.id) : -1;
   const previousCareer = selectedCareerIndex > 0 ? value.entries[selectedCareerIndex - 1] : undefined;
-  const selectedStartAge =
-    selectedCareer && selectedCareer.usePreviousCareerStartAge && previousCareer ? previousCareer.endAge : selectedCareer?.startAge;
+  const selectedStartAge = selectedCareer
+    ? selectedCareer.useBirthdayBasedStartAge
+      ? birthdayBasedCareerStartAge
+      : selectedCareer.usePreviousCareerStartAge && previousCareer
+        ? previousCareer.endAge
+        : selectedCareer.startAge
+    : undefined;
 
   const handleRemoveCareer = (careerId: string) => {
     if (window.confirm('Remove this career from the timeline?')) {
@@ -54,6 +70,18 @@ export const CareerPlanEditor = ({
   const activeStartAge = selectedStartAge ?? selectedCareer.startAge;
   const periodYears = Math.max(0, selectedCareer.endAge - activeStartAge + 1);
   const periodMonths = periodYears * 12;
+  const startAgeMin = 18;
+  const startAgeMax = 110;
+  const endAgeMin = selectedStartAge ?? selectedCareer.startAge;
+  const endAgeMax = 110;
+  const startYearMonthValue =
+    selectedCareer.useBirthdayBasedStartAge
+      ? formatYearMonthFromAge(selectedStartAge ?? selectedCareer.startAge, dateOfBirth, currentAge)
+      : selectedCareer.usePreviousCareerStartAge && previousCareer
+        ? previousCareer.endYearMonth || formatYearMonthFromAge(previousCareer.endAge, dateOfBirth, currentAge)
+      : selectedCareer.startYearMonth || formatYearMonthFromAge(selectedStartAge ?? selectedCareer.startAge, dateOfBirth, currentAge);
+  const endYearMonthValue =
+    selectedCareer.endYearMonth || formatYearMonthFromAge(selectedCareer.endAge, dateOfBirth, currentAge);
 
   const roundCurrency = (value: number) => Math.round(value * 100) / 100;
 
@@ -350,19 +378,21 @@ export const CareerPlanEditor = ({
             {career.label}
           </button>
         ))}
-        <button
-          type="button"
-          className={isRetirementSelected ? 'career-tab retirement-item active' : 'career-tab retirement-item'}
-          onClick={onSelectRetirementItem}
-        >
-          Retirement
-        </button>
+        {showRetirementItem ? (
+          <button
+            type="button"
+            className={retirementSelected ? 'career-tab retirement-item active' : 'career-tab retirement-item'}
+            onClick={onSelectRetirementItem}
+          >
+            Retirement
+          </button>
+        ) : null}
         <button type="button" className="career-tab add" onClick={onAddCareer}>
           + Career
         </button>
       </div>
 
-      {!isRetirementSelected ? (
+      {!retirementSelected ? (
         <label className="checkbox-row career-enable">
           <input
             type="checkbox"
@@ -380,7 +410,7 @@ export const CareerPlanEditor = ({
         </div>
       )}
 
-      {!isRetirementSelected && selectedCareer ? (
+      {!retirementSelected && selectedCareer ? (
         <>
           <div className="career-grid">
             <label className="full-span">
@@ -391,31 +421,112 @@ export const CareerPlanEditor = ({
               <span>Start Age</span>
               <BufferedNumberInput
                 value={selectedStartAge ?? selectedCareer.startAge}
-                min={18}
-                max={110}
-                disabled={selectedCareer.usePreviousCareerStartAge && Boolean(previousCareer)}
-                onCommit={(next) => onChangeCareer({ ...selectedCareer, startAge: next })}
+                min={startAgeMin}
+                max={startAgeMax}
+                disabled={selectedCareer.useBirthdayBasedStartAge || (selectedCareer.usePreviousCareerStartAge && Boolean(previousCareer))}
+                onCommit={(next) =>
+                  onChangeCareer({
+                    ...selectedCareer,
+                    startAge: next,
+                    startYearMonth: formatYearMonthFromAge(next, dateOfBirth, currentAge)
+                  })
+                }
+              />
+            </label>
+            <label>
+              <span>Start (Year-Month)</span>
+              <YearMonthInput
+                label="Start"
+                value={startYearMonthValue}
+                disabled={selectedCareer.useBirthdayBasedStartAge || (selectedCareer.usePreviousCareerStartAge && Boolean(previousCareer))}
+                onChange={(event) => {
+                  const derivedAge = ageFromYearMonth(
+                    event,
+                    dateOfBirth,
+                    currentAge,
+                    startAgeMin,
+                    startAgeMax
+                  );
+
+                  if (derivedAge === null) {
+                    return;
+                  }
+
+                  onChangeCareer({
+                    ...selectedCareer,
+                    startAge: derivedAge,
+                    endAge: Math.max(selectedCareer.endAge, derivedAge),
+                    startYearMonth: event
+                  });
+                }}
               />
             </label>
             <label>
               <span>End Age</span>
               <BufferedNumberInput
                 value={selectedCareer.endAge}
-                min={selectedStartAge ?? selectedCareer.startAge}
-                max={110}
-                onCommit={(next) => onChangeCareer({ ...selectedCareer, endAge: next })}
+                min={endAgeMin}
+                max={endAgeMax}
+                onCommit={(next) =>
+                  onChangeCareer({
+                    ...selectedCareer,
+                    endAge: next,
+                    endYearMonth: formatYearMonthFromAge(next, dateOfBirth, currentAge)
+                  })
+                }
+              />
+            </label>
+            <label>
+              <span>End (Year-Month)</span>
+              <YearMonthInput
+                label="End"
+                value={endYearMonthValue}
+                onChange={(nextValue) => {
+                  const derivedAge = ageFromYearMonth(nextValue, dateOfBirth, currentAge, endAgeMin, endAgeMax);
+
+                  if (derivedAge === null) {
+                    return;
+                  }
+
+                  onChangeCareer({ ...selectedCareer, endAge: derivedAge, endYearMonth: nextValue });
+                }}
               />
             </label>
             <label className="full-span checkbox-row">
               <input
                 type="checkbox"
+                checked={Boolean(selectedCareer.useBirthdayBasedStartAge)}
+                onChange={(event) =>
+                  onChangeCareer({
+                    ...selectedCareer,
+                    useBirthdayBasedStartAge: event.target.checked,
+                    usePreviousCareerStartAge: event.target.checked ? false : selectedCareer.usePreviousCareerStartAge,
+                    startAge: event.target.checked ? birthdayBasedCareerStartAge : selectedStartAge ?? selectedCareer.startAge,
+                    startYearMonth: formatYearMonthFromAge(
+                      event.target.checked ? birthdayBasedCareerStartAge : selectedStartAge ?? selectedCareer.startAge,
+                      dateOfBirth,
+                      currentAge
+                    )
+                  })
+                }
+              />
+              <span>Use current age from birthday (this month/year aware)</span>
+            </label>
+            <label className="full-span checkbox-row">
+              <input
+                type="checkbox"
                 checked={selectedCareer.usePreviousCareerStartAge}
-                disabled={!previousCareer}
+                disabled={!previousCareer || Boolean(selectedCareer.useBirthdayBasedStartAge)}
                 onChange={(event) =>
                   onChangeCareer({
                     ...selectedCareer,
                     usePreviousCareerStartAge: event.target.checked,
-                    startAge: event.target.checked && previousCareer ? previousCareer.endAge : selectedCareer.startAge
+                    useBirthdayBasedStartAge: event.target.checked ? false : selectedCareer.useBirthdayBasedStartAge,
+                    startAge: event.target.checked && previousCareer ? previousCareer.endAge : selectedCareer.startAge,
+                    startYearMonth:
+                      event.target.checked && previousCareer
+                        ? previousCareer.endYearMonth || formatYearMonthFromAge(previousCareer.endAge, dateOfBirth, currentAge)
+                        : formatYearMonthFromAge(selectedCareer.startAge, dateOfBirth, currentAge)
                   })
                 }
               />

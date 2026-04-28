@@ -1,11 +1,15 @@
 import { defaultScenario } from './defaultScenario';
 import type { CareerEntry, Scenario } from './types';
+import { ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
 
 const APP_TABS = ['retirement', 'options', 'careers', 'netWorth'] as const;
+const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses', 'loans'] as const;
+export type CareersSubTab = (typeof CAREERS_SUB_TABS)[number];
 
 export interface AppUiState {
   activeTab: (typeof APP_TABS)[number];
   selectedCareerId: string;
+  careersSubTab: CareersSubTab;
 }
 
 export interface PersistedAppState {
@@ -17,10 +21,32 @@ const STORAGE_KEY = 'finance-planner-state';
 
 const defaultUiState: AppUiState = {
   activeTab: 'retirement',
-  selectedCareerId: ''
+  selectedCareerId: '',
+  careersSubTab: 'careers'
 };
 
 const toNumberOrFallback = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+const normalizeYearMonth = (value: unknown) => {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : '';
+};
+
+const derivePurchaseAgeAndYearMonth = (
+  purchase: { age?: unknown; yearMonth?: unknown },
+  dateOfBirth: string,
+  currentAge: number
+) => {
+  const fallbackAge = Math.max(18, toNumberOrFallback(purchase.age, currentAge));
+  const normalizedYearMonth = normalizeYearMonth(purchase.yearMonth);
+  const yearMonth = normalizedYearMonth || formatYearMonthFromAge(fallbackAge, dateOfBirth, currentAge);
+  const derivedAge = ageFromYearMonth(yearMonth, dateOfBirth, currentAge, 18, 110);
+  const age = derivedAge === null ? fallbackAge : derivedAge;
+
+  return { age, yearMonth };
+};
 
 const normalizeCareerTimeline = (entry: CareerEntry): CareerEntry => {
   const emergencyFundContributionRate = toNumberOrFallback(entry.emergencyFundContributionRate, 2);
@@ -35,6 +61,9 @@ const normalizeCareerTimeline = (entry: CareerEntry): CareerEntry => {
   return {
     ...entry,
     usePreviousCareerStartAge: Boolean(entry.usePreviousCareerStartAge),
+    useBirthdayBasedStartAge: Boolean(entry.useBirthdayBasedStartAge) && !Boolean(entry.usePreviousCareerStartAge),
+    startYearMonth: normalizeYearMonth(entry.startYearMonth),
+    endYearMonth: normalizeYearMonth(entry.endYearMonth),
     startAge: Math.min(entry.startAge, entry.endAge),
     endAge: Math.max(entry.startAge, entry.endAge),
     emergencyFundContributionRate,
@@ -74,6 +103,7 @@ const normalizeCareerEntries = (entries: CareerEntry[]) => {
 
       normalized.push({
         ...base,
+        useBirthdayBasedStartAge: false,
         startAge,
         endAge: Math.max(base.endAge, startAge)
       });
@@ -96,6 +126,26 @@ const normalizeActiveTab = (value: unknown): AppUiState['activeTab'] => {
   }
 
   return 'retirement';
+};
+
+const normalizeCareersSubTab = (value: unknown): CareersSubTab => {
+  if (value === 'retirement' || value === 'careers' || value === 'timeline' || value === 'purchasesExpenses' || value === 'loans') {
+    return value;
+  }
+
+  if (value === 'futureRetirement') {
+    return 'retirement';
+  }
+
+  if (value === 'events') {
+    return 'timeline';
+  }
+
+  if (value === 'purchases') {
+    return 'purchasesExpenses';
+  }
+
+  return 'careers';
 };
 
 export const loadAppState = (): PersistedAppState => {
@@ -149,7 +199,66 @@ export const loadAppState = (): PersistedAppState => {
           accountBalances: {
             ...defaultScenario.netWorth.accountBalances,
             ...scenario.netWorth?.accountBalances
-          }
+          },
+          customAccounts: (scenario.netWorth?.customAccounts ?? defaultScenario.netWorth.customAccounts ?? []).map((account, index) => ({
+            id: typeof account.id === 'string' && account.id.trim().length > 0 ? account.id : `custom-account-${index + 1}`,
+            label: typeof account.label === 'string' && account.label.trim().length > 0 ? account.label : `Account ${index + 1}`,
+            balance: Math.max(0, toNumberOrFallback(account.balance, 0))
+          })),
+          imports: (scenario.netWorth?.imports ?? defaultScenario.netWorth.imports ?? []).map((record, index) => ({
+            id: typeof record.id === 'string' && record.id.trim().length > 0 ? record.id : `networth-import-${index + 1}`,
+            fileName:
+              typeof record.fileName === 'string' && record.fileName.trim().length > 0
+                ? record.fileName
+                : `import-${index + 1}.csv`,
+            fileType: record.fileType === 'csv' || record.fileType === 'pdf' ? record.fileType : 'unknown',
+            previewText: typeof record.previewText === 'string' ? record.previewText : '',
+            detectedAccountId: typeof record.detectedAccountId === 'string' && record.detectedAccountId.trim().length > 0 ? record.detectedAccountId : null,
+            detectedBalance:
+              typeof record.detectedBalance === 'number' && Number.isFinite(record.detectedBalance)
+                ? record.detectedBalance
+                : null,
+            statementDate:
+              typeof record.statementDate === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(record.statementDate)
+                ? record.statementDate
+                : '',
+            selectedAccountId:
+              typeof record.selectedAccountId === 'string' && record.selectedAccountId.trim().length > 0 ? record.selectedAccountId : null,
+            status:
+              record.status === 'applied' || record.status === 'ready' || record.status === 'needs_review' || record.status === 'error'
+                ? record.status
+                : 'needs_review',
+            confidence:
+              typeof record.confidence === 'number' && Number.isFinite(record.confidence)
+                ? Math.min(1, Math.max(0, record.confidence))
+                : 0,
+            parseNotes: Array.isArray(record.parseNotes)
+              ? record.parseNotes.filter((note): note is string => typeof note === 'string')
+              : [],
+            applied: Boolean(record.applied),
+            appliedAt:
+              typeof record.appliedAt === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(record.appliedAt)
+                ? record.appliedAt
+                : ''
+          })),
+          history: (scenario.netWorth?.history ?? defaultScenario.netWorth.history ?? []).map((entry, index) => ({
+            id: typeof entry.id === 'string' && entry.id.trim().length > 0 ? entry.id : `networth-history-${index + 1}`,
+            date: typeof entry.date === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(entry.date) ? entry.date : '',
+            accounts: Array.isArray(entry.accounts)
+              ? entry.accounts.map((account, accountIndex) => ({
+                  id:
+                    typeof account.id === 'string' && account.id.trim().length > 0
+                      ? account.id
+                      : `history-account-${accountIndex + 1}`,
+                  label:
+                    typeof account.label === 'string' && account.label.trim().length > 0
+                      ? account.label
+                      : `Account ${accountIndex + 1}`,
+                  balance: Math.max(0, toNumberOrFallback(account.balance, 0))
+                }))
+              : [],
+            totalNetWorth: Math.max(0, toNumberOrFallback(entry.totalNetWorth, 0))
+          }))
         },
         futureRetirement: {
           ...defaultScenario.futureRetirement,
@@ -165,6 +274,7 @@ export const loadAppState = (): PersistedAppState => {
           return {
             ...defaultScenario.withdrawal,
             ...savedWithdrawal,
+            minimumYearlyWithdrawal: Math.max(0, toNumberOrFallback(savedWithdrawal.minimumYearlyWithdrawal, 0)),
             firstYearAccountWithdrawals: hasSavedAccountWithdrawals
               ? {
                   ...defaultScenario.withdrawal.firstYearAccountWithdrawals,
@@ -193,7 +303,11 @@ export const loadAppState = (): PersistedAppState => {
         largePurchases: (scenario.largePurchases ?? defaultScenario.largePurchases).map((purchase) => ({
           ...purchase,
           enabled: Boolean(purchase.enabled),
-          age: Math.max(18, toNumberOrFallback(purchase.age, defaultScenario.profile.currentAge)),
+          ...derivePurchaseAgeAndYearMonth(
+            purchase,
+            scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
+            scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
+          ),
           amount: Math.max(0, toNumberOrFallback(purchase.amount, 0)),
           sourceAmounts: (() => {
             const hasSourceAmounts =
@@ -232,13 +346,70 @@ export const loadAppState = (): PersistedAppState => {
             };
           })()
         })),
+        longTermPurchases: (scenario.longTermPurchases ?? defaultScenario.longTermPurchases ?? []).map((purchase, index) => {
+          const fallbackStartAge = scenario.profile?.currentAge ?? defaultScenario.profile.currentAge;
+          const startYearMonth =
+            normalizeYearMonth((purchase as { startYearMonth?: unknown }).startYearMonth) ||
+            formatYearMonthFromAge(fallbackStartAge + 1, scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth, fallbackStartAge);
+          const endMode = purchase.endMode === 'endDate' ? 'endDate' : 'duration';
+          const durationMonths = Math.max(1, Math.floor(toNumberOrFallback(purchase.durationMonths, 12)));
+          const fallbackEndYearMonth = formatYearMonthFromAge(
+            fallbackStartAge + 2,
+            scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
+            fallbackStartAge
+          );
+          const endYearMonth = normalizeYearMonth(purchase.endYearMonth) || fallbackEndYearMonth;
+
+          return {
+            id: typeof purchase.id === 'string' && purchase.id.trim().length > 0 ? purchase.id : `long-term-purchase-${index + 1}`,
+            label: typeof purchase.label === 'string' && purchase.label.trim().length > 0 ? purchase.label : `Long-Term Purchase ${index + 1}`,
+            enabled: Boolean(purchase.enabled),
+            startYearMonth,
+            endMode,
+            durationMonths,
+            endYearMonth,
+            monthlyAmount: Math.max(0, toNumberOrFallback(purchase.monthlyAmount, 0)),
+            sourceAmounts: {
+              emergencyFund: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.emergencyFund, 0)),
+              hsa: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.hsa, 0)),
+              investments: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.investments, 0)),
+              retirement401k: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.retirement401k, 0))
+            }
+          };
+        }),
+        loans: (scenario.loans ?? defaultScenario.loans ?? []).map((loan, index) => ({
+          id: typeof loan.id === 'string' && loan.id.trim().length > 0 ? loan.id : `loan-${index + 1}`,
+          label: typeof loan.label === 'string' && loan.label.trim().length > 0 ? loan.label : `Loan ${index + 1}`,
+          enabled: Boolean(loan.enabled),
+          startYearMonth:
+            normalizeYearMonth(loan.startYearMonth) ||
+            formatYearMonthFromAge(
+              scenario.profile?.currentAge ?? defaultScenario.profile.currentAge,
+              scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
+              scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
+            ),
+          originalAmount: Math.max(0, toNumberOrFallback(loan.originalAmount, 0)),
+          currentBalance: Math.max(0, toNumberOrFallback(loan.currentBalance, 0)),
+          annualInterestRate: toNumberOrFallback(loan.annualInterestRate, 0),
+          minimumMonthlyPayment: Math.max(0, toNumberOrFallback(loan.minimumMonthlyPayment, 0)),
+          extraMonthlyPayment: Math.max(0, toNumberOrFallback(loan.extraMonthlyPayment, 0)),
+          paymentSourceAccount:
+            loan.paymentSourceAccount === 'emergencyFund' ||
+            loan.paymentSourceAccount === 'hsa' ||
+            loan.paymentSourceAccount === 'investments' ||
+            loan.paymentSourceAccount === 'retirement401k' ||
+            loan.paymentSourceAccount === 'income'
+              ? loan.paymentSourceAccount
+              : 'investments'
+        })),
         cashflowItems: scenario.cashflowItems ?? [],
         lifeEvents: scenario.lifeEvents ?? []
       },
       ui: {
         ...defaultUiState,
         ...ui,
-        activeTab: normalizeActiveTab(ui.activeTab)
+        activeTab: normalizeActiveTab(ui.activeTab),
+        careersSubTab: normalizeCareersSubTab(ui.careersSubTab)
       }
     };
   } catch {

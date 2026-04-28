@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defaultScenario } from '../defaultScenario';
 import { projectScenario } from './projection';
+
+const findProjectedYear = (result: ReturnType<typeof projectScenario>, age: number) =>
+  result.years.find((year) => year.age === age && !year.isBaselineNow)!;
 
 describe('projectScenario', () => {
   it('grows the portfolio with contributions before retirement', () => {
@@ -12,9 +15,127 @@ describe('projectScenario', () => {
     expect(result.endingBalance).toBeGreaterThan(0);
   });
 
+  it('uses tracked net worth balances as the portfolio starting balance when available', () => {
+    const scenario = {
+      ...defaultScenario,
+      profile: {
+        currentAge: 40,
+        retirementAge: 40,
+        retirementYears: 1
+      },
+      portfolio: {
+        ...defaultScenario.portfolio,
+        currentAssets: 500000
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 1000,
+          hsa: 2000,
+          investments: 3000,
+          retirement401k: 4000
+        },
+        asOfDate: ''
+      },
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        mode: 'specified' as const,
+        firstYearAmount: 0,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        firstYearAccountUseFourPercent: {
+          emergencyFund: false,
+          hsa: false,
+          investments: false,
+          retirement401k: false
+        },
+        inflationAdjusted: false
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const firstYear = result.years[0];
+
+    expect(firstYear.startBalance).toBe(10000);
+  });
+
+  it('falls back to legacy current assets when tracked net worth is zero', () => {
+    const scenario = {
+      ...defaultScenario,
+      profile: {
+        currentAge: 40,
+        retirementAge: 40,
+        retirementYears: 1
+      },
+      portfolio: {
+        ...defaultScenario.portfolio,
+        currentAssets: 123456
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        mode: 'specified' as const,
+        firstYearAmount: 0,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        firstYearAccountUseFourPercent: {
+          emergencyFund: false,
+          hsa: false,
+          investments: false,
+          retirement401k: false
+        },
+        inflationAdjusted: false
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const firstYear = result.years[0];
+
+    expect(firstYear.startBalance).toBe(123456);
+  });
+
   it('uses 4 percent of the 401K balance for the initial retirement withdrawal', () => {
     const scenario = {
       ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
       profile: {
         ...defaultScenario.profile,
         currentAge: 65,
@@ -49,7 +170,7 @@ describe('projectScenario', () => {
     };
 
     const result = projectScenario(scenario);
-    const retirementYear = result.years.find((year) => year.age === scenario.profile.retirementAge);
+    const retirementYear = findProjectedYear(result, scenario.profile.retirementAge + 1);
     const expected = 100000 * 0.04;
 
     expect(retirementYear!.withdrawal).toBeCloseTo(expected, 2);
@@ -58,6 +179,10 @@ describe('projectScenario', () => {
   it('inflation-adjusts specified withdrawals across retirement years', () => {
     const scenario = {
       ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
       profile: {
         ...defaultScenario.profile,
         currentAge: 64,
@@ -100,16 +225,185 @@ describe('projectScenario', () => {
     };
 
     const result = projectScenario(scenario);
-    const age65 = result.years.find((year) => year.age === 65)!;
-    const age66 = result.years.find((year) => year.age === 66)!;
+    const age66 = findProjectedYear(result, 66);
+    const age67 = findProjectedYear(result, 67);
 
-    expect(age65.withdrawal).toBe(10000);
-    expect(age66.withdrawal).toBeCloseTo(10300, 2);
+    expect(age66.withdrawal).toBe(10000);
+    expect(age67.withdrawal).toBeCloseTo(10300, 2);
+  });
+
+  it('keeps specified withdrawals flat when global inflation is disabled', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        ...defaultScenario.profile,
+        currentAge: 64,
+        retirementAge: 65,
+        retirementYears: 2
+      },
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        mode: 'specified' as const,
+        firstYearAmount: 10000,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 10000
+        },
+        inflationAdjusted: true
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 100000
+        },
+        asOfDate: ''
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        inflationEnabled: false,
+        inflationRate: 5
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const age66 = findProjectedYear(result, 66);
+    const age67 = findProjectedYear(result, 67);
+
+    expect(age66.withdrawal).toBe(10000);
+    expect(age67.withdrawal).toBe(10000);
+  });
+
+  it('keeps inflation-adjusted recurring cashflows flat when global inflation is disabled', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 49,
+        retirementAge: 65,
+        retirementYears: 1
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      cashflowItems: [
+        {
+          id: 'cashflow-1',
+          category: 'social_security' as const,
+          label: 'Recurring Income',
+          enabled: true,
+          cadence: 'recurring' as const,
+          direction: 'inflow' as const,
+          amount: 10000,
+          startAge: 50,
+          endAge: 51,
+          inflationAdjusted: true
+        }
+      ],
+      lifeEvents: [
+        {
+          id: 'event-1',
+          type: 'custom_expense' as const,
+          label: 'Recurring Expense',
+          enabled: true,
+          cadence: 'recurring' as const,
+          direction: 'outflow' as const,
+          amount: 3000,
+          startAge: 50,
+          endAge: 51,
+          newSalary: 0,
+          annualSalaryGrowthOverride: 0,
+          inflationAdjusted: true
+        }
+      ],
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        inflationEnabled: false,
+        inflationRate: 5
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const age51 = findProjectedYear(result, 51);
+    const age52 = findProjectedYear(result, 52);
+
+    expect(age51.extraCashflow).toBeCloseTo(7000, 6);
+    expect(age52.extraCashflow).toBeCloseTo(7000, 6);
+  });
+
+  it('keeps inflation-adjusted recurring cashflows flat in historical mode when global inflation is disabled', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 45,
+        retirementYears: 1
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      returnMode: 'historical' as const,
+      cashflowItems: [
+        {
+          id: 'cashflow-historical',
+          category: 'inheritance' as const,
+          label: 'Recurring Benefit',
+          enabled: true,
+          cadence: 'recurring' as const,
+          direction: 'inflow' as const,
+          amount: 10000,
+          startAge: 41,
+          endAge: 42,
+          inflationAdjusted: true
+        }
+      ],
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        inflationEnabled: false
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const age42 = findProjectedYear(result, 42);
+    const age43 = findProjectedYear(result, 43);
+
+    expect(age42.extraCashflow).toBeCloseTo(10000, 6);
+    expect(age43.extraCashflow).toBeCloseTo(10000, 6);
+    expect(age42.inflationRate).toBe(0);
+    expect(age43.inflationRate).toBe(0);
   });
 
   it('includes recurring and one-time cashflows', () => {
     const scenario = {
       ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
       cashflowItems: [
         {
           id: 'gift',
@@ -139,16 +433,20 @@ describe('projectScenario', () => {
     };
 
     const result = projectScenario(scenario);
-    const age48 = result.years.find((year) => year.age === 48)!;
-    const age50 = result.years.find((year) => year.age === 50)!;
+    const age49 = findProjectedYear(result, 49);
+    const age51 = findProjectedYear(result, 51);
 
-    expect(age48.extraCashflow).toBe(-10000);
-    expect(age50.extraCashflow).toBe(50000);
+    expect(age49.extraCashflow).toBe(-10000);
+    expect(age51.extraCashflow).toBe(50000);
   });
 
   it('estimates salary-based career savings before retirement', () => {
     const scenario = {
       ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
       profile: {
         currentAge: 40,
         retirementAge: 42,
@@ -197,16 +495,20 @@ describe('projectScenario', () => {
     };
 
     const result = projectScenario(scenario);
-    const age40 = result.years.find((year) => year.age === 40)!;
+    const age41 = findProjectedYear(result, 41);
 
-    expect(age40.salary).toBe(100000);
-    expect(age40.careerContribution).toBeCloseTo(12000, 6);
-    expect(age40.contribution).toBeCloseTo(12000, 6);
+    expect(age41.salary).toBe(100000);
+    expect(age41.careerContribution).toBeCloseTo(12000, 6);
+    expect(age41.contribution).toBeCloseTo(12000, 6);
   });
 
   it('applies job changes, breaks, and life-event cashflows', () => {
     const scenario = {
       ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
       profile: {
         currentAge: 40,
         retirementAge: 45,
@@ -298,13 +600,13 @@ describe('projectScenario', () => {
     };
 
     const result = projectScenario(scenario);
-    const age41 = result.years.find((year) => year.age === 41)!;
-    const age42 = result.years.find((year) => year.age === 42)!;
-    const age43 = result.years.find((year) => year.age === 43)!;
+    const age42 = findProjectedYear(result, 42);
+    const age43 = findProjectedYear(result, 43);
+    const age44 = findProjectedYear(result, 44);
 
-    expect(age41.extraCashflow).toBe(-30000);
-    expect(age42.salary).toBe(150000);
-    expect(age43.salary).toBe(0);
+    expect(age42.extraCashflow).toBe(-30000);
+    expect(age43.salary).toBe(150000);
+    expect(age44.salary).toBe(0);
   });
 
   it('runs deterministic historical mode using the bundled local series', () => {
@@ -336,6 +638,7 @@ describe('projectScenario', () => {
       withdrawal: {
         mode: 'specified',
         firstYearAmount: 50000,
+        minimumYearlyWithdrawal: 0,
         firstYearAccountWithdrawals: {
           emergencyFund: 0,
           hsa: 0,
@@ -356,9 +659,334 @@ describe('projectScenario', () => {
     expect(result.depletedAge).toBe(65);
   });
 
+  it('does not mark depletion from account shortfall alone while net worth stays above the retirement floor', () => {
+    const result = projectScenario({
+      ...defaultScenario,
+      profile: {
+        currentAge: 65,
+        retirementAge: 65,
+        retirementYears: 2
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 250000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      portfolio: {
+        ...defaultScenario.portfolio,
+        currentAssets: 0
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      withdrawal: {
+        mode: 'specified',
+        firstYearAmount: 50000,
+        minimumYearlyWithdrawal: 0,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 50000
+        },
+        firstYearAccountUseFourPercent: {
+          emergencyFund: false,
+          hsa: false,
+          investments: false,
+          retirement401k: false
+        },
+        inflationAdjusted: false
+      }
+    });
+
+    expect(result.survivesToEnd).toBe(true);
+    expect(result.depletedAge).toBeNull();
+  });
+
+  it('marks depletion when retirement withdrawals miss the configured minimum yearly amount', () => {
+    const result = projectScenario({
+      ...defaultScenario,
+      profile: {
+        currentAge: 65,
+        retirementAge: 65,
+        retirementYears: 1
+      },
+      portfolio: {
+        ...defaultScenario.portfolio,
+        currentAssets: 0
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        inflationEnabled: false,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 150000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        firstYearAmount: 0,
+        minimumYearlyWithdrawal: 10000,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        inflationAdjusted: false
+      }
+    });
+
+    expect(result.survivesToEnd).toBe(false);
+    expect(result.depletedAge).toBe(65);
+  });
+
+  it('does not deplete when retirement withdrawals meet the configured minimum yearly amount', () => {
+    const result = projectScenario({
+      ...defaultScenario,
+      profile: {
+        currentAge: 65,
+        retirementAge: 65,
+        retirementYears: 1
+      },
+      portfolio: {
+        ...defaultScenario.portfolio,
+        currentAssets: 0
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        inflationEnabled: false,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 200000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        firstYearAmount: 10000,
+        minimumYearlyWithdrawal: 10000,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 10000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        inflationAdjusted: false
+      }
+    });
+
+    expect(result.survivesToEnd).toBe(true);
+    expect(result.depletedAge).toBeNull();
+  });
+
+  it('inflation-adjusts the minimum yearly withdrawal threshold during retirement', () => {
+    const result = projectScenario({
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 65,
+        retirementAge: 65,
+        retirementYears: 2
+      },
+      portfolio: {
+        ...defaultScenario.portfolio,
+        currentAssets: 0
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        inflationEnabled: true,
+        inflationRate: 3,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 0,
+          hsa: 30100,
+          investments: 100000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        firstYearAmount: 20000,
+        minimumYearlyWithdrawal: 10000,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 20000,
+          investments: 0,
+          retirement401k: 0
+        },
+        inflationAdjusted: true
+      }
+    });
+
+    expect(result.depletedAge).toBe(66);
+    const age66 = findProjectedYear(result, 66);
+    const age67 = findProjectedYear(result, 67);
+    expect(age66.withdrawal).toBe(20000);
+    expect(age67.withdrawal).toBe(10100);
+  });
+
+  it('scales the minimum yearly withdrawal threshold for a partial first retirement year', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-01T00:00:00.000Z'));
+
+    const baseScenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: '1980-05-01T12:00:00Z'
+      },
+      profile: {
+        currentAge: 64,
+        retirementAge: 64,
+        retirementYears: 1
+      },
+      portfolio: {
+        ...defaultScenario.portfolio,
+        currentAssets: 0
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        inflationEnabled: false,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 0,
+          hsa: 200000,
+          investments: 0,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      }
+    };
+
+    const calibration = projectScenario({
+      ...baseScenario,
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        firstYearAmount: 0,
+        minimumYearlyWithdrawal: 0,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        inflationAdjusted: false
+      }
+    });
+    const firstRetirementPeriodMonths = findProjectedYear(calibration, 65).periodMonths;
+    expect(firstRetirementPeriodMonths).toBeLessThan(12);
+
+    const meetsMinimum = projectScenario({
+      ...baseScenario,
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        firstYearAmount: 12001,
+        minimumYearlyWithdrawal: 12000,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 12001,
+          investments: 0,
+          retirement401k: 0
+        },
+        inflationAdjusted: false
+      }
+    });
+
+    const missesMinimum = projectScenario({
+      ...baseScenario,
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        firstYearAmount: 11999,
+        minimumYearlyWithdrawal: 12000,
+        firstYearAccountWithdrawals: {
+          emergencyFund: 0,
+          hsa: 11999,
+          investments: 0,
+          retirement401k: 0
+        },
+        inflationAdjusted: false
+      }
+    });
+
+    vi.useRealTimers();
+
+    expect(meetsMinimum.survivesToEnd).toBe(true);
+    expect(meetsMinimum.depletedAge).toBeNull();
+    expect(missesMinimum.depletedAge).toBe(64);
+  });
+
   it('tracks savings accounts and records per-career end balances', () => {
     const scenario = {
       ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
       profile: {
         currentAge: 40,
         retirementAge: 43,
@@ -410,16 +1038,599 @@ describe('projectScenario', () => {
     };
 
     const result = projectScenario(scenario);
-    const age42 = result.years.find((year) => year.age === 42)!;
+    const age43 = findProjectedYear(result, 43);
 
-    expect(age42.savingsBalances.emergencyFund).toBeCloseTo(3000, 6);
-    expect(age42.savingsBalances.retirement401k).toBeCloseTo(3000, 6);
+    expect(age43.savingsBalances.emergencyFund).toBeCloseTo(3000, 6);
+    expect(age43.savingsBalances.retirement401k).toBeCloseTo(3000, 6);
     expect(result.careerEndSavingsBalances['career-1'].investments).toBeCloseTo(3000, 6);
+  });
+
+  it('returns the first future age when a non-viable purchase becomes affordable', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 45,
+        retirementYears: 1
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [
+          {
+            id: 'career-1',
+            label: 'Career 1',
+            enabled: true,
+            usePreviousCareerStartAge: false,
+            startAge: 40,
+            endAge: 44,
+            startingSalary: 12000,
+            annualRaiseRate: 0,
+            savingsRate: 0,
+            employerMatchRate: 0,
+            bonusRate: 0,
+            bonusSavingsRate: 0,
+            emergencyFundContributionRate: 0,
+            hsaContributionRate: 0,
+            investmentsContributionRate: 10,
+            retirement401kContributionRate: 0,
+            emergencyFundSavingsMonthly: false,
+            hsaSavingsMonthly: false,
+            investmentsSavingsMonthly: false,
+            retirement401kSavingsMonthly: false,
+            emergencyFundStartBalanceMode: 'auto',
+            hsaStartBalanceMode: 'auto',
+            investmentsStartBalanceMode: 'auto',
+            retirement401kStartBalanceMode: 'auto',
+            emergencyFundManualStartBalance: 0,
+            hsaManualStartBalance: 0,
+            investmentsManualStartBalance: 0,
+            retirement401kManualStartBalance: 0,
+            emergencyFundMonthlyWithdrawal: 0,
+            hsaMonthlyWithdrawal: 0,
+            investmentsMonthlyWithdrawal: 0,
+            retirement401kMonthlyWithdrawal: 0
+          }
+        ]
+      },
+      largePurchases: [
+        {
+          id: 'purchase-1',
+          label: 'Large Purchase',
+          enabled: true,
+          yearMonth: '2000-01',
+          age: 40,
+          amount: 2000,
+          sourceAmounts: {
+            emergencyFund: 0,
+            hsa: 0,
+            investments: 2000,
+            retirement401k: 0
+          }
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+
+    expect(result.purchaseFundingShortfalls['purchase-1']).toBeGreaterThan(0);
+    expect(result.purchaseFirstAffordableAge['purchase-1']).toBe(41);
+  });
+
+  it('treats purchases as affordable when selected source accounts can cover the amount in total', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 41,
+        retirementYears: 1
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 2000,
+          hsa: 0,
+          investments: 5000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: false,
+        entries: []
+      },
+      largePurchases: [
+        {
+          id: 'purchase-selected-pool',
+          label: 'House',
+          enabled: true,
+          yearMonth: '2000-01',
+          age: 40,
+          amount: 6000,
+          sourceAmounts: {
+            emergencyFund: 4000,
+            hsa: 0,
+            investments: 2000,
+            retirement401k: 0
+          }
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    const age41 = findProjectedYear(result, 41);
+
+    expect(result.purchaseFundingShortfalls['purchase-selected-pool']).toBe(0);
+    expect(result.purchaseFirstAffordableAge['purchase-selected-pool']).toBe(40);
+    expect(age41.savingsBalances.emergencyFund).toBeCloseTo(0, 6);
+    expect(age41.savingsBalances.investments).toBeCloseTo(1000, 6);
+  });
+
+  it('records post-purchase balances at the scheduled purchase age', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 41,
+        retirementYears: 1
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 1000,
+          hsa: 0,
+          investments: 2000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: false,
+        entries: []
+      },
+      largePurchases: [
+        {
+          id: 'purchase-balance-snapshot',
+          label: 'Car',
+          enabled: true,
+          yearMonth: '2000-01',
+          age: 40,
+          amount: 1200,
+          sourceAmounts: {
+            emergencyFund: 200,
+            hsa: 0,
+            investments: 1000,
+            retirement401k: 0
+          }
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    const snapshot = result.purchasePostPurchaseDisplayBalances['purchase-balance-snapshot'];
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.emergencyFund).toBeCloseTo(800, 6);
+    expect(snapshot?.investments).toBeCloseTo(1000, 6);
+  });
+
+  it('applies long-term monthly purchases over the scheduled duration', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 41,
+        retirementYears: 1
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 5000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: false,
+        entries: []
+      },
+      longTermPurchases: [
+        {
+          id: 'lt-1',
+          label: 'Renovation',
+          enabled: true,
+          startYearMonth: '2026-01',
+          endMode: 'duration' as const,
+          durationMonths: 6,
+          endYearMonth: '2026-06',
+          monthlyAmount: 500,
+          sourceAmounts: {
+            emergencyFund: 0,
+            hsa: 0,
+            investments: 500,
+            retirement401k: 0
+          }
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    const age41 = findProjectedYear(result, 41);
+
+    expect(result.longTermPurchaseFundingShortfalls['lt-1'] ?? 0).toBe(0);
+    expect(age41.savingsBalances.investments).toBeLessThan(5000);
+  });
+
+  it('applies loan payments and interest to projection balances', () => {
+    const scenarioWithLoan = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 41,
+        retirementYears: 1
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 12000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: false,
+        entries: []
+      },
+      loans: [
+        {
+          id: 'loan-1',
+          label: 'Car Loan',
+          enabled: true,
+          startYearMonth: '2026-01',
+          originalAmount: 10000,
+          currentBalance: 10000,
+          annualInterestRate: 12,
+          minimumMonthlyPayment: 900,
+          extraMonthlyPayment: 100,
+          paymentSourceAccount: 'investments' as const
+        }
+      ]
+    };
+
+    const scenarioWithoutLoan = {
+      ...scenarioWithLoan,
+      loans: []
+    };
+
+    const withLoan = projectScenario(scenarioWithLoan);
+    const withoutLoan = projectScenario(scenarioWithoutLoan);
+    const withLoanAge41 = findProjectedYear(withLoan, 41);
+    const withoutLoanAge41 = findProjectedYear(withoutLoan, 41);
+
+    expect(withLoanAge41.savingsBalances.investments).toBeLessThan(withoutLoanAge41.savingsBalances.investments);
+    expect(withLoan.endingBalance).toBeLessThan(withoutLoan.endingBalance);
+  });
+
+  it('does not affect projection balances when loan is paid from income', () => {
+    const scenarioWithIncomeLoan = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 41,
+        retirementYears: 1
+      },
+      contribution: {
+        yearlyContribution: 0,
+        yearlyIncreaseRate: 0
+      },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        preRetirementEquityReturn: 0,
+        postRetirementEquityReturn: 0,
+        fixedIncomeReturn: 0
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 12000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: false,
+        entries: []
+      },
+      loans: [
+        {
+          id: 'loan-income-1',
+          label: 'Car Loan',
+          enabled: true,
+          startYearMonth: '2026-01',
+          originalAmount: 10000,
+          currentBalance: 10000,
+          annualInterestRate: 12,
+          minimumMonthlyPayment: 900,
+          extraMonthlyPayment: 100,
+          paymentSourceAccount: 'income' as const
+        }
+      ]
+    };
+
+    const scenarioWithoutLoan = {
+      ...scenarioWithIncomeLoan,
+      loans: []
+    };
+
+    const withIncomeLoan = projectScenario(scenarioWithIncomeLoan);
+    const withoutLoan = projectScenario(scenarioWithoutLoan);
+    const withIncomeLoanAge41 = findProjectedYear(withIncomeLoan, 41);
+    const withoutLoanAge41 = findProjectedYear(withoutLoan, 41);
+
+    expect(withIncomeLoanAge41.savingsBalances.investments).toBeCloseTo(withoutLoanAge41.savingsBalances.investments, 6);
+    expect(withIncomeLoan.endingBalance).toBeCloseTo(withoutLoan.endingBalance, 6);
+  });
+
+  it('caps emergency fund at 15000 and redirects overflow contributions to investments', () => {
+    const baseCareer = defaultScenario.careerPlan.entries[0];
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 65,
+        retirementYears: 1
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 14900,
+          hsa: 0,
+          investments: 1000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [
+          {
+            ...baseCareer,
+            id: 'career-1',
+            enabled: true,
+            startAge: 40,
+            endAge: 40,
+            startingSalary: 12000,
+            annualRaiseRate: 0,
+            emergencyFundContributionRate: 20,
+            hsaContributionRate: 0,
+            investmentsContributionRate: 0,
+            retirement401kContributionRate: 0,
+            emergencyFundMonthlyWithdrawal: 0,
+            hsaMonthlyWithdrawal: 0,
+            investmentsMonthlyWithdrawal: 0,
+            retirement401kMonthlyWithdrawal: 0
+          }
+        ]
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const age41 = findProjectedYear(result, 41);
+
+    expect(age41.savingsBalances.emergencyFund).toBeCloseTo(15000, 6);
+    expect(age41.savingsBalances.investments).toBeCloseTo(3300, 6);
+  });
+
+  it('refills emergency fund before redirecting overflow when withdrawals reduce it below the cap', () => {
+    const baseCareer = defaultScenario.careerPlan.entries[0];
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 65,
+        retirementYears: 1
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 15000,
+          hsa: 0,
+          investments: 1000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [
+          {
+            ...baseCareer,
+            id: 'career-1',
+            enabled: true,
+            startAge: 40,
+            endAge: 40,
+            startingSalary: 12000,
+            annualRaiseRate: 0,
+            emergencyFundContributionRate: 20,
+            hsaContributionRate: 0,
+            investmentsContributionRate: 0,
+            retirement401kContributionRate: 0,
+            emergencyFundMonthlyWithdrawal: 250,
+            hsaMonthlyWithdrawal: 0,
+            investmentsMonthlyWithdrawal: 0,
+            retirement401kMonthlyWithdrawal: 0
+          }
+        ]
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const age41 = findProjectedYear(result, 41);
+
+    expect(age41.savingsBalances.emergencyFund).toBeCloseTo(14400, 6);
+    expect(age41.savingsBalances.investments).toBeCloseTo(1000, 6);
   });
 
   it('applies monthly account withdrawals against monthly contributions', () => {
     const scenario = {
       ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
       profile: {
         currentAge: 25,
         retirementAge: 26,
@@ -488,14 +1699,18 @@ describe('projectScenario', () => {
     };
 
     const result = projectScenario(scenario);
-    const age25 = result.years.find((year) => year.age === 25)!;
+    const age26 = findProjectedYear(result, 26);
 
-    expect(age25.savingsBalances.emergencyFund).toBeCloseTo(1600, 6);
+    expect(age26.savingsBalances.emergencyFund).toBeCloseTo(1600, 6);
   });
 
   it('compounds monthly while APY input remains annual', () => {
     const scenario = {
       ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
       profile: {
         currentAge: 25,
         retirementAge: 26,
@@ -564,9 +1779,56 @@ describe('projectScenario', () => {
     };
 
     const result = projectScenario(scenario);
-    const age25 = result.years.find((year) => year.age === 25)!;
+    const age26 = findProjectedYear(result, 26);
     const expected = 1000 * Math.pow(1 + 0.12 / 12, 12);
 
-    expect(age25.savingsBalances.emergencyFund).toBeCloseTo(expected, 6);
+    expect(age26.savingsBalances.emergencyFund).toBeCloseTo(expected, 6);
+  });
+
+  it('adds a baseline now row before projected periods', () => {
+    const result = projectScenario({
+      ...defaultScenario,
+      profile: {
+        ...defaultScenario.profile,
+        currentAge: 40,
+        retirementAge: 41,
+        retirementYears: 1
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 1000,
+          hsa: 2000,
+          investments: 3000,
+          retirement401k: 4000
+        },
+        asOfDate: ''
+      }
+    });
+
+    const baseline = result.years[0];
+
+    expect(baseline.isBaselineNow).toBe(true);
+    expect(baseline.periodMonths).toBe(0);
+    expect(baseline.startBalance).toBe(10000);
+    expect(baseline.endBalance).toBe(10000);
+  });
+
+  it('uses full-year first period when date of birth is invalid', () => {
+    const result = projectScenario({
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        ...defaultScenario.profile,
+        currentAge: 40,
+        retirementAge: 41,
+        retirementYears: 1
+      }
+    });
+
+    const firstProjected = result.years.find((year) => !year.isBaselineNow)!;
+    expect(firstProjected.periodMonths).toBe(12);
   });
 });
