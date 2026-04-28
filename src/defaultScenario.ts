@@ -1,4 +1,4 @@
-import type { CashflowCategory, CashflowItem, Scenario } from './types';
+import type { CareerEntry, CashflowCategory, CashflowItem, LargePurchase, LifeEvent, LifeEventType, Scenario } from './types';
 
 const makeItemId = (category: CashflowCategory) => `${category}-default`;
 
@@ -138,11 +138,187 @@ export const createDefaultCashflowItem = (
   }
 };
 
+const makeEventId = (type: LifeEventType) => `${type}-default`;
+
+const makeCareerId = (index: number) => `career-${index + 1}-default`;
+const makePurchaseId = () => `purchase-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+
+export const createDefaultCareerEntry = (
+  index: number,
+  currentAge: number,
+  retirementAge: number
+): CareerEntry => ({
+  id: makeCareerId(index),
+  label: index === 0 ? 'Current Career' : `Career ${index + 1}`,
+  enabled: true,
+  usePreviousCareerStartAge: false,
+  startAge: index === 0 ? currentAge : currentAge + index * 5,
+  endAge: index === 0 ? retirementAge : Math.min(retirementAge, currentAge + index * 5 + 4),
+  startingSalary: index === 0 ? 98000 : 110000 + index * 12000,
+  annualRaiseRate: index === 0 ? 3.5 : 3,
+  savingsRate: index === 0 ? 10 : 9,
+  employerMatchRate: index === 0 ? 3 : 2,
+  bonusRate: index === 0 ? 8 : 5,
+  bonusSavingsRate: index === 0 ? 50 : 40,
+  emergencyFundContributionRate: 2,
+  hsaContributionRate: 3,
+  investmentsContributionRate: 6,
+  retirement401kContributionRate: 6,
+  emergencyFundSavingsMonthly: false,
+  hsaSavingsMonthly: false,
+  investmentsSavingsMonthly: false,
+  retirement401kSavingsMonthly: false,
+  emergencyFundStartBalanceMode: 'auto',
+  hsaStartBalanceMode: 'auto',
+  investmentsStartBalanceMode: 'auto',
+  retirement401kStartBalanceMode: 'auto',
+  emergencyFundManualStartBalance: 0,
+  hsaManualStartBalance: 0,
+  investmentsManualStartBalance: 0,
+  retirement401kManualStartBalance: 0,
+  emergencyFundMonthlyWithdrawal: 0,
+  hsaMonthlyWithdrawal: 0,
+  investmentsMonthlyWithdrawal: 0,
+  retirement401kMonthlyWithdrawal: 0
+});
+
+export const createDefaultLargePurchase = (currentAge: number): LargePurchase => ({
+  id: makePurchaseId(),
+  label: 'Large Purchase',
+  enabled: true,
+  age: currentAge + 1,
+  amount: 10000,
+  sourceAmounts: {
+    emergencyFund: 0,
+    hsa: 0,
+    investments: 10000,
+    retirement401k: 0
+  }
+});
+
+export const createDefaultLifeEvent = (
+  type: LifeEventType,
+  currentAge: number,
+  retirementAge: number
+): LifeEvent => {
+  switch (type) {
+    case 'job_change':
+      return {
+        id: makeEventId(type),
+        type,
+        label: 'Job Change',
+        enabled: true,
+        cadence: 'recurring',
+        direction: 'inflow',
+        startAge: currentAge + 5,
+        endAge: retirementAge,
+        amount: 0,
+        newSalary: 110000,
+        annualSalaryGrowthOverride: 4,
+        inflationAdjusted: false
+      };
+    case 'career_break':
+      return {
+        id: makeEventId(type),
+        type,
+        label: 'Career Break',
+        enabled: true,
+        cadence: 'recurring',
+        direction: 'outflow',
+        startAge: currentAge + 8,
+        endAge: currentAge + 9,
+        amount: 0,
+        newSalary: 0,
+        annualSalaryGrowthOverride: 0,
+        inflationAdjusted: false
+      };
+    case 'house_purchase':
+      return {
+        id: makeEventId(type),
+        type,
+        label: 'House Purchase',
+        enabled: true,
+        cadence: 'one_time',
+        direction: 'outflow',
+        startAge: currentAge + 4,
+        endAge: currentAge + 4,
+        amount: 75000,
+        newSalary: 0,
+        annualSalaryGrowthOverride: 0,
+        inflationAdjusted: false
+      };
+    case 'house_sale':
+      return {
+        id: makeEventId(type),
+        type,
+        label: 'House Sale',
+        enabled: true,
+        cadence: 'one_time',
+        direction: 'inflow',
+        startAge: retirementAge + 6,
+        endAge: retirementAge + 6,
+        amount: 125000,
+        newSalary: 0,
+        annualSalaryGrowthOverride: 0,
+        inflationAdjusted: false
+      };
+    case 'large_expense':
+      return {
+        id: makeEventId(type),
+        type,
+        label: 'Large Expense',
+        enabled: true,
+        cadence: 'one_time',
+        direction: 'outflow',
+        startAge: currentAge + 3,
+        endAge: currentAge + 3,
+        amount: 30000,
+        newSalary: 0,
+        annualSalaryGrowthOverride: 0,
+        inflationAdjusted: false
+      };
+    case 'custom_income':
+      return {
+        id: makeEventId(type),
+        type,
+        label: 'Custom Income',
+        enabled: true,
+        cadence: 'recurring',
+        direction: 'inflow',
+        startAge: currentAge + 2,
+        endAge: retirementAge,
+        amount: 10000,
+        newSalary: 0,
+        annualSalaryGrowthOverride: 0,
+        inflationAdjusted: true
+      };
+    case 'custom_expense':
+      return {
+        id: makeEventId(type),
+        type,
+        label: 'Custom Expense',
+        enabled: true,
+        cadence: 'recurring',
+        direction: 'outflow',
+        startAge: currentAge + 2,
+        endAge: currentAge + 4,
+        amount: 8000,
+        newSalary: 0,
+        annualSalaryGrowthOverride: 0,
+        inflationAdjusted: true
+      };
+  }
+};
+
 export const defaultScenario: Scenario = {
   profile: {
     currentAge: 45,
     retirementAge: 65,
     retirementYears: 30
+  },
+  options: {
+    useDateBasedAge: false,
+    dateOfBirth: '1980-10-01'
   },
   portfolio: {
     currentAssets: 500000,
@@ -154,9 +330,47 @@ export const defaultScenario: Scenario = {
     yearlyContribution: 17500,
     yearlyIncreaseRate: 2.9
   },
+  careerPlan: {
+    enabled: true,
+    entries: [createDefaultCareerEntry(0, 45, 65)]
+  },
+  savingsTracker: {
+    annualInterestRates: {
+      emergencyFund: 2.5,
+      hsa: 5,
+      investments: 6.5,
+      retirement401k: 6
+    }
+  },
+  netWorth: {
+    accountBalances: {
+      emergencyFund: 0,
+      hsa: 0,
+      investments: 0,
+      retirement401k: 0
+    },
+    asOfDate: ''
+  },
+  futureRetirement: {
+    useCareerEndAge: true,
+    retirementAge: 65,
+    retirementYears: 30
+  },
   withdrawal: {
     mode: 'specified',
     firstYearAmount: 40000,
+    firstYearAccountWithdrawals: {
+      emergencyFund: 0,
+      hsa: 0,
+      investments: 0,
+      retirement401k: 40000
+    },
+    firstYearAccountUseFourPercent: {
+      emergencyFund: false,
+      hsa: false,
+      investments: false,
+      retirement401k: false
+    },
     inflationAdjusted: true
   },
   returnMode: 'manual',
@@ -166,5 +380,7 @@ export const defaultScenario: Scenario = {
     postRetirementEquityReturn: 5,
     fixedIncomeReturn: 2.9
   },
-  cashflowItems: []
+  largePurchases: [],
+  cashflowItems: [],
+  lifeEvents: []
 };

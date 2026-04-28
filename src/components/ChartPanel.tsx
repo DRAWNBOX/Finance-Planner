@@ -38,6 +38,15 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
     height - padding.bottom
   } Z`;
   const yTicks = Array.from({ length: 5 }, (_, index) => minValue + ((maxValue - minValue) / 4) * index).reverse();
+  const xTickIndexes = years
+    .map((_, index) => index)
+    .filter((index) => {
+      const age = years[index].age;
+      const isFirst = index === 0;
+      const isLast = index === years.length - 1;
+
+      return isFirst || isLast || age % 5 === 0;
+    });
 
   return (
     <div className="chart-shell">
@@ -55,7 +64,8 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
           );
         })}
 
-        {years.map((year, index) => {
+        {xTickIndexes.map((index) => {
+          const year = years[index];
           const point = pointFor(index);
 
           return (

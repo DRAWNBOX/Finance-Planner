@@ -30,3 +30,9 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Screenshots
+Screenshot*.png
+Screenshot*.jpg
+Screenshot*.jpeg
+*.screenshot.png

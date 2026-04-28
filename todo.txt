@@ -1,4 +1,63 @@
-1. Create a 4% rule calculator with gui. Include all features included in the screenshot
-2. Add Career income planning functionality and estimation
-3. Be able to add in events like buying or selling a house, job changes, or breaks, spending large amounts of money, etc.
-4. Add Docker packaging and replace the local placeholder historical series with sourced web-backed historical market data.
+# COMPLETED ITEMS
+[x] The gui is too large, you have to scroll down to use all of the options, make it smaller
+[x] The retirement age slider blocks you from typing in your age, you cannot clear out the text box. When a number is typed in it goes as low as your age set but you are blocked from changing the digits.
+[x] Add configuration to save the state of each slider, and checkbox
+[x] Add the ability to save "life plans" with careers and job changes and spending changes savings changes etc, to compare different jobs or be able to compare different budgets
+[x] Add Career income planning functionality and estimation
+[x] Be able to add in events like buying or selling a house, job changes, or breaks, spending large amounts of money, etc.
+[x] Add Retirement tab checkbox to derive current age from date of birth
+[x] Add Options tab to configure date of birth for age calculations
+[x] Move all Add-Ons controls back into the Retirement tab
+[x] Add Future Retirement tab based on the Careers timeline
+
+# UI & LAYOUT
+[ ] Remove the Top Blue Header Bar
+[ ] Improve the ui
+[ ] Create Grip in the middle going vertically that allows me to make one side of the screen bigger or smaller
+[ ] Make the name column for the purchases tables wider by atleast 8 charachters
+Add a theoretical early retirement year. I want to be able to calculate a age for when I can retire early if I am passing my retirement test. This should go in the message that is below the graph. "You can retire 'x' years earlier at age 'y' with this minimum withdrawal and using constant withdrawals.
+# FEATURES
+[ ] Add Menu to save session, and start a new one, or load a pre-saved one from cookies or local storage, no external exporting required.
+[ ] Add a compare tab to overlay graphs ontop of eachother.
+[ ] Add Spouse Support Another plan can be made and the spouse can be added on top.
+[ ] Add Credot Card Tracker, Create short term planner
+[ ] Incorperate Budgeting
+[ ] Create a timeline manager that allows me to click and drag all career items and rearrange or delete them.
+
+
+# DATA & CALCULATIONS
+Income Tax on 401k
+Be sure taxes are implemented correctly on withdrawals
+[x] Add student loans, and loans
+[ ] Make 250k a potential option for the graph y axis legend
+[ ] Add 401k Retirement Withdrawal Start Date
+[ ] Fix The careers, The Savings should only be full integers. The percentage should display a number truncated or rounded to 2 decimal points
+[ ] Add in ability to change when health care gets expensive in retirement
+[ ] Configure Saving Account Colors
+[ ] Under the net worth give me the option to set the Max value for the emergency fund. This number should be used in calulations. I believe it is currently hard coded to 15000
+[ ] Add Next viable date to the long-term purchases Make the message state which account does not have the full balance
+[ ] Modify Retirement Failure conditions. Add a minimum yearly withdrawal that must be met be the end of retirement. I want a user to be given slider to adjust this value in the Retirement tab under Finances prediction. Make my retirement calculations logic also account for this minium withdrawal.
+Instead of having the 4 hard coded accounts. I want them all to be generic accounts but that allow me to enable a setting for the account that allows me to designate it as 401k, or roth, or HSA or any other account that may have special withdrawal rules.
+
+The Minimum retirement withdrawal can be from any account that still has money remaining. In some cases you may still be able to withdraw an amount of money but things like the 4% rule block you.
+
+# GRAPH & VISUALIZATION
+[ ] Add flags with labels for large purchases in the graph view. Additionally every big purchase table item should get a display toggle. For long term purchase they will notated at the start date.
+[ ] The stacked savings graph should not change its scale when it switches from the portfolio graph. Additionally I would like the filters to work on both the porfolio graph and the stacked savings graph.
+
+# TABS & STRUCTURE
+[ ] The net worth tab should use the table and graph from finances and prediction.
+[ ] The first retirement tab should be standalone entirely. The intent on this page is to be able to enter account balances and then do one off retirement calculations. I want this to go under a Tools dropdown where I can play with retirement values.
+[ ] Fix the career checkboxes
+
+# INFRASTRUCTURE
+[ ] Add Docker packaging and replace the local placeholder historical series with sourced web-backed historical market data.
+[ ] Net worth history logging.
+[ ] Add Expense Tracking
+Move loans into purchases and expenses
+
+I want modify the behavior of the 4 core bank accounts. I want them to behave more like pools of money made up of defined accounts. I want users to be able to define their own bank accounts. And then categorize them as either one of the pools they have enabled If bank accounts are not defined then the pools functionally perform the same. I would like each bank account of money to have its own set of rules, ie currently investments can be used for anything but they may have taxes taken out from sales, or 401k accounts have different rules and roths have different rules. The user should still be able to select money from a bank account or pool of money.
+
+Add in networth import from fidelity screenshot
+
+Update Careeers Sstarting 
