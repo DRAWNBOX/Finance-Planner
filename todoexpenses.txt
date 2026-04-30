@@ -1,0 +1,68 @@
+## Expenses Tab + Import-Traceable Expense Tracker Plan
+
+### Summary
+Add a new top-level `Expenses` tab to the right of `Net Worth`, with a dedicated full-width expenses workspace (no net worth graph or results table). The tab will support:
+- expense history viewing
+- short-term expense planning (1 week to 1 year in the future)
+- a scrubbable, layered timeline editor (video-editor style)
+- import ingestion into an expense tracker
+- per-import source traceability and safe rollback (remove only entries from that source)
+
+### Key Changes
+- Navigation/UI:
+  - Extend top tabs with `expenses`.
+  - Route `activeTab === 'expenses'` to new expenses view in `App.tsx`.
+  - Reuse full-width layout behavior (hide right-side graph/table when expenses tab active).
+- Data model and persistence:
+  - Add `Scenario.expenses` root section in `types.ts` with:
+    - `entries`: manual + imported expense records
+    - `imports`: expense import source/batch metadata
+    - `ui`: timeline window/zoom/scrubber/grouping preferences
+  - Add provenance fields: `importSourceId`, `importBatchId`, `originType` (`manual`/`imported`), `createdAt`, `updatedAt`.
+  - Add grouping/filter support for account + pool (multi-select).
+  - Update defaults in `defaultScenario.ts` and migrations in `storage.ts`.
+- Timeline/interaction (v1):
+  - Horizontal date timeline constrained to `[today + 7 days, today + 365 days]`.
+  - Layer tracks by switchable grouping mode (Account/Pool).
+  - Draggable/resizable expense cards plus form editing.
+  - Adjustable controls: zoom, row height, density, snap toggle, track collapse/expand.
+- Import + rollback:
+  - Add expenses importer path with CSV/PDF support.
+  - Store source records with metadata and parse notes.
+  - Link imported entries to source/batch IDs.
+  - Remove source deletes only source-linked entries.
+  - Source audit UI for traceability.
+- Account/pool compatibility:
+  - Expense entry tracks account assignment + pool mapping.
+  - Filters support multi-account/multi-pool workflows.
+
+### Public Interfaces / Type Additions
+- `AppUiState.activeTab`: add `'expenses'`.
+- `Scenario`: add `expenses: ExpensesConfig`.
+- New types in `types.ts`:
+  - `ExpenseEntry`
+  - `ExpenseImportSource`
+  - `ExpenseTimelineUiState`
+  - `ExpenseGroupingMode`
+  - `ExpenseOriginType`
+
+### Test Plan
+- App/UI:
+  - Top tab renders `Expenses` to the right of `Net Worth`.
+  - Expenses tab hides graph/table and shows expense workspace.
+  - Grouping switch, multi-select filters, and timeline bounds.
+  - Timeline interactions: create, drag, resize, edit, remove.
+- Persistence:
+  - New `expenses` defaults for fresh state.
+  - Legacy saved states normalize when expenses fields are absent.
+  - Expenses tab state persists/restores.
+- Import:
+  - Imported files create source records + linked entries.
+  - Removing one source removes only linked entries.
+  - Manual entries remain after source rollback.
+
+### Assumptions and Defaults
+- Top-level tab placement is final (`Expenses` after `Net Worth`).
+- Rollback is hard delete for source-linked entries only.
+- Timeline v1 includes drag + resize; advanced editing deferred.
+- Date window is future-focused only: min `today + 7 days`, max `today + 365 days`.

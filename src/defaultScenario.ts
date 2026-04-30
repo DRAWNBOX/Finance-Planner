@@ -1,5 +1,22 @@
-import type { CareerEntry, CashflowCategory, CashflowItem, LargePurchase, Loan, LongTermPurchase, LifeEvent, LifeEventType, Scenario } from './types';
+import type {
+  CareerEntry,
+  CashflowCategory,
+  CashflowItem,
+  LargePurchase,
+  Loan,
+  LongTermPurchase,
+  LifeEvent,
+  LifeEventType,
+  Scenario
+} from './types';
 import { formatYearMonthFromAge } from './utils/ageDate';
+import {
+  ensureSourceLinesForPurchase,
+  ensureSourceLinesForWithdrawal,
+  normalizeLoanPaymentSource,
+  seedDefaultBankAccounts,
+  seedDefaultPools
+} from './financeModel';
 
 const makeItemId = (category: CashflowCategory) => `${category}-default`;
 
@@ -140,17 +157,48 @@ export const createDefaultCashflowItem = (
 };
 
 const makeEventId = (type: LifeEventType) => `${type}-default`;
+const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
+const addDays = (date: Date, days: number) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
 
 const makeCareerId = (index: number) => `career-${index + 1}-default`;
 const makePurchaseId = () => `purchase-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeLongTermPurchaseId = () => `long-term-purchase-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeLoanId = () => `loan-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+const defaultPoolBalances = { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } as const;
+const defaultPoolRates = { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } as const;
+const defaultBankAccounts = seedDefaultBankAccounts(
+  { ...defaultPoolBalances },
+  { ...defaultPoolRates }
+);
+const defaultCareerSourceLines = defaultBankAccounts.map((account) => ({
+  id: `career-source-${account.id}`,
+  enabled: true,
+  sourceType: 'account' as const,
+  sourceId: account.id,
+  contributionRate:
+    account.poolId === 'emergencyFund'
+      ? 2
+      : account.poolId === 'hsa'
+        ? 3
+        : account.poolId === 'investments'
+          ? 6
+          : account.poolId === 'retirement401k'
+            ? 6
+            : 0,
+  savingsMonthly: false,
+  monthlyWithdrawal: 0
+}));
 
 export const createDefaultCareerEntry = (
   index: number,
   currentAge: number,
   retirementAge: number
-): CareerEntry => ({
+): CareerEntry => {
+  const base: CareerEntry = {
   id: makeCareerId(index),
   label: index === 0 ? 'Current Career' : `Career ${index + 1}`,
   enabled: true,
@@ -186,10 +234,18 @@ export const createDefaultCareerEntry = (
   hsaMonthlyWithdrawal: 0,
   investmentsMonthlyWithdrawal: 0,
   retirement401kMonthlyWithdrawal: 0
-});
+  };
+
+  return {
+    ...base,
+    sourceLines: defaultCareerSourceLines.map((line) => ({ ...line }))
+  };
+};
 
 export const createDefaultLargePurchase = (currentAge: number, dateOfBirth: string): LargePurchase => ({
-  id: makePurchaseId(),
+  ...(() => {
+    const purchase: LargePurchase = {
+      id: makePurchaseId(),
   label: 'Large Purchase',
   enabled: true,
   yearMonth: formatYearMonthFromAge(currentAge + 1, dateOfBirth, currentAge),
@@ -201,13 +257,19 @@ export const createDefaultLargePurchase = (currentAge: number, dateOfBirth: stri
     investments: 10000,
     retirement401k: 0
   }
+    };
+
+    return { ...purchase, sourceLines: ensureSourceLinesForPurchase(purchase, defaultBankAccounts) };
+  })()
 });
 
 export const createDefaultLongTermPurchase = (
   currentAge: number,
   dateOfBirth: string
 ): LongTermPurchase => ({
-  id: makeLongTermPurchaseId(),
+  ...(() => {
+    const purchase: LongTermPurchase = {
+      id: makeLongTermPurchaseId(),
   label: 'Long-Term Purchase',
   enabled: true,
   startYearMonth: formatYearMonthFromAge(currentAge + 1, dateOfBirth, currentAge),
@@ -221,19 +283,30 @@ export const createDefaultLongTermPurchase = (
     investments: 500,
     retirement401k: 0
   }
+    };
+
+    return { ...purchase, sourceLines: ensureSourceLinesForPurchase(purchase, defaultBankAccounts) };
+  })()
 });
 
 export const createDefaultLoan = (currentAge: number, dateOfBirth: string): Loan => ({
-  id: makeLoanId(),
+  ...(() => {
+    const loan: Loan = {
+      id: makeLoanId(),
   label: 'Loan',
   enabled: true,
   startYearMonth: formatYearMonthFromAge(currentAge, dateOfBirth, currentAge),
   originalAmount: 25000,
+  downPayment: 0,
   currentBalance: 25000,
   annualInterestRate: 6.5,
   minimumMonthlyPayment: 350,
   extraMonthlyPayment: 0,
   paymentSourceAccount: 'investments'
+    };
+
+    return { ...loan, paymentSource: normalizeLoanPaymentSource(loan, defaultBankAccounts) };
+  })()
 });
 
 export const createDefaultLifeEvent = (
@@ -389,6 +462,8 @@ export const defaultScenario: Scenario = {
       investments: 0,
       retirement401k: 0
     },
+    pools: seedDefaultPools(),
+    bankAccounts: defaultBankAccounts,
     customAccounts: [],
     imports: [],
     history: [],
@@ -403,6 +478,8 @@ export const defaultScenario: Scenario = {
     mode: 'specified',
     firstYearAmount: 40000,
     minimumYearlyWithdrawal: 0,
+    maximumYearlyWithdrawal: 1000000,
+    useRetirementAgeAsWithdrawalStartAge: true,
     firstYearAccountWithdrawals: {
       emergencyFund: 0,
       hsa: 0,
@@ -415,6 +492,26 @@ export const defaultScenario: Scenario = {
       investments: false,
       retirement401k: false
     },
+    sourceLines: ensureSourceLinesForWithdrawal({
+      mode: 'specified',
+      firstYearAmount: 40000,
+      minimumYearlyWithdrawal: 0,
+      maximumYearlyWithdrawal: 1000000,
+      useRetirementAgeAsWithdrawalStartAge: true,
+      firstYearAccountWithdrawals: {
+        emergencyFund: 0,
+        hsa: 0,
+        investments: 0,
+        retirement401k: 40000
+      },
+      firstYearAccountUseFourPercent: {
+        emergencyFund: false,
+        hsa: false,
+        investments: false,
+        retirement401k: false
+      },
+      inflationAdjusted: true
+    }),
     inflationAdjusted: true
   },
   returnMode: 'manual',
@@ -429,5 +526,29 @@ export const defaultScenario: Scenario = {
   longTermPurchases: [],
   loans: [],
   cashflowItems: [],
-  lifeEvents: []
+  lifeEvents: [],
+  expenses: {
+    entries: [],
+    imports: [],
+    categoriesByAccountId: {},
+    weeklyBalanceByAccountId: {},
+    maxBalanceByAccountId: {},
+    activePlanningAccountId: null,
+    recurringEvents: [],
+    ui: {
+      groupingMode: 'account',
+      zoomLevel: 1,
+      rowHeight: 56,
+      density: 'comfortable',
+      snapToDay: true,
+      scrubberDate: toIsoDate(addDays(new Date(), 7)),
+      windowStartDate: toIsoDate(addDays(new Date(), 7)),
+      windowEndDate: toIsoDate(addDays(new Date(), 365)),
+      selectedAccountIds: [],
+      selectedPoolIds: [],
+      collapsedTrackIds: [],
+      trackerVisibleAccountIds: [],
+      planningWeekStartDay: 5
+    }
+  }
 };

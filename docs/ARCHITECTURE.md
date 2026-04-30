@@ -9,20 +9,23 @@
    - `ChartPanel` (portfolio line/area)
    - `SavingsStackedChart` (account stacked areas)
    - `ResultsTable` (year-by-year table)
-5. State changes are persisted through `saveAppState`.
+5. Net worth history and expenses planning use dedicated UI paths.
+6. State changes are persisted through `saveAppState`.
 
 ## Main Modules
 
 - `src/App.tsx`: Composition root and orchestration.
 - `src/engine/projection.ts`: Core financial simulation.
+- `src/financeModel.ts`: Pool/account/source-line compatibility helpers.
 - `src/components/*`: Editing and visualization UI.
+- `src/components/ExpensesPlanner.tsx`: Expense planning/tracking workspace.
 - `src/storage.ts`: Persistence + backward compatibility normalization.
 - `src/defaultScenario.ts`: Default scenario object and default creators.
 - `src/types.ts`: Shared domain contracts.
 
 ## Tabs and Intent
 
-- `Retirement`: Retirement-focused settings and independent retirement graph behavior.
-- `Options`: Date of birth and global options.
-- `Careers`: Career timeline, account contribution/expense controls, career-driven graph behavior.
-- `Net Worth`: Account balances and as-of date baseline.
+- `Options`: Date of birth/global options with the same graph, table, and summary as Finances Prediction.
+- `Finances Prediction`: Sub-tabs for Retirement, Careers, Timeline Management, Purchases and expenses, and Loans.
+- `Net Worth`: Account/pool balances, import staging, history, and as-of date baseline.
+- `Expenses`: Full-width expense planning/tracking workspace; graph/results panels are hidden.

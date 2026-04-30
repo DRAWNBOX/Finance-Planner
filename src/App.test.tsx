@@ -32,8 +32,27 @@ describe('App', () => {
     expect(screen.getByRole('columnheader', { name: 'Career' })).toBeInTheDocument();
   });
 
+  it('shows the finances prediction graph, table, and summary on Options', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSummary = screen.getByText(/Ending balance at age/i).textContent;
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+
+    expect(screen.getByRole('img', { name: /portfolio value over time/i })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Career' })).toBeInTheDocument();
+    expect(screen.getByText(/Ending balance at age/i).textContent).toBe(financeSummary);
+  });
+
   it('shows an inline editor when an add-on checkbox is enabled', () => {
     render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
 
     fireEvent.click(screen.getAllByRole('checkbox', { name: 'Social Security' })[0]);
 
@@ -43,6 +62,12 @@ describe('App', () => {
 
   it('persists the global inflation toggle state', () => {
     render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
 
     const inflationToggle = screen.getByRole('checkbox', { name: 'Enable inflation' });
     expect(inflationToggle).toBeChecked();
@@ -57,15 +82,14 @@ describe('App', () => {
   it('disables inflation-related controls when global inflation is off', () => {
     render(<App />);
 
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Social Security' })[0]);
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
     const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
     expect(financeSubTabs).toBeTruthy();
     const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Timeline Management' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Custom Expense' }));
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
+    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Social Security' })[0]);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retirement' })[0]);
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
 
     const inflationToggle = screen.getByRole('checkbox', { name: 'Enable inflation' });
     fireEvent.click(inflationToggle);
@@ -80,16 +104,16 @@ describe('App', () => {
     expect(cashflowInflation).toBeDisabled();
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const refreshedFinanceSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(refreshedFinanceSubTabs).toBeTruthy();
-    const refreshedFinanceSubTabsElement = refreshedFinanceSubTabs as HTMLElement;
-    fireEvent.click(within(refreshedFinanceSubTabsElement).getByRole('button', { name: 'Timeline Management' }));
-    const timelineInflation = screen.getByRole('checkbox', { name: 'Adjust for inflation' });
-    expect(timelineInflation).toBeDisabled();
   });
 
   it('re-enables inflation controls and preserves checked states', () => {
     render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
 
     fireEvent.click(screen.getAllByRole('checkbox', { name: 'Social Security' })[0]);
 
@@ -115,23 +139,22 @@ describe('App', () => {
   it('derives current age from date of birth and persists the option', () => {
     render(<App />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retirement' })[0]);
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Make current age based on date of birth' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    fireEvent.click(screen.getByRole('checkbox', { name: /Use current age from birthday/i }));
     fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
 
     const dateInput = screen.getByLabelText('Date of Birth');
     fireEvent.change(dateInput, { target: { value: makeBirthDate(40) } });
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Retirement' })[0]);
-
-    const currentAgeInput = screen.getAllByRole('spinbutton')[0];
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const currentAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
 
     expect(currentAgeInput).toHaveValue(40);
     expect(currentAgeInput).toBeDisabled();
 
     const stored = window.localStorage.getItem('finance-planner-state');
 
-    expect(stored).toContain('"useDateBasedAge":true');
+    expect(stored).toContain('"useBirthdayBasedStartAge":true');
     expect(stored).toContain('"dateOfBirth"');
   });
 
@@ -149,7 +172,7 @@ describe('App', () => {
 
     confirmSpy.mockReturnValue(true);
     fireEvent.click(screen.getByRole('button', { name: 'Reset Scenario' }));
-    expect(screen.getByText('Retirement Calculator')).toBeInTheDocument();
+    expect(screen.getByText('Career Timeline')).toBeInTheDocument();
 
     confirmSpy.mockRestore();
   });
@@ -185,7 +208,7 @@ describe('App', () => {
     expect(screen.getByText('Large Purchases Table')).toBeInTheDocument();
 
     fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Timeline Management' }));
-    expect(screen.getByText('Future Life Events')).toBeInTheDocument();
+    expect(screen.queryByText('Future Life Events')).not.toBeInTheDocument();
     expect(screen.queryByText('Future Retirement')).not.toBeInTheDocument();
 
     fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
@@ -211,6 +234,70 @@ describe('App', () => {
 
     expect(screen.queryByRole('img', { name: /portfolio value over time/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Career' })).not.toBeInTheDocument();
+  });
+
+  it('renders expenses as a top-level tab to the right of net worth', () => {
+    render(<App />);
+
+    const topTabs = screen.getAllByRole('button').filter((button) =>
+      ['Options', 'Finances Prediction', 'Net Worth', 'Expenses'].includes(button.textContent ?? '')
+    );
+    const labels = topTabs.map((button) => button.textContent);
+    expect(labels).toEqual(['Options', 'Finances Prediction', 'Net Worth', 'Expenses']);
+  });
+
+  it('hides graph and results table in expenses tab and shows planner UI', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expenses' })[0]);
+
+    expect(screen.queryByRole('img', { name: /portfolio value over time/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Career' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add Event' })).toBeInTheDocument();
+    expect(screen.getByText('Import Sources (Audit + Rollback)')).toBeInTheDocument();
+  });
+
+  it('imports expense csv source and removes only entries from that source', async () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expenses' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Event' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
+
+    const csv = ['Date,Description,Amount,Account', '2027-01-15,Movies,45.25,Checking'].join('\n');
+    const file = new File([csv], 'expenses.csv', { type: 'text/csv' });
+    const fileInput = document.querySelector('input[type="file"][accept=".csv,.pdf"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/expenses\.csv/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Remove Source \+ Imported Entries/i }));
+
+    await waitFor(() => {
+      const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+      expect(stored).toContain('"originType":"manual"');
+      expect(stored).not.toContain('"fileName":"expenses.csv"');
+    });
+  });
+
+  it('shows weekly planning matrix with per-account categories and chart controls', () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expenses' })[0]);
+
+    expect(screen.getAllByRole('combobox').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Weekly Spend + Balance Overlay')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Balance').length).toBeGreaterThan(0);
+    expect(screen.getByText(/Last updated account balance:/i)).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Subscription')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Gas')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Purchases')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Fun')).toBeInTheDocument();
+
+    const addCategoryInput = screen.getByPlaceholderText('e.g. Groceries');
+    fireEvent.change(addCategoryInput, { target: { value: 'Travel' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Category' }));
+    expect(screen.getByDisplayValue('Travel')).toBeInTheDocument();
   });
 
   it('updates retirement horizon when changing retirement years in finances prediction', () => {
@@ -245,13 +332,23 @@ describe('App', () => {
     fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
 
     expect(screen.getAllByText('Minimum Yearly Withdrawal').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Start Age')).toBeInTheDocument();
   });
 
   it('shares minimum yearly withdrawal value between retirement tabs', () => {
     render(<App />);
 
-    const retirementMinimumControl = screen.getByText('Minimum Yearly Withdrawal').closest('label') as HTMLElement;
-    const retirementMinimumInput = within(retirementMinimumControl).getByRole('spinbutton');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const initialFinanceSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(initialFinanceSubTabs).toBeTruthy();
+    const initialFinanceSubTabsElement = initialFinanceSubTabs as HTMLElement;
+    fireEvent.click(within(initialFinanceSubTabsElement).getByRole('button', { name: 'Retirement' }));
+
+    const retirementMinimumControl = screen
+      .getAllByText('Minimum Yearly Withdrawal')
+      .map((element) => element.closest('label'))
+      .filter(Boolean)[0] as HTMLElement;
+    const retirementMinimumInput = within(retirementMinimumControl).getByRole('spinbutton') as HTMLInputElement;
     fireEvent.change(retirementMinimumInput, { target: { value: '25000' } });
     fireEvent.blur(retirementMinimumInput);
 
@@ -281,7 +378,7 @@ describe('App', () => {
     expect(document.querySelector('.career-tab.retirement-item')).toBeNull();
   });
 
-  it('uses year-month inputs and shows projected balance columns for purchases', () => {
+  it('uses year-month inputs and account columns for purchases', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
@@ -301,10 +398,11 @@ describe('App', () => {
     const startingYear = Number(purchaseYearInput.value);
     fireEvent.click(screen.getByRole('button', { name: 'Purchase Year Up' }));
     expect(purchaseYearInput).toHaveValue(String(startingYear + 1));
-    expect(screen.getByRole('columnheader', { name: 'Emergency Fund Balance' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'HSA Balance' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Investments Balance' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: '401K Balance' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Emergency Fund' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'HSA' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Investments' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '401K' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Emergency Fund Balance' })).not.toBeInTheDocument();
   });
 
   it('supports long-term monthly purchases with start date and duration/end-date scheduling', () => {
@@ -358,6 +456,34 @@ describe('App', () => {
     const stored = window.localStorage.getItem('finance-planner-state') ?? '';
     expect(stored).toContain('"loans"');
     expect(stored).toContain('"paymentSourceAccount":"income"');
+  });
+
+  it('marks loan rows red when the selected account cannot fund the loan', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Loans' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Loan' }));
+
+    const loanRow = screen.getByDisplayValue('Loan').closest('tr') as HTMLTableRowElement;
+    const minimumPaymentInput = within(loanRow).getAllByRole('spinbutton')[4] as HTMLInputElement;
+    fireEvent.change(minimumPaymentInput, { target: { value: '500000' } });
+    fireEvent.blur(minimumPaymentInput);
+
+    await waitFor(() => {
+      expect(loanRow.className).toContain('invalid');
+    });
+    expect(loanRow.getAttribute('title') ?? '').toContain('selected payment source account cannot fund this loan');
+
+    fireEvent.change(within(loanRow).getByLabelText('Loan Payment Source'), { target: { value: 'income' } });
+
+    await waitFor(() => {
+      expect(loanRow.className).not.toContain('invalid');
+    });
   });
 
   it('keeps long-term purchase duration and end date synchronized', () => {
@@ -421,7 +547,7 @@ describe('App', () => {
     expect(purchaseRow.getAttribute('title') ?? '').toContain('Not viable: amount does not match source totals.');
   });
 
-  it('shows negative post-purchase balances in the purchases table when requested sources exceed projected balances', () => {
+  it('marks purchases invalid when source totals are affordable on paper but accounts cannot fund them', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
@@ -433,15 +559,8 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
 
     const purchaseRow = screen.getByDisplayValue('Large Purchase').closest('tr') as HTMLTableRowElement;
-    const sourceInputs = within(purchaseRow).getAllByRole('spinbutton');
-    const investmentsSourceInput = sourceInputs[3];
-
-    fireEvent.change(investmentsSourceInput, { target: { value: '50000000' } });
-    fireEvent.blur(investmentsSourceInput);
-
-    const cells = purchaseRow.querySelectorAll('td');
-    const investmentsBalanceText = cells[10].textContent ?? '';
-    expect(investmentsBalanceText).toContain('-$');
+    expect(purchaseRow.className).toContain('invalid');
+    expect(purchaseRow.getAttribute('title') ?? '').toContain('cannot fund the requested amount');
   });
 
   it('maps saved future retirement tab state into Careers', () => {
@@ -585,6 +704,7 @@ describe('App', () => {
         },
         ui: {
           activeTab: 'retirement',
+          careersSubTab: 'retirement',
           selectedCareerId: ''
         }
       })
@@ -592,9 +712,16 @@ describe('App', () => {
 
     render(<App />);
 
-    const control = screen.getByText('Minimum Yearly Withdrawal').closest('label') as HTMLElement;
-    const input = within(control).getByRole('spinbutton');
-    expect(input).toHaveValue(0);
+    const controls = screen
+      .getAllByText('Minimum Yearly Withdrawal')
+      .map((element) => element.closest('label'))
+      .filter(Boolean) as HTMLElement[];
+    const hasZeroValue = controls.some((control) => {
+      const input = within(control).getByRole('spinbutton') as HTMLInputElement;
+      return input.value === '0';
+    });
+
+    expect(hasZeroValue).toBe(true);
   });
 
   it('normalizes career timeline ages from saved state so start is always before end', () => {
@@ -1025,52 +1152,34 @@ describe('App', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
 
-    const emergencyFundInput = within(screen.getByText('Emergency Fund Balance').closest('label')!).getByRole('spinbutton');
-    fireEvent.change(emergencyFundInput, { target: { value: '25000' } });
-    fireEvent.blur(emergencyFundInput);
+    const bankAccountHeader = screen.getByRole('columnheader', { name: 'APY %' });
+    const bankAccountTable = bankAccountHeader.closest('table') as HTMLTableElement;
+    const emergencyFundInput = bankAccountTable.querySelector(
+      'tbody tr td input[type="text"][value="Emergency Fund"]'
+    ) as HTMLInputElement;
+    const emergencyFundRow = emergencyFundInput.closest('tr') as HTMLTableRowElement;
+    const emergencyFundBalanceInput = within(emergencyFundRow).getAllByRole('spinbutton')[2];
+    fireEvent.change(emergencyFundBalanceInput, { target: { value: '25000' } });
+    fireEvent.blur(emergencyFundBalanceInput);
 
     const stored = window.localStorage.getItem('finance-planner-state') ?? '';
 
-    expect(stored).toContain('"emergencyFund":25000');
+    expect(stored).toContain('"id":"emergencyFund-account-default"');
+    expect(stored).toContain('"balance":25000');
     expect(stored).toContain('"asOfDate"');
   });
 
-  it('allows adding and removing custom net worth accounts with confirmation', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm');
+  it('hides the legacy add custom account control in net worth', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: '+ Add Custom Account' }));
-
-    const accountNameInput = screen.getByDisplayValue('Account 1');
-    const accountRow = accountNameInput.closest('tr') as HTMLTableRowElement;
-    const accountBalanceInput = within(accountRow).getByRole('spinbutton');
-    fireEvent.change(accountBalanceInput, { target: { value: '5000' } });
-    fireEvent.blur(accountBalanceInput);
-
-    confirmSpy.mockReturnValue(false);
-    fireEvent.click(within(accountRow).getByRole('button', { name: 'Remove' }));
-    expect(screen.getByDisplayValue('Account 1')).toBeInTheDocument();
-
-    confirmSpy.mockReturnValue(true);
-    fireEvent.click(within(accountRow).getByRole('button', { name: 'Remove' }));
-    expect(screen.queryByDisplayValue('Account 1')).not.toBeInTheDocument();
-    expect(confirmSpy).toHaveBeenCalled();
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"customAccounts":[]');
-
-    confirmSpy.mockRestore();
+    expect(screen.queryByRole('button', { name: '+ Add Custom Account' })).not.toBeInTheDocument();
   });
 
   it('imports a csv statement, supports account remap, and applies staged balance updates', async () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: '+ Add Custom Account' }));
-
-    const accountNameInput = screen.getByDisplayValue('Account 1');
-    fireEvent.change(accountNameInput, { target: { value: 'Checking Plus' } });
 
     const csv = [
       'Account Name,Ending Balance,Statement Date',
@@ -1085,10 +1194,12 @@ describe('App', () => {
       expect(screen.getByText(/Statement Date:/i)).toBeInTheDocument();
     });
 
-    const accountSelect = screen.getByDisplayValue('Investments') as HTMLSelectElement;
-    const customAccountOption = within(accountSelect).getByRole('option', { name: 'Checking Plus' }) as HTMLOptionElement;
-    fireEvent.change(accountSelect, { target: { value: customAccountOption.value } });
-    expect(screen.getAllByDisplayValue('Checking Plus').length).toBeGreaterThan(0);
+    const accountSelect = screen
+      .getAllByRole('combobox')
+      .find((element) => (element as HTMLSelectElement).querySelector('option[value="hsa-account-default"]')) as HTMLSelectElement;
+    const hsaOption = accountSelect.querySelector('option[value="hsa-account-default"]') as HTMLOptionElement;
+    fireEvent.change(accountSelect, { target: { value: hsaOption.value } });
+    expect(screen.getAllByDisplayValue('HSA').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Selected' }));
 
@@ -1103,7 +1214,7 @@ describe('App', () => {
     const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
     const history = parsed?.scenario?.netWorth?.history ?? [];
     expect(history.length).toBeGreaterThan(0);
-    expect(history[history.length - 1].accounts.length).toBeGreaterThanOrEqual(5);
+    expect(history[history.length - 1].accounts.length).toBeGreaterThanOrEqual(4);
   });
 
   it('shows net worth history chart and range radios up to available history span', () => {
@@ -1149,6 +1260,8 @@ describe('App', () => {
     render(<App />);
 
     expect(screen.getByRole('img', { name: /net worth history over time/i })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Portfolio Graph' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Stacked Savings Graph' })).not.toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '30 days' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '60 days' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '90 days' })).toBeInTheDocument();

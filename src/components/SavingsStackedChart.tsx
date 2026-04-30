@@ -1,19 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatCurrency } from '../engine/projection';
-import type { ProjectionYear } from '../types';
+import type { BankAccountDefinition, PoolDefinition, ProjectionYear } from '../types';
 
 interface SavingsStackedChartProps {
   years: ProjectionYear[];
+  pools: PoolDefinition[];
+  bankAccounts: BankAccountDefinition[];
 }
 
-type SavingsKey = 'emergencyFund' | 'hsa' | 'investments' | 'retirement401k';
-
-const SERIES: Array<{ key: SavingsKey; label: string; className: string }> = [
-  { key: 'emergencyFund', label: 'Emergency Fund', className: 'savings-area emergency' },
-  { key: 'hsa', label: 'HSA', className: 'savings-area hsa' },
-  { key: 'investments', label: 'Investments', className: 'savings-area investments' },
-  { key: 'retirement401k', label: '401K', className: 'savings-area k401' }
-];
+const SAVINGS_AREA_COLORS = ['#4b87d9', '#32a884', '#f0a235', '#ca5d7b', '#7a75d8', '#3e9ab1', '#d0735a', '#6e9c4e'] as const;
 
 const makeAreaPath = (top: number[], bottom: number[], pointX: (index: number) => number, pointY: (value: number) => number) => {
   if (top.length === 0) {
@@ -31,13 +26,39 @@ const makeAreaPath = (top: number[], bottom: number[], pointX: (index: number) =
   return `${topPath} ${bottomPath} Z`;
 };
 
-export const SavingsStackedChart = ({ years }: SavingsStackedChartProps) => {
-  const [visibleKeys, setVisibleKeys] = useState<Record<SavingsKey, boolean>>({
-    emergencyFund: true,
-    hsa: true,
-    investments: true,
-    retirement401k: true
-  });
+export const SavingsStackedChart = ({ years, pools, bankAccounts }: SavingsStackedChartProps) => {
+  const enabledPools = useMemo(() => pools.filter((pool) => pool.enabled), [pools]);
+  const accountIdsByPoolId = useMemo(
+    () =>
+      new Map(
+        enabledPools.map((pool) => [
+          pool.id,
+          bankAccounts.filter((account) => account.poolId === pool.id).map((account) => account.id)
+        ])
+      ),
+    [bankAccounts, enabledPools]
+  );
+  const series = useMemo(
+    () =>
+      enabledPools.map((pool, index) => ({
+        key: pool.id,
+        label: pool.label,
+        legacyFallbackId: pool.legacyFallbackId,
+        color: SAVINGS_AREA_COLORS[index % SAVINGS_AREA_COLORS.length]
+      })),
+    [enabledPools]
+  );
+  const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setVisibleKeys((current) => {
+      const next: Record<string, boolean> = {};
+      series.forEach((entry) => {
+        next[entry.key] = current[entry.key] ?? true;
+      });
+      return next;
+    });
+  }, [series]);
 
   const width = 760;
   const height = 380;
@@ -46,9 +67,17 @@ export const SavingsStackedChart = ({ years }: SavingsStackedChartProps) => {
   const plotHeight = height - padding.top - padding.bottom;
 
   const stackedSeries = useMemo(() => {
-    const visible = SERIES.filter((series) => visibleKeys[series.key]);
+    const visible = series.filter((entry) => visibleKeys[entry.key] ?? true);
+    const resolvePoolValue = (year: ProjectionYear, poolId: string, legacyFallbackId?: PoolDefinition['legacyFallbackId']) => {
+      const accountIds = accountIdsByPoolId.get(poolId) ?? [];
+      if (accountIds.length > 0) {
+        return accountIds.reduce((sum, accountId) => sum + Math.max(0, year.accountBalancesById[accountId] ?? 0), 0);
+      }
+
+      return legacyFallbackId ? Math.max(0, year.savingsBalances[legacyFallbackId] ?? 0) : 0;
+    };
     const totals = years.map((year) =>
-      visible.reduce((sum, series) => sum + year.savingsBalances[series.key], 0)
+      visible.reduce((sum, entry) => sum + resolvePoolValue(year, entry.key, entry.legacyFallbackId), 0)
     );
     const maxValue = Math.max(...totals, 1);
     const yStep =
@@ -63,20 +92,20 @@ export const SavingsStackedChart = ({ years }: SavingsStackedChartProps) => {
     const yTicks = Array.from({ length: Math.floor(roundedMaxValue / yStep) + 1 }, (_, index) => index * yStep).reverse();
 
     let running = new Array(years.length).fill(0);
-    const layers = visible.map((series) => {
+    const layers = visible.map((entry) => {
       const lower = [...running];
-      const top = running.map((value, index) => value + years[index].savingsBalances[series.key]);
+      const top = running.map((value, index) => value + resolvePoolValue(years[index], entry.key, entry.legacyFallbackId));
       running = top;
 
       return {
-        ...series,
+        ...entry,
         lower,
         top
       };
     });
 
     return { layers, maxValue: roundedMaxValue, yTicks };
-  }, [visibleKeys, years]);
+  }, [accountIdsByPoolId, series, visibleKeys, years]);
 
   if (years.length === 0) {
     return null;
@@ -100,25 +129,33 @@ export const SavingsStackedChart = ({ years }: SavingsStackedChartProps) => {
         <button
           type="button"
           className="text-button"
-          onClick={() => setVisibleKeys({ emergencyFund: true, hsa: true, investments: true, retirement401k: true })}
+          onClick={() =>
+            setVisibleKeys(
+              Object.fromEntries(series.map((entry) => [entry.key, true]))
+            )
+          }
         >
           Unfilter All
         </button>
         <button
           type="button"
           className="text-button"
-          onClick={() => setVisibleKeys({ emergencyFund: false, hsa: false, investments: false, retirement401k: false })}
+          onClick={() =>
+            setVisibleKeys(
+              Object.fromEntries(series.map((entry) => [entry.key, false]))
+            )
+          }
         >
           Filter All
         </button>
-        {SERIES.map((series) => (
-          <label key={series.key} className="checkbox-row">
+        {series.map((entry) => (
+          <label key={entry.key} className="checkbox-row">
             <input
               type="checkbox"
-              checked={visibleKeys[series.key]}
-              onChange={(event) => setVisibleKeys((current) => ({ ...current, [series.key]: event.target.checked }))}
+              checked={visibleKeys[entry.key] ?? true}
+              onChange={(event) => setVisibleKeys((current) => ({ ...current, [entry.key]: event.target.checked }))}
             />
-            <span>{series.label}</span>
+            <span>{entry.label}</span>
           </label>
         ))}
       </div>
@@ -151,7 +188,7 @@ export const SavingsStackedChart = ({ years }: SavingsStackedChartProps) => {
         })}
 
         {stackedSeries.layers.map((layer) => (
-          <path key={layer.key} d={makeAreaPath(layer.top, layer.lower, pointX, pointY)} className={layer.className} />
+          <path key={layer.key} d={makeAreaPath(layer.top, layer.lower, pointX, pointY)} className="savings-area" style={{ fill: layer.color }} />
         ))}
 
         <text x={width / 2} y={height - 8} textAnchor="middle" className="chart-title">

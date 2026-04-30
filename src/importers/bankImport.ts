@@ -10,17 +10,37 @@ const usDateRegex = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-]((?:20|
 const longDateRegex =
   /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+([0-3]?\d),\s*((?:20|19)\d{2})\b/gi;
 
-const coreAccountKeywordMap: Record<string, string[]> = {
-  emergencyFund: ['emergency', 'cash reserve', 'cash', 'checking', 'savings'],
-  hsa: ['hsa', 'health savings', 'health account'],
-  investments: ['investment', 'investments', 'brokerage', 'broker'],
-  retirement401k: ['401k', '401(k)', 'retirement']
-};
+const genericAccountKeywords = [
+  'emergency',
+  'cash reserve',
+  'checking',
+  'savings',
+  'hsa',
+  'health savings',
+  'health account',
+  'investment',
+  'investments',
+  'brokerage',
+  'broker',
+  '401k',
+  '401(k)',
+  'retirement',
+  'ira',
+  'roth'
+];
 
 const normalizeWhitespace = (value: string) => value.replace(/\s+/g, ' ').trim();
 const makeImportId = () => `networth-import-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 
-const sanitizePreview = (value: string) => normalizeWhitespace(value).slice(0, 1200);
+const sanitizePreview = (value: string) =>
+  value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 30)
+    .join('\n');
 
 const readFileAsText = async (file: File): Promise<string> => {
   const anyFile = file as File & { text?: () => Promise<string> };
@@ -235,7 +255,7 @@ export const detectAccountFromText = (
       }
     });
 
-    const keywordMatches = coreAccountKeywordMap[account.id] ?? [];
+    const keywordMatches = genericAccountKeywords.filter((keyword) => account.label.toLowerCase().includes(keyword));
     keywordMatches.forEach((keyword) => {
       if (haystack.includes(keyword.toLowerCase())) {
         score += 3;

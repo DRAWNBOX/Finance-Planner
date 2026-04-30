@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { BufferedNumberInput } from './BufferedNumberInput';
 import { YearMonthInput } from './YearMonthInput';
-import type { CareerEntry, CareerPlan, ProjectionYear, SavingsBalances } from '../types';
+import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, ProjectionYear } from '../types';
 import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
 
 interface CareerPlanEditorProps {
@@ -14,12 +14,11 @@ interface CareerPlanEditorProps {
   onChangeCareer: (career: CareerEntry) => void;
   onDuplicateCareer: (careerId: string) => void;
   onReorderCareers: (fromCareerId: string, toCareerId: string) => void;
-  onChangeSavingsReturn: (account: keyof SavingsBalances, rate: number) => void;
+  onChangeBankAccountReturn: (accountId: string, rate: number) => void;
   onAddCareer: () => void;
   onRemoveCareer: (careerId: string) => void;
   previewYear?: ProjectionYear;
-  savingsAnnualRates: SavingsBalances;
-  netWorthBalances: SavingsBalances;
+  bankAccounts: BankAccountDefinition[];
   birthdayBasedCareerStartAge: number;
   dateOfBirth: string;
   currentAge: number;
@@ -27,6 +26,38 @@ interface CareerPlanEditorProps {
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
+
+const roundCurrency = (value: number) => Math.round(value * 100) / 100;
+
+const resolveCareerLineForAccount = (
+  career: CareerEntry,
+  account: BankAccountDefinition
+): CareerSourceLine => {
+  const existingLines = career.sourceLines ?? [];
+  const accountLine = existingLines.find((line) => line.sourceType === 'account' && line.sourceId === account.id);
+  if (accountLine) {
+    return accountLine;
+  }
+
+  const poolLine = existingLines.find((line) => line.sourceType === 'pool' && line.sourceId === account.poolId);
+  if (poolLine) {
+    return {
+      ...poolLine,
+      sourceType: 'account',
+      sourceId: account.id
+    };
+  }
+
+  return {
+    id: `career-source-${account.id}`,
+    enabled: true,
+    sourceType: 'account',
+    sourceId: account.id,
+    contributionRate: 0,
+    savingsMonthly: false,
+    monthlyWithdrawal: 0
+  };
+};
 
 export const CareerPlanEditor = ({
   value,
@@ -38,12 +69,11 @@ export const CareerPlanEditor = ({
   onChangeCareer,
   onDuplicateCareer,
   onReorderCareers,
-  onChangeSavingsReturn,
+  onChangeBankAccountReturn,
   onAddCareer,
   onRemoveCareer,
   previewYear,
-  savingsAnnualRates,
-  netWorthBalances,
+  bankAccounts,
   birthdayBasedCareerStartAge,
   dateOfBirth,
   currentAge
@@ -60,6 +90,11 @@ export const CareerPlanEditor = ({
         ? previousCareer.endAge
         : selectedCareer.startAge
     : undefined;
+
+  const orderedBankAccounts = useMemo(
+    () => [...bankAccounts].sort((a, b) => a.priority - b.priority || a.label.localeCompare(b.label)),
+    [bankAccounts]
+  );
 
   const handleRemoveCareer = (careerId: string) => {
     if (window.confirm('Remove this career from the timeline?')) {
@@ -79,245 +114,90 @@ export const CareerPlanEditor = ({
       ? formatYearMonthFromAge(selectedStartAge ?? selectedCareer.startAge, dateOfBirth, currentAge)
       : selectedCareer.usePreviousCareerStartAge && previousCareer
         ? previousCareer.endYearMonth || formatYearMonthFromAge(previousCareer.endAge, dateOfBirth, currentAge)
-      : selectedCareer.startYearMonth || formatYearMonthFromAge(selectedStartAge ?? selectedCareer.startAge, dateOfBirth, currentAge);
+        : selectedCareer.startYearMonth || formatYearMonthFromAge(selectedStartAge ?? selectedCareer.startAge, dateOfBirth, currentAge);
   const endYearMonthValue =
     selectedCareer.endYearMonth || formatYearMonthFromAge(selectedCareer.endAge, dateOfBirth, currentAge);
 
-  const roundCurrency = (value: number) => Math.round(value * 100) / 100;
-
   const annualSavingsFromPercentage = (percentage: number, salary = previewSalary) => roundCurrency(salary * (percentage / 100));
-  const calculatedTotalSavingsRate = roundCurrency(
-    selectedCareer.emergencyFundContributionRate +
-      selectedCareer.hsaContributionRate +
-      selectedCareer.investmentsContributionRate +
-      selectedCareer.retirement401kContributionRate
-  );
 
-  const calculateEndOfPeriodBalanceForAccount = (
-    key: keyof SavingsBalances,
-    startingBalance: number,
-    annualSavings: number,
-    annualReturnPercent: number
+  const getLineForAccount = (career: CareerEntry, account: BankAccountDefinition) =>
+    resolveCareerLineForAccount(career, account);
+
+  const updateLineForAccount = (
+    account: BankAccountDefinition,
+    updates: Partial<Pick<CareerSourceLine, 'contributionRate' | 'savingsMonthly' | 'monthlyWithdrawal' | 'enabled'>>
   ) => {
-    if (periodMonths <= 0) {
-      return roundCurrency(startingBalance);
-    }
-
-    const monthlyContribution = annualSavings / 12;
-    const monthlyRate = annualReturnPercent / 100 / 12;
-    const monthlyWithdrawal = Math.max(0, getMonthlyWithdrawal(key));
-
-    if (monthlyRate === 0) {
-      let running = startingBalance;
-
-      for (let month = 0; month < periodMonths; month += 1) {
-        running = Math.max(0, running + monthlyContribution - monthlyWithdrawal);
-      }
-
-      return roundCurrency(running);
-    }
-
-    let running = startingBalance;
-
-    for (let month = 0; month < periodMonths; month += 1) {
-      running = Math.max(0, (running + monthlyContribution - monthlyWithdrawal) * (1 + monthlyRate));
-    }
-
-    return roundCurrency(running);
-  };
-
-  const getCareerPercentage = (key: keyof SavingsBalances) => {
-    if (key === 'emergencyFund') {
-      return selectedCareer.emergencyFundContributionRate;
-    }
-
-    if (key === 'hsa') {
-      return selectedCareer.hsaContributionRate;
-    }
-
-    if (key === 'investments') {
-      return selectedCareer.investmentsContributionRate;
-    }
-
-    return selectedCareer.retirement401kContributionRate;
-  };
-
-  const setCareerPercentage = (key: keyof SavingsBalances, nextPercentage: number) =>
-    onChangeCareer({
-      ...selectedCareer,
-      emergencyFundContributionRate: key === 'emergencyFund' ? nextPercentage : selectedCareer.emergencyFundContributionRate,
-      hsaContributionRate: key === 'hsa' ? nextPercentage : selectedCareer.hsaContributionRate,
-      investmentsContributionRate: key === 'investments' ? nextPercentage : selectedCareer.investmentsContributionRate,
-      retirement401kContributionRate: key === 'retirement401k' ? nextPercentage : selectedCareer.retirement401kContributionRate
-    });
-
-  const isSavingsMonthly = (key: keyof SavingsBalances) => {
-    if (key === 'emergencyFund') {
-      return selectedCareer.emergencyFundSavingsMonthly;
-    }
-
-    if (key === 'hsa') {
-      return selectedCareer.hsaSavingsMonthly;
-    }
-
-    if (key === 'investments') {
-      return selectedCareer.investmentsSavingsMonthly;
-    }
-
-    return selectedCareer.retirement401kSavingsMonthly;
-  };
-
-  const setSavingsMonthly = (key: keyof SavingsBalances, next: boolean) =>
-    onChangeCareer({
-      ...selectedCareer,
-      emergencyFundSavingsMonthly: key === 'emergencyFund' ? next : selectedCareer.emergencyFundSavingsMonthly,
-      hsaSavingsMonthly: key === 'hsa' ? next : selectedCareer.hsaSavingsMonthly,
-      investmentsSavingsMonthly: key === 'investments' ? next : selectedCareer.investmentsSavingsMonthly,
-      retirement401kSavingsMonthly: key === 'retirement401k' ? next : selectedCareer.retirement401kSavingsMonthly
-    });
-
-  const savingsInputAmountFromPercentage = (key: keyof SavingsBalances) => {
-    const annualSavings = annualSavingsFromPercentage(getCareerPercentage(key));
-
-    return isSavingsMonthly(key) ? roundCurrency(annualSavings / 12) : annualSavings;
-  };
-
-  const annualSavingsFromInputAmount = (key: keyof SavingsBalances, inputAmount: number) =>
-    roundCurrency(isSavingsMonthly(key) ? inputAmount * 12 : inputAmount);
-
-  const getMonthlyWithdrawal = (key: keyof SavingsBalances) => {
-    if (key === 'emergencyFund') {
-      return selectedCareer.emergencyFundMonthlyWithdrawal ?? 0;
-    }
-
-    if (key === 'hsa') {
-      return selectedCareer.hsaMonthlyWithdrawal ?? 0;
-    }
-
-    if (key === 'investments') {
-      return selectedCareer.investmentsMonthlyWithdrawal ?? 0;
-    }
-
-    return selectedCareer.retirement401kMonthlyWithdrawal ?? 0;
-  };
-
-  const setMonthlyWithdrawal = (key: keyof SavingsBalances, next: number) =>
-    onChangeCareer({
-      ...selectedCareer,
-      emergencyFundMonthlyWithdrawal: key === 'emergencyFund' ? next : selectedCareer.emergencyFundMonthlyWithdrawal ?? 0,
-      hsaMonthlyWithdrawal: key === 'hsa' ? next : selectedCareer.hsaMonthlyWithdrawal ?? 0,
-      investmentsMonthlyWithdrawal: key === 'investments' ? next : selectedCareer.investmentsMonthlyWithdrawal ?? 0,
-      retirement401kMonthlyWithdrawal: key === 'retirement401k' ? next : selectedCareer.retirement401kMonthlyWithdrawal ?? 0
-    });
-
-  const getStartBalanceMode = (career: CareerEntry, key: keyof SavingsBalances) => {
-    if (key === 'emergencyFund') {
-      return career.emergencyFundStartBalanceMode;
-    }
-
-    if (key === 'hsa') {
-      return career.hsaStartBalanceMode;
-    }
-
-    if (key === 'investments') {
-      return career.investmentsStartBalanceMode;
-    }
-
-    return career.retirement401kStartBalanceMode;
-  };
-
-  const getManualStartBalance = (career: CareerEntry, key: keyof SavingsBalances) => {
-    if (key === 'emergencyFund') {
-      return career.emergencyFundManualStartBalance;
-    }
-
-    if (key === 'hsa') {
-      return career.hsaManualStartBalance;
-    }
-
-    if (key === 'investments') {
-      return career.investmentsManualStartBalance;
-    }
-
-    return career.retirement401kManualStartBalance;
-  };
-
-  const setRowStartBalanceMode = (key: keyof SavingsBalances, mode: 'auto' | 'manual') =>
-    onChangeCareer({
-      ...selectedCareer,
-      emergencyFundStartBalanceMode: key === 'emergencyFund' ? mode : selectedCareer.emergencyFundStartBalanceMode,
-      hsaStartBalanceMode: key === 'hsa' ? mode : selectedCareer.hsaStartBalanceMode,
-      investmentsStartBalanceMode: key === 'investments' ? mode : selectedCareer.investmentsStartBalanceMode,
-      retirement401kStartBalanceMode: key === 'retirement401k' ? mode : selectedCareer.retirement401kStartBalanceMode
-    });
-
-  const setRowManualStartBalance = (key: keyof SavingsBalances, balance: number) =>
-    onChangeCareer({
-      ...selectedCareer,
-      emergencyFundManualStartBalance:
-        key === 'emergencyFund' ? balance : selectedCareer.emergencyFundManualStartBalance,
-      hsaManualStartBalance: key === 'hsa' ? balance : selectedCareer.hsaManualStartBalance,
-      investmentsManualStartBalance: key === 'investments' ? balance : selectedCareer.investmentsManualStartBalance,
-      retirement401kManualStartBalance:
-        key === 'retirement401k' ? balance : selectedCareer.retirement401kManualStartBalance
-    });
-
-  const getSalaryForCareer = (career: CareerEntry) => career.startingSalary;
-  const getCareerPeriodMonths = (career: CareerEntry) => Math.max(0, career.endAge - career.startAge + 1) * 12;
-
-  const calculateCareerEndBalancesThroughIndex = (targetIndex: number): SavingsBalances => {
-    let balances: SavingsBalances = {
-      emergencyFund: netWorthBalances.emergencyFund,
-      hsa: netWorthBalances.hsa,
-      investments: netWorthBalances.investments,
-      retirement401k: netWorthBalances.retirement401k
+    const existingLine = getLineForAccount(selectedCareer, account);
+    const nextLine: CareerSourceLine = {
+      ...existingLine,
+      ...updates,
+      id: existingLine.id || `career-source-${account.id}`,
+      enabled: updates.enabled ?? true,
+      sourceType: 'account',
+      sourceId: account.id,
+      contributionRate: Math.max(0, updates.contributionRate ?? existingLine.contributionRate),
+      monthlyWithdrawal: Math.max(0, updates.monthlyWithdrawal ?? existingLine.monthlyWithdrawal)
     };
+    const remainingLines = (selectedCareer.sourceLines ?? []).filter(
+      (line) =>
+        !(line.sourceType === 'account' && line.sourceId === account.id) &&
+        !(line.sourceType === 'pool' && line.sourceId === account.poolId)
+    );
+
+    onChangeCareer({
+      ...selectedCareer,
+      sourceLines: [...remainingLines, nextLine]
+    });
+  };
+
+  const getCareerPercentage = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).contributionRate;
+
+  const isSavingsMonthly = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).savingsMonthly;
+
+  const savingsInputAmountFromPercentage = (account: BankAccountDefinition) => {
+    const annualSavings = annualSavingsFromPercentage(getCareerPercentage(account));
+    return isSavingsMonthly(account) ? roundCurrency(annualSavings / 12) : annualSavings;
+  };
+
+  const annualSavingsFromInputAmount = (account: BankAccountDefinition, inputAmount: number) =>
+    roundCurrency(isSavingsMonthly(account) ? inputAmount * 12 : inputAmount);
+
+  const getMonthlyWithdrawal = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).monthlyWithdrawal;
+
+  const calculateCareerEndBalancesThroughIndex = (targetIndex: number): Record<string, number> => {
+    let balances: Record<string, number> = Object.fromEntries(
+      orderedBankAccounts.map((account) => [account.id, Math.max(0, account.balance)])
+    );
 
     for (let index = 0; index <= targetIndex; index += 1) {
       const career = value.entries[index];
-      const months = getCareerPeriodMonths(career);
-      const salary = getSalaryForCareer(career);
-      const nextBalances: SavingsBalances = { ...balances };
+      const months = Math.max(0, career.endAge - career.startAge + 1) * 12;
+      const salary = career.startingSalary;
+      const nextBalances: Record<string, number> = { ...balances };
 
-      (['emergencyFund', 'hsa', 'investments', 'retirement401k'] as Array<keyof SavingsBalances>).forEach((key) => {
-        const startBalance =
-          getStartBalanceMode(career, key) === 'manual' ? getManualStartBalance(career, key) : balances[key];
-        const annualSavings = annualSavingsFromPercentage(
-          key === 'emergencyFund'
-            ? career.emergencyFundContributionRate
-            : key === 'hsa'
-              ? career.hsaContributionRate
-              : key === 'investments'
-                ? career.investmentsContributionRate
-                : career.retirement401kContributionRate,
-          salary
-        );
-        const monthlyWithdrawal =
-          key === 'emergencyFund'
-            ? Math.max(0, career.emergencyFundMonthlyWithdrawal ?? 0)
-            : key === 'hsa'
-              ? Math.max(0, career.hsaMonthlyWithdrawal ?? 0)
-              : key === 'investments'
-                ? Math.max(0, career.investmentsMonthlyWithdrawal ?? 0)
-                : Math.max(0, career.retirement401kMonthlyWithdrawal ?? 0);
+      orderedBankAccounts.forEach((account) => {
+        const line = getLineForAccount(career, account);
+        const startBalance = balances[account.id] ?? 0;
+        const annualSavings = annualSavingsFromPercentage(line.contributionRate, salary);
+        const monthlyWithdrawal = Math.max(0, line.monthlyWithdrawal);
         const monthlyContribution = annualSavings / 12;
-        const monthlyRate = savingsAnnualRates[key] / 100 / 12;
+        const monthlyRate = account.annualReturnRate / 100 / 12;
 
-        if (months <= 0 || (startBalance <= 0 && annualSavings <= 0)) {
-          nextBalances[key] = roundCurrency(startBalance);
-        } else {
-          let running = startBalance;
-
-          for (let month = 0; month < months; month += 1) {
-            if (monthlyRate === 0) {
-              running = Math.max(0, running + monthlyContribution - monthlyWithdrawal);
-            } else {
-              running = Math.max(0, (running + monthlyContribution - monthlyWithdrawal) * (1 + monthlyRate));
-            }
-          }
-
-          nextBalances[key] = roundCurrency(running);
+        if (months <= 0 || (startBalance <= 0 && annualSavings <= 0 && monthlyWithdrawal <= 0)) {
+          nextBalances[account.id] = roundCurrency(startBalance);
+          return;
         }
+
+        let running = startBalance;
+        for (let month = 0; month < months; month += 1) {
+          if (monthlyRate === 0) {
+            running = Math.max(0, running + monthlyContribution - monthlyWithdrawal);
+          } else {
+            running = Math.max(0, (running + monthlyContribution - monthlyWithdrawal) * (1 + monthlyRate));
+          }
+        }
+
+        nextBalances[account.id] = roundCurrency(running);
       });
 
       balances = nextBalances;
@@ -327,32 +207,39 @@ export const CareerPlanEditor = ({
   };
 
   const previousCareerEndingBalances =
-    selectedCareerIndex > 0 ? calculateCareerEndBalancesThroughIndex(selectedCareerIndex - 1) : netWorthBalances;
+    selectedCareerIndex > 0 ? calculateCareerEndBalancesThroughIndex(selectedCareerIndex - 1) : null;
 
-  const getAutoStartBalance = (key: keyof SavingsBalances) =>
-    selectedCareerIndex > 0 ? previousCareerEndingBalances[key] : netWorthBalances[key];
+  const getDisplayedStartBalance = (account: BankAccountDefinition) =>
+    previousCareerEndingBalances ? previousCareerEndingBalances[account.id] ?? 0 : Math.max(0, account.balance);
 
-  const getDisplayedStartBalance = (key: keyof SavingsBalances) =>
-    getStartBalanceMode(selectedCareer, key) === 'manual' ? getManualStartBalance(selectedCareer, key) : getAutoStartBalance(key);
-
-  const savingsRows = [
-    {
-      key: 'emergencyFund' as const,
-      label: 'Emergency Fund'
-    },
-    {
-      key: 'hsa' as const,
-      label: 'HSA'
-    },
-    {
-      key: 'investments' as const,
-      label: 'Investments'
-    },
-    {
-      key: 'retirement401k' as const,
-      label: '401K'
+  const calculateEndOfPeriodBalanceForAccount = (
+    account: BankAccountDefinition,
+    startingBalance: number,
+    annualSavings: number
+  ) => {
+    if (periodMonths <= 0) {
+      return roundCurrency(startingBalance);
     }
-  ];
+
+    const monthlyContribution = annualSavings / 12;
+    const monthlyRate = account.annualReturnRate / 100 / 12;
+    const monthlyWithdrawal = Math.max(0, getMonthlyWithdrawal(account));
+    let running = startingBalance;
+
+    for (let month = 0; month < periodMonths; month += 1) {
+      if (monthlyRate === 0) {
+        running = Math.max(0, running + monthlyContribution - monthlyWithdrawal);
+      } else {
+        running = Math.max(0, (running + monthlyContribution - monthlyWithdrawal) * (1 + monthlyRate));
+      }
+    }
+
+    return roundCurrency(running);
+  };
+
+  const calculatedTotalSavingsRate = roundCurrency(
+    orderedBankAccounts.reduce((sum, account) => sum + Math.max(0, getCareerPercentage(account)), 0)
+  );
 
   return (
     <div className="career-editor">
@@ -440,13 +327,7 @@ export const CareerPlanEditor = ({
                 value={startYearMonthValue}
                 disabled={selectedCareer.useBirthdayBasedStartAge || (selectedCareer.usePreviousCareerStartAge && Boolean(previousCareer))}
                 onChange={(event) => {
-                  const derivedAge = ageFromYearMonth(
-                    event,
-                    dateOfBirth,
-                    currentAge,
-                    startAgeMin,
-                    startAgeMax
-                  );
+                  const derivedAge = ageFromYearMonth(event, dateOfBirth, currentAge, startAgeMin, startAgeMax);
 
                   if (derivedAge === null) {
                     return;
@@ -554,14 +435,7 @@ export const CareerPlanEditor = ({
             </label>
             <label>
               <span>Total Savings Rate %</span>
-              <BufferedNumberInput
-                value={calculatedTotalSavingsRate}
-                min={0}
-                max={100}
-                step={0.1}
-                disabled
-                onCommit={() => {}}
-              />
+              <BufferedNumberInput value={calculatedTotalSavingsRate} min={0} max={100} step={0.1} disabled onCommit={() => {}} />
             </label>
             <label>
               <span>Employer Match %</span>
@@ -605,74 +479,59 @@ export const CareerPlanEditor = ({
               <div className="career-savings-cell">Return (APY)</div>
               <div className="career-savings-cell">Balance at end of period</div>
             </div>
-            {savingsRows.map((row) => (
-              <div key={row.key} className="career-savings-row">
+            {orderedBankAccounts.map((account) => (
+              <div key={account.id} className="career-savings-row">
                 <div className="career-savings-cell">
                   <div className="start-balance-cell">
-                    <select
-                      value={getStartBalanceMode(selectedCareer, row.key)}
-                      onChange={(event) => setRowStartBalanceMode(row.key, event.target.value === 'manual' ? 'manual' : 'auto')}
-                    >
-                      <option value="auto">Auto</option>
-                      <option value="manual">Manual</option>
-                    </select>
-                    <BufferedNumberInput
-                      value={getDisplayedStartBalance(row.key)}
-                      min={0}
-                      max={50000000}
-                      step={100}
-                      disabled={getStartBalanceMode(selectedCareer, row.key) !== 'manual'}
-                      onCommit={(next) => setRowManualStartBalance(row.key, next)}
-                    />
-                    {getStartBalanceMode(selectedCareer, row.key) === 'auto' ? (
-                      <span className="start-source">
-                        {selectedCareerIndex > 0 ? 'From previous career' : 'From Net Worth'}
-                      </span>
-                    ) : null}
+                    <BufferedNumberInput value={getDisplayedStartBalance(account)} min={0} max={50000000} step={100} disabled onCommit={() => {}} />
+                    <span className="start-source">{selectedCareerIndex > 0 ? 'From previous career' : 'From Net Worth'}</span>
                   </div>
                 </div>
                 <div className="career-savings-cell">
-                  <input type="checkbox" checked={isSavingsMonthly(row.key)} onChange={(event) => setSavingsMonthly(row.key, event.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={isSavingsMonthly(account)}
+                    onChange={(event) => updateLineForAccount(account, { savingsMonthly: event.target.checked })}
+                  />
                 </div>
-                <div className="career-savings-cell career-savings-label">{row.label}</div>
+                <div className="career-savings-cell career-savings-label">{account.label}</div>
                 <div className="career-savings-cell">
                   <BufferedNumberInput
-                    value={getCareerPercentage(row.key)}
+                    value={getCareerPercentage(account)}
                     min={0}
                     max={100}
                     step={0.1}
-                    onCommit={(next) => setCareerPercentage(row.key, next)}
+                    onCommit={(next) => updateLineForAccount(account, { contributionRate: next })}
                   />
                 </div>
                 <div className="career-savings-cell">
                   <BufferedNumberInput
-                    value={savingsInputAmountFromPercentage(row.key)}
+                    value={savingsInputAmountFromPercentage(account)}
                     min={0}
                     max={2000000}
                     step={100}
                     onCommit={(next) => {
-                      const annualSavings = annualSavingsFromInputAmount(row.key, next);
+                      const annualSavings = annualSavingsFromInputAmount(account, next);
                       const derivedPercentage = previewSalary > 0 ? roundCurrency((annualSavings / previewSalary) * 100) : 0;
-                      setCareerPercentage(row.key, derivedPercentage);
+                      updateLineForAccount(account, { contributionRate: derivedPercentage });
                     }}
                   />
                 </div>
                 <div className="career-savings-cell">
                   <BufferedNumberInput
-                    value={savingsAnnualRates[row.key]}
+                    value={account.annualReturnRate}
                     min={-20}
                     max={25}
                     step={0.1}
-                    onCommit={(next) => onChangeSavingsReturn(row.key, next)}
+                    onCommit={(next) => onChangeBankAccountReturn(account.id, next)}
                   />
                 </div>
                 <div className="career-savings-cell">
                   {formatCurrency(
                     calculateEndOfPeriodBalanceForAccount(
-                      row.key,
-                      getDisplayedStartBalance(row.key),
-                      annualSavingsFromInputAmount(row.key, savingsInputAmountFromPercentage(row.key)),
-                      savingsAnnualRates[row.key]
+                      account,
+                      getDisplayedStartBalance(account),
+                      annualSavingsFromInputAmount(account, savingsInputAmountFromPercentage(account))
                     )
                   )}
                 </div>
@@ -684,15 +543,15 @@ export const CareerPlanEditor = ({
             <label className="full-span">
               <span>Expenses (Monthly Withdrawals by Account)</span>
             </label>
-            {savingsRows.map((row) => (
-              <label key={`expense-${row.key}`}>
-                <span>{row.label} Monthly Withdrawal</span>
+            {orderedBankAccounts.map((account) => (
+              <label key={`expense-${account.id}`}>
+                <span>{account.label} Monthly Withdrawal</span>
                 <BufferedNumberInput
-                  value={getMonthlyWithdrawal(row.key)}
+                  value={getMonthlyWithdrawal(account)}
                   min={0}
                   max={1000000}
                   step={50}
-                  onCommit={(next) => setMonthlyWithdrawal(row.key, next)}
+                  onCommit={(next) => updateLineForAccount(account, { monthlyWithdrawal: next })}
                 />
               </label>
             ))}
@@ -708,7 +567,9 @@ export const CareerPlanEditor = ({
             <p>
               Preview salary: <strong>{previewYear ? formatCurrency(previewYear.salary) : '$0'}</strong>
             </p>
-            <p>Preview savings from career income: <strong>{previewYear ? formatCurrency(previewYear.careerContribution) : '$0'}</strong></p>
+            <p>
+              Preview savings from career income: <strong>{previewYear ? formatCurrency(previewYear.careerContribution) : '$0'}</strong>
+            </p>
           </div>
 
           <div className="career-actions">

@@ -22,17 +22,11 @@ Each career entry represents a timeline segment:
 
 - Ages and label: `startAge`, `endAge`, `label`, `enabled`
 - Income behavior: salary, raises, bonus, employer match
-- Account savings rates: emergency fund, HSA, investments, 401K
-- Savings input mode flags: monthly/yearly behavior per account
-- Start balance source per account: auto/manual
-- Manual start balances per account
-- Monthly account expense fields:
-  - `emergencyFundMonthlyWithdrawal`
-  - `hsaMonthlyWithdrawal`
-  - `investmentsMonthlyWithdrawal`
-  - `retirement401kMonthlyWithdrawal`
+- Account source lines (`sourceLines`) define contribution/withdrawal behavior for dynamic pools/accounts.
+- Legacy per-pool fields are retained only for backward compatibility with older saved states.
 
 ## Projection Outputs
 
 - `ProjectionYear`: per-age computed data (balances, salary, withdrawals, account balances, returns)
 - `ProjectionResult`: list of years + summary, depletion info, end-age, and per-career ending account balances
+- `ProjectionYear.accountBalancesById` is the primary runtime account output map.

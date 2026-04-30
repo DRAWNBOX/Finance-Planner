@@ -3,9 +3,10 @@ import type { ProjectionYear } from '../types';
 
 interface ResultsTableProps {
   years: ProjectionYear[];
+  accountColumns: Array<{ id: string; label: string }>;
 }
 
-export const ResultsTable = ({ years }: ResultsTableProps) => (
+export const ResultsTable = ({ years, accountColumns }: ResultsTableProps) => (
   <div className="table-wrap">
     <table>
       <thead>
@@ -15,10 +16,9 @@ export const ResultsTable = ({ years }: ResultsTableProps) => (
           <th>Start</th>
           <th>Salary</th>
           <th>Career Savings</th>
-          <th>Emergency Fund</th>
-          <th>HSA</th>
-          <th>Investments</th>
-          <th>401K</th>
+          {accountColumns.map((account) => (
+            <th key={`results-account-header-${account.id}`}>{account.label}</th>
+          ))}
           <th>Withdrawal</th>
           <th>Extra Cashflow</th>
           <th>Return %</th>
@@ -33,10 +33,11 @@ export const ResultsTable = ({ years }: ResultsTableProps) => (
             <td>{formatCurrency(year.startBalance)}</td>
             <td>{formatCurrency(year.salary)}</td>
             <td>{formatCurrency(year.careerContribution)}</td>
-            <td>{formatCurrency(year.savingsBalances.emergencyFund)}</td>
-            <td>{formatCurrency(year.savingsBalances.hsa)}</td>
-            <td>{formatCurrency(year.savingsBalances.investments)}</td>
-            <td>{formatCurrency(year.savingsBalances.retirement401k)}</td>
+            {accountColumns.map((account) => (
+              <td key={`results-account-balance-${year.age}-${account.id}`}>
+                {formatCurrency(Math.max(0, year.accountBalancesById[account.id] ?? 0))}
+              </td>
+            ))}
             <td>{formatCurrency(year.withdrawal)}</td>
             <td>{formatCurrency(year.extraCashflow)}</td>
             <td>{formatPercent(year.annualReturnRate)}</td>

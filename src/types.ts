@@ -3,6 +3,10 @@ export type FixedIncomeDuration = 'one_year' | 'ten_year';
 export type WithdrawalMode = 'four_percent' | 'specified';
 export type CashflowCadence = 'one_time' | 'recurring';
 export type CashflowDirection = 'inflow' | 'outflow';
+export type LegacyPoolId = 'emergencyFund' | 'hsa' | 'investments' | 'retirement401k';
+export type SourceType = 'pool' | 'account';
+export type SourceLineMode = 'amount' | 'four_percent';
+export type AccountTypePreset = 'checking' | 'savings' | 'taxable' | 'retirement401k' | 'roth' | 'hsa';
 export type CashflowCategory =
   | 'social_security'
   | 'social_security_spouse'
@@ -77,6 +81,7 @@ export interface CareerEntry {
   hsaMonthlyWithdrawal?: number;
   investmentsMonthlyWithdrawal?: number;
   retirement401kMonthlyWithdrawal?: number;
+  sourceLines?: CareerSourceLine[];
 }
 
 export interface CareerPlan {
@@ -90,18 +95,27 @@ export interface FutureRetirementPlan {
   retirementYears: number;
 }
 
-export interface SavingsBalances {
-  emergencyFund: number;
-  hsa: number;
-  investments: number;
-  retirement401k: number;
+export type SavingsBalances = Record<string, number>;
+export type SavingsBalanceFlags = Record<string, boolean>;
+
+export interface SourceLine {
+  id: string;
+  enabled: boolean;
+  sourceType: SourceType;
+  sourceId: string;
+  mode: SourceLineMode;
+  amount: number;
+  startAge?: number;
 }
 
-export interface SavingsBalanceFlags {
-  emergencyFund: boolean;
-  hsa: boolean;
-  investments: boolean;
-  retirement401k: boolean;
+export interface CareerSourceLine {
+  id: string;
+  enabled: boolean;
+  sourceType: SourceType;
+  sourceId: string;
+  contributionRate: number;
+  savingsMonthly: boolean;
+  monthlyWithdrawal: number;
 }
 
 export interface LargePurchase {
@@ -112,6 +126,7 @@ export interface LargePurchase {
   age: number;
   amount: number;
   sourceAmounts: SavingsBalances;
+  sourceLines?: SourceLine[];
 }
 
 export type LongTermPurchaseEndMode = 'duration' | 'endDate';
@@ -126,9 +141,11 @@ export interface LongTermPurchase {
   endYearMonth: string;
   monthlyAmount: number;
   sourceAmounts: SavingsBalances;
+  sourceLines?: SourceLine[];
 }
 
-export type LoanPaymentSourceAccount = keyof SavingsBalances | 'income';
+export type LoanPaymentSourceAccount = string | 'income';
+export type LoanPaymentSource = 'income' | `pool:${string}` | `account:${string}`;
 
 export interface Loan {
   id: string;
@@ -136,15 +153,42 @@ export interface Loan {
   enabled: boolean;
   startYearMonth: string;
   originalAmount: number;
+  downPayment: number;
   currentBalance: number;
   annualInterestRate: number;
   minimumMonthlyPayment: number;
   extraMonthlyPayment: number;
   paymentSourceAccount: LoanPaymentSourceAccount;
+  paymentSource?: LoanPaymentSource;
 }
 
 export interface SavingsTrackerConfig {
   annualInterestRates: SavingsBalances;
+}
+
+export interface PoolDefinition {
+  id: string;
+  label: string;
+  enabled: boolean;
+  priority: number;
+  legacyFallbackId?: LegacyPoolId;
+}
+
+export interface AccountRuleConfig {
+  taxRate: number;
+  penaltyRate: number;
+  softRestrictionNote: string;
+}
+
+export interface BankAccountDefinition {
+  id: string;
+  label: string;
+  poolId: string;
+  priority: number;
+  accountType: AccountTypePreset;
+  annualReturnRate: number;
+  balance: number;
+  ruleOverrides?: Partial<AccountRuleConfig>;
 }
 
 export interface NetWorthCustomAccount {
@@ -155,6 +199,7 @@ export interface NetWorthCustomAccount {
 
 export type NetWorthImportFileType = 'csv' | 'pdf' | 'unknown';
 export type NetWorthImportStatus = 'ready' | 'needs_review' | 'error' | 'applied';
+export type NetWorthImportApplyMode = 'net_worth_only' | 'net_worth_and_expenses';
 
 export interface NetWorthImportSourceAccount {
   id: string;
@@ -184,6 +229,7 @@ export interface NetWorthImportRecord {
   status: NetWorthImportStatus;
   confidence: number;
   parseNotes: string[];
+  applyMode?: NetWorthImportApplyMode;
   applied: boolean;
   appliedAt: string;
 }
@@ -203,18 +249,118 @@ export interface NetWorthHistoryEntry {
 
 export interface NetWorthConfig {
   accountBalances: SavingsBalances;
+  pools?: PoolDefinition[];
+  bankAccounts?: BankAccountDefinition[];
   customAccounts?: NetWorthCustomAccount[];
   imports?: NetWorthImportRecord[];
   history?: NetWorthHistoryEntry[];
   asOfDate: string;
 }
 
+export type ExpenseOriginType = 'manual' | 'imported';
+export type ExpenseGroupingMode = 'account' | 'pool';
+export type ExpenseImportFileType = 'csv' | 'pdf' | 'unknown';
+export type ExpenseImportStatus = 'staged' | 'ready' | 'needs_review' | 'error' | 'applied';
+
+export interface ExpenseEntry {
+  id: string;
+  label: string;
+  amount: number;
+  startDate: string;
+  endDate: string;
+  accountId: string | null;
+  poolId: string | null;
+  notes: string;
+  originType: ExpenseOriginType;
+  importSourceId: string | null;
+  importBatchId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  categoryId?: string | null;
+  color?: string;
+}
+
+export interface ExpenseCategory {
+  id: string;
+  label: string;
+  color?: string;
+}
+
+export interface WeeklyBalancePoint {
+  weekStartDate: string;
+  balance: number;
+}
+
+export type RecurringEventCadence = 'weekly' | 'monthly';
+export type RecurringEventRule = 'on_date' | 'every_friday' | 'first_monday_after';
+
+export interface RecurringExpenseEvent {
+  id: string;
+  label: string;
+  amount: number;
+  accountId: string;
+  paymentAccountId?: string | null;
+  categoryId: string | null;
+  cadence: RecurringEventCadence;
+  rule: RecurringEventRule;
+  startDate: string;
+  endDate: string;
+  dayOfMonth?: number;
+  anchorDate?: string;
+  enabled: boolean;
+  color?: string;
+}
+
+export interface ExpenseImportSource {
+  id: string;
+  batchId: string;
+  fileName: string;
+  fileType: ExpenseImportFileType;
+  previewText: string;
+  status: ExpenseImportStatus;
+  parseNotes: string[];
+  confidence: number;
+  importedAt: string;
+  appliedAt: string;
+  entryIds: string[];
+}
+
+export interface ExpenseTimelineUiState {
+  groupingMode: ExpenseGroupingMode;
+  zoomLevel: number;
+  rowHeight: number;
+  density: 'compact' | 'comfortable';
+  snapToDay: boolean;
+  scrubberDate: string;
+  windowStartDate: string;
+  windowEndDate: string;
+  selectedAccountIds: string[];
+  selectedPoolIds: string[];
+  collapsedTrackIds: string[];
+  trackerVisibleAccountIds: string[];
+  planningWeekStartDay: number;
+}
+
+export interface ExpensesConfig {
+  entries: ExpenseEntry[];
+  imports: ExpenseImportSource[];
+  categoriesByAccountId: Record<string, ExpenseCategory[]>;
+  weeklyBalanceByAccountId: Record<string, WeeklyBalancePoint[]>;
+  maxBalanceByAccountId: Record<string, number>;
+  activePlanningAccountId: string | null;
+  recurringEvents: RecurringExpenseEvent[];
+  ui: ExpenseTimelineUiState;
+}
+
 export interface WithdrawalPlan {
   mode: WithdrawalMode;
   firstYearAmount: number;
   minimumYearlyWithdrawal: number;
+  maximumYearlyWithdrawal: number;
+  useRetirementAgeAsWithdrawalStartAge: boolean;
   firstYearAccountWithdrawals: SavingsBalances;
   firstYearAccountUseFourPercent: SavingsBalanceFlags;
+  sourceLines?: SourceLine[];
   inflationAdjusted: boolean;
 }
 
@@ -280,6 +426,7 @@ export interface Scenario {
   loans: Loan[];
   cashflowItems: CashflowItem[];
   lifeEvents: LifeEvent[];
+  expenses: ExpensesConfig;
 }
 
 export interface ProjectionYear {
@@ -301,6 +448,7 @@ export interface ProjectionYear {
   depleted: boolean;
   careerId: string | null;
   savingsBalances: SavingsBalances;
+  accountBalancesById: Record<string, number>;
 }
 
 export interface ProjectionResult {
@@ -317,6 +465,8 @@ export interface ProjectionResult {
   purchaseFirstAffordableAge: Record<string, number | null>;
   purchasePostPurchaseDisplayBalances: Record<string, SavingsBalances | null>;
   longTermPurchaseFundingShortfalls: Record<string, number>;
+  loanFundingShortfalls: Record<string, number>;
+  warnings?: string[];
 }
 
 export interface HistoricalYear {

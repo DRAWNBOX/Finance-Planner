@@ -1,49 +1,88 @@
 # Code Map
 
-## Entry Points
+## Project Tree (Core Files)
+```text
+Finance Planner/
+  AGENTS.md
+  CODEMAP.md
+  README.md
+  todo.txt
+  todoexpenses.txt
+  docs/
+    ARCHITECTURE.md
+    CALC_ENGINE.md
+    DOMAIN_MODEL.md
+    FEATURE_MAP.md
+    INDEX.md
+    STATE_PERSISTENCE.md
+    TEST_MAP.md
+  src/
+    components/
+      BufferedNumberInput.tsx
+      CareerPlanEditor.tsx
+      CashflowItemEditor.tsx
+      ChartPanel.tsx
+      ExpensesPlanner.tsx
+      LifeEventEditor.tsx
+      NetWorthHistoryChart.tsx
+      ResultsTable.tsx
+      SavingsStackedChart.tsx
+      YearMonthInput.tsx
+    data/
+      historicalReturns.ts
+    engine/
+      projection.ts
+      projection.test.ts
+    importers/
+      bankImport.ts
+      bankImport.test.ts
+      expenseImport.ts
+    utils/
+      ageDate.ts
+    App.tsx
+    App.test.tsx
+    defaultScenario.ts
+    financeModel.ts
+    main.tsx
+    storage.ts
+    styles.css
+    types.ts
+```
 
-- `src/main.tsx`: React app bootstrap.
-- `src/App.tsx`: Application composition root.
+## Architecture Flow (Block Diagram)
+```mermaid
+flowchart LR
+  U[User Input] --> A[App.tsx]
+  A --> C[UI Components]
+  C --> A
+  A --> S[storage.ts load/save + normalization]
+  S --> T[types.ts + defaultScenario.ts]
+  A --> F[financeModel.ts source-line/pool/account helpers]
+  A --> E[engine/projection.ts]
+  F --> E
+  E --> O[Projection Result]
+  O --> RT[ResultsTable.tsx]
+  O --> CP[ChartPanel.tsx]
+  O --> SS[SavingsStackedChart.tsx]
+  A --> NW[NetWorthHistoryChart.tsx]
+```
 
-## Domain and Defaults
+## Component Roles
+- `src/App.tsx`: Composition root, tab routing, state updates, source-line editing.
+- `src/storage.ts`: Persistence and migration normalizers.
+- `src/financeModel.ts`: Pool/account/source-line conversions and compatibility helpers.
+- `src/engine/projection.ts`: Deterministic projection simulation (careers, retirement, purchases, loans).
+- `src/components/CareerPlanEditor.tsx`: Career timeline and per-account contribution/withdrawal editing.
+- `src/components/ExpensesPlanner.tsx`: Expense planning/tracking workspace and import audit UI.
+- `src/components/ResultsTable.tsx`: Dynamic account-based yearly output table.
+- `src/components/SavingsStackedChart.tsx`: Pool-based stacked chart filtering/aggregation.
+- `src/components/NetWorthHistoryChart.tsx`: Historical net worth chart.
+- `src/importers/bankImport.ts`: Bank statement import parsing for net worth updates.
+- `src/importers/expenseImport.ts`: Expense import parsing for expense entries.
 
-- `src/types.ts`: Shared interfaces/types.
-- `src/defaultScenario.ts`: Default scenario + item creators.
-
-## Calculation Engine
-
-- `src/engine/projection.ts`: Simulation engine and formatting helpers.
-- `src/data/historicalReturns.ts`: Historical return series.
-
-## Persistence
-
-- `src/storage.ts`: Load/save + normalization/migration.
-
-## Components
-
-- `src/components/BufferedNumberInput.tsx`: Buffered numeric input utility.
-- `src/components/CareerPlanEditor.tsx`: Career timeline editor and account controls.
-- `src/components/CashflowItemEditor.tsx`: Cashflow add-on editor.
-- `src/components/LifeEventEditor.tsx`: Life event editor.
-- `src/components/ChartPanel.tsx`: Portfolio line/area chart.
-- `src/components/SavingsStackedChart.tsx`: Savings stacked chart with filtering.
-- `src/components/ResultsTable.tsx`: Yearly results table.
-
-## Styling
-
-- `src/styles.css`: Global styles and component styling.
-
-## Tests
-
-- `src/App.test.tsx`
-- `src/engine/projection.test.ts`
-
-## Fast-Path For Common Changes
-
-- Change financial formulas: `src/engine/projection.ts`
-- Change career UI/editor: `src/components/CareerPlanEditor.tsx`
-- Change graph sourcing per tab: `src/App.tsx`
-- Change persisted schema/defaults:
-  - `src/types.ts`
-  - `src/defaultScenario.ts`
-  - `src/storage.ts`
+## Fast Path
+- Projection logic: `src/engine/projection.ts`
+- Scenario model/schema: `src/types.ts`, `src/defaultScenario.ts`, `src/storage.ts`
+- Pool/account behavior: `src/financeModel.ts`, `src/App.tsx`
+- Purchases/loans UI behavior: `src/App.tsx`
+- Expenses behavior: `src/components/ExpensesPlanner.tsx`, `src/importers/expenseImport.ts`

@@ -25,6 +25,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Debug/profiling artifacts
+*.cpuprofile
+
 # OS / editor files
 .DS_Store
 Thumbs.db
@@ -36,3 +39,6 @@ Screenshot*.png
 Screenshot*.jpg
 Screenshot*.jpeg
 *.screenshot.png
+
+# Sample expenses data
+sample expenses/

@@ -20,6 +20,8 @@ This folder is the fast entry point for humans and LLMs.
 
 - `src/App.tsx`
 - `src/engine/projection.ts`
+- `src/financeModel.ts`
 - `src/components/CareerPlanEditor.tsx`
+- `src/components/ExpensesPlanner.tsx`
 - `src/storage.ts`
 - `src/types.ts`
