@@ -3,6 +3,7 @@ import type { CareerEntry, Scenario } from './types';
 import { ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
 import {
   careerToSourceLines,
+  DEFAULT_POOL_COLORS,
   ensureSourceLinesForPurchase,
   ensureSourceLinesForWithdrawal,
   normalizeLoanPaymentSource,
@@ -11,7 +12,7 @@ import {
 } from './financeModel';
 
 const APP_TABS = ['options', 'careers', 'netWorth', 'expenses'] as const;
-const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses', 'loans'] as const;
+const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses'] as const;
 export type CareersSubTab = (typeof CAREERS_SUB_TABS)[number];
 const EXPENSES_SUB_TABS = ['planning', 'tracking'] as const;
 export type ExpensesSubTab = (typeof EXPENSES_SUB_TABS)[number];
@@ -60,7 +61,7 @@ const derivePurchaseAgeAndYearMonth = (
   return { age, yearMonth };
 };
 
-const normalizeCareerTimeline = (entry: CareerEntry): CareerEntry => {
+const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>): CareerEntry => {
   const emergencyFundContributionRate = toNumberOrFallback(entry.emergencyFundContributionRate, 2);
   const hsaContributionRate = toNumberOrFallback(entry.hsaContributionRate, 3);
   const investmentsContributionRate = toNumberOrFallback(entry.investmentsContributionRate, 6);
@@ -100,15 +101,34 @@ const normalizeCareerTimeline = (entry: CareerEntry): CareerEntry => {
     hsaMonthlyWithdrawal,
     investmentsMonthlyWithdrawal,
     retirement401kMonthlyWithdrawal,
-    sourceLines: entry.sourceLines?.length ? entry.sourceLines : careerToSourceLines(entry)
+    sourceLines: (entry.sourceLines?.length ? entry.sourceLines : careerToSourceLines(entry)).map((line) => ({
+      ...line,
+      maxBalance: Math.max(0, toNumberOrFallback(line.maxBalance, 0)),
+      overflowFallbackAccountId:
+        typeof line.overflowFallbackAccountId === 'string' &&
+        line.overflowFallbackAccountId !== line.sourceId &&
+        bankAccountIds.has(line.overflowFallbackAccountId)
+          ? line.overflowFallbackAccountId
+          : null
+    })),
+    takeHomePay: (() => {
+      const thp = entry.takeHomePay;
+      if (!thp || typeof thp !== 'object') {
+        return { amount: 0, period: 'monthly' as const };
+      }
+      return {
+        amount: Math.max(0, toNumberOrFallback((thp as Record<string, unknown>).amount, 0)),
+        period: (thp as Record<string, unknown>).period === 'yearly' ? 'yearly' as const : 'monthly' as const
+      };
+    })()
   };
 };
 
-const normalizeCareerEntries = (entries: CareerEntry[]) => {
+const normalizeCareerEntries = (entries: CareerEntry[], bankAccountIds: Set<string>) => {
   const normalized: CareerEntry[] = [];
 
   entries.forEach((entry, index) => {
-    const base = normalizeCareerTimeline(entry);
+    const base = normalizeCareerTimeline(entry, bankAccountIds);
     const previous = normalized[index - 1];
 
     if (base.usePreviousCareerStartAge && previous) {
@@ -145,7 +165,7 @@ const normalizeIsoDate = (value: unknown) =>
   typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(value) ? value : '';
 
 const normalizeCareersSubTab = (value: unknown): CareersSubTab => {
-  if (value === 'retirement' || value === 'careers' || value === 'timeline' || value === 'purchasesExpenses' || value === 'loans') {
+  if (value === 'retirement' || value === 'careers' || value === 'timeline' || value === 'purchasesExpenses') {
     return value;
   }
 
@@ -193,6 +213,18 @@ export const loadAppState = (): PersistedAppState => {
     const parsed = JSON.parse(raw) as Partial<PersistedAppState> & Partial<Scenario>;
     const scenario = parsed.scenario ?? parsed;
     const ui = parsed.ui ?? defaultUiState;
+    const bankAccountIds = new Set(
+      (scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? [])
+        .map((account) => (typeof account.id === 'string' ? account.id.trim() : ''))
+        .filter((id) => id.length > 0)
+    );
+
+    const normalizeIncomeFallbackId = (value: unknown, bankIds: Set<string>): string | null => {
+      if (typeof value === 'string' && value.trim().length > 0 && bankIds.has(value.trim())) {
+        return value.trim();
+      }
+      return null;
+    };
 
     return {
       scenario: {
@@ -206,7 +238,7 @@ export const loadAppState = (): PersistedAppState => {
           enabled: scenario.careerPlan?.enabled ?? defaultScenario.careerPlan.enabled,
           entries:
             scenario.careerPlan?.entries?.length
-              ? normalizeCareerEntries(scenario.careerPlan.entries)
+              ? normalizeCareerEntries(scenario.careerPlan.entries, bankAccountIds)
               : defaultScenario.careerPlan.entries
         },
         savingsTracker: {
@@ -231,6 +263,10 @@ export const loadAppState = (): PersistedAppState => {
                   label: typeof pool.label === 'string' && pool.label.trim().length > 0 ? pool.label : `Pool ${index + 1}`,
                   enabled: pool.enabled !== false,
                   priority: Math.max(0, Math.floor(toNumberOrFallback(pool.priority, index))),
+                  color:
+                    typeof pool.color === 'string' && pool.color.trim().length > 0
+                      ? pool.color.trim()
+                      : DEFAULT_POOL_COLORS[index % DEFAULT_POOL_COLORS.length],
                   legacyFallbackId:
                     pool.legacyFallbackId === 'emergencyFund' ||
                     pool.legacyFallbackId === 'hsa' ||
@@ -397,6 +433,8 @@ export const loadAppState = (): PersistedAppState => {
         largePurchases: (scenario.largePurchases ?? defaultScenario.largePurchases).map((purchase) => ({
           ...purchase,
           enabled: Boolean(purchase.enabled),
+          showOnGraph: purchase.showOnGraph !== false,
+          flagColor: typeof purchase.flagColor === 'string' && purchase.flagColor.trim().length > 0 ? purchase.flagColor : undefined,
           ...derivePurchaseAgeAndYearMonth(
             purchase,
             scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
@@ -462,6 +500,8 @@ export const loadAppState = (): PersistedAppState => {
             id: typeof purchase.id === 'string' && purchase.id.trim().length > 0 ? purchase.id : `long-term-purchase-${index + 1}`,
             label: typeof purchase.label === 'string' && purchase.label.trim().length > 0 ? purchase.label : `Long-Term Purchase ${index + 1}`,
             enabled: Boolean(purchase.enabled),
+            showOnGraph: purchase.showOnGraph !== false,
+            flagColor: typeof purchase.flagColor === 'string' && purchase.flagColor.trim().length > 0 ? purchase.flagColor : undefined,
             startYearMonth,
             endMode,
             durationMonths,
@@ -483,6 +523,8 @@ export const loadAppState = (): PersistedAppState => {
           id: typeof loan.id === 'string' && loan.id.trim().length > 0 ? loan.id : `loan-${index + 1}`,
           label: typeof loan.label === 'string' && loan.label.trim().length > 0 ? loan.label : `Loan ${index + 1}`,
           enabled: Boolean(loan.enabled),
+          showOnGraph: loan.showOnGraph !== false,
+          flagColor: typeof loan.flagColor === 'string' && loan.flagColor.trim().length > 0 ? loan.flagColor : undefined,
           startYearMonth:
             normalizeYearMonth(loan.startYearMonth) ||
             formatYearMonthFromAge(
@@ -527,7 +569,13 @@ export const loadAppState = (): PersistedAppState => {
             createdAt: normalizeIsoDate(entry.createdAt) || defaultScenario.expenses.ui.windowStartDate,
             updatedAt: normalizeIsoDate(entry.updatedAt) || defaultScenario.expenses.ui.windowStartDate,
             categoryId: typeof entry.categoryId === 'string' && entry.categoryId.trim().length > 0 ? entry.categoryId : null,
-            color: typeof entry.color === 'string' && entry.color.trim().length > 0 ? entry.color : undefined
+            color: typeof entry.color === 'string' && entry.color.trim().length > 0 ? entry.color : undefined,
+            fundingSource: (() => {
+              const src = (entry as unknown as Record<string, unknown>).fundingSource;
+              if (src === 'income') return 'income';
+              if (typeof src === 'string' && src.startsWith('account:') && bankAccountIds.has(src.slice('account:'.length))) return src as `account:${string}`;
+              return undefined;
+            })()
           })),
           imports: (scenario.expenses?.imports ?? defaultScenario.expenses.imports).map((item, index) => ({
             id: typeof item.id === 'string' && item.id.trim().length > 0 ? item.id : `expense-import-${index + 1}`,
@@ -608,7 +656,13 @@ export const loadAppState = (): PersistedAppState => {
             dayOfMonth: Math.min(31, Math.max(1, Math.floor(toNumberOrFallback(event.dayOfMonth, 1)))),
             anchorDate: normalizeIsoDate(event.anchorDate),
             enabled: event.enabled !== false,
-            color: typeof event.color === 'string' && event.color.trim().length > 0 ? event.color : undefined
+            color: typeof event.color === 'string' && event.color.trim().length > 0 ? event.color : undefined,
+            fundingSource: (() => {
+              const src = (event as unknown as Record<string, unknown>).fundingSource;
+              if (src === 'income') return 'income';
+              if (typeof src === 'string' && src.startsWith('account:') && bankAccountIds.has(src.slice('account:'.length))) return src as `account:${string}`;
+              return undefined;
+            })()
           })),
           ui: {
             groupingMode: scenario.expenses?.ui?.groupingMode === 'pool' ? 'pool' : 'account',
@@ -638,7 +692,9 @@ export const loadAppState = (): PersistedAppState => {
           }
         },
         cashflowItems: scenario.cashflowItems ?? [],
-        lifeEvents: scenario.lifeEvents ?? []
+        lifeEvents: scenario.lifeEvents ?? [],
+        incomeFallbackAccountId: normalizeIncomeFallbackId(scenario.incomeFallbackAccountId, bankAccountIds),
+        incomeFallbackAccountId2: normalizeIncomeFallbackId(scenario.incomeFallbackAccountId2, bankAccountIds)
       },
       ui: {
         ...defaultUiState,

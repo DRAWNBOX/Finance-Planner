@@ -6,12 +6,21 @@ interface BufferedNumberInputProps {
   max: number;
   step?: number;
   disabled?: boolean;
+  commitOnChange?: boolean;
   onCommit: (value: number) => void;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
-export const BufferedNumberInput = ({ value, min, max, step = 1, disabled = false, onCommit }: BufferedNumberInputProps) => {
+export const BufferedNumberInput = ({
+  value,
+  min,
+  max,
+  step = 1,
+  disabled = false,
+  commitOnChange = false,
+  onCommit
+}: BufferedNumberInputProps) => {
   const [draftValue, setDraftValue] = useState(String(value));
 
   useEffect(() => {
@@ -46,7 +55,17 @@ export const BufferedNumberInput = ({ value, min, max, step = 1, disabled = fals
       step={step}
       disabled={disabled}
       value={draftValue}
-      onChange={(event) => setDraftValue(event.target.value)}
+      onChange={(event) => {
+        const nextDraft = event.target.value;
+        setDraftValue(nextDraft);
+        if (!commitOnChange) {
+          return;
+        }
+        if (nextDraft.trim() === '' || Number.isNaN(Number(nextDraft))) {
+          return;
+        }
+        onCommit(clamp(Number(nextDraft), min, max));
+      }}
       onBlur={commitDraft}
       onKeyDown={handleKeyDown}
     />

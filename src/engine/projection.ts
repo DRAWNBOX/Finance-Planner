@@ -27,7 +27,6 @@ import type {
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const toRate = (value: number) => value / 100;
 const RETIREMENT_FAILURE_NET_WORTH_FLOOR = 100000;
-const EMERGENCY_FUND_MAX_BALANCE = 15000;
 
 const LEGACY_POOL_IDS: LegacyPoolId[] = ['emergencyFund', 'hsa', 'investments', 'retirement401k'];
 
@@ -279,28 +278,36 @@ const applyMonthlyGrowth = (accounts: LedgerAccount[]) => {
   });
 };
 
-const applyEmergencyCapOverflow = (accounts: LedgerAccount[], pools: PoolDefinition[], fallbackBalances: SavingsBalances) => {
-  const emergencyAccounts = getPoolAccounts('emergencyFund', accounts, fallbackBalances);
-  const emergencyTotal = emergencyAccounts.reduce((sum, account) => sum + Math.max(0, account.balance), 0);
-  if (emergencyTotal <= EMERGENCY_FUND_MAX_BALANCE) {
-    return;
-  }
+const applyCareerAccountCaps = (accounts: LedgerAccount[], lines: CareerSourceLine[], warnings: string[]) => {
+  const ruleByAccountId = new Map(
+    lines
+      .filter((line) => line.enabled && line.sourceType === 'account')
+      .map((line) => [line.sourceId, line] as const)
+  );
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
 
-  let overflow = emergencyTotal - EMERGENCY_FUND_MAX_BALANCE;
-  for (const account of [...emergencyAccounts].sort((a, b) => b.priority - a.priority)) {
-    if (overflow <= 0) {
-      break;
+  accounts.forEach((account) => {
+    const rule = ruleByAccountId.get(account.id);
+    const maxBalance = Math.max(0, rule?.maxBalance ?? 0);
+    if (maxBalance <= 0 || account.balance <= maxBalance) {
+      return;
     }
 
-    const reduction = Math.min(account.balance, overflow);
-    account.balance = Math.max(0, account.balance - reduction);
-    overflow -= reduction;
-  }
+    const overflow = account.balance - maxBalance;
+    const fallbackId = rule?.overflowFallbackAccountId ?? null;
+    const fallback = fallbackId ? accountById.get(fallbackId) : undefined;
 
-  const investmentAccounts = getPoolAccounts('investments', accounts, fallbackBalances);
-  if (investmentAccounts.length > 0) {
-    investmentAccounts[0].balance += emergencyTotal - EMERGENCY_FUND_MAX_BALANCE;
-  }
+    if (!fallback || fallback.id === account.id) {
+      const warning = `Overflow fallback missing for ${account.label}; excess above max balance was not rerouted.`;
+      if (!warnings.includes(warning)) {
+        warnings.push(warning);
+      }
+      return;
+    }
+
+    account.balance = maxBalance;
+    fallback.balance += overflow;
+  });
 };
 
 const applySourceContributions = (
@@ -520,9 +527,10 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
   const careerEndSavingsBalances: Record<string, SavingsBalances> = {};
   const purchaseFundingShortfalls: Record<string, number> = {};
   const purchaseFirstAffordableAge: Record<string, number | null> = {};
-  const purchasePostPurchaseDisplayBalances: Record<string, SavingsBalances | null> = {};
+  const purchasePostPurchaseDisplayBalances: Record<string, Record<string, number> | null> = {};
   const longTermPurchaseFundingShortfalls: Record<string, number> = {};
   const loanFundingShortfalls: Record<string, number> = {};
+  const incomeFundedItemStatuses: Record<string, { status: 'covered' | 'fallback' | 'shortfall'; shortfallAmount?: number }> = {};
   const loanBalances: Record<string, number> = Object.fromEntries((scenario.loans ?? []).map((loan) => [loan.id, Math.max(0, loan.currentBalance)]));
   const loanDownPaymentApplied: Record<string, boolean> = {};
   let previousPlannedRetirementLines: Array<{ source: SourceLine; amount: number }> = [];
@@ -531,6 +539,49 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
   let previousRequiredRetirementMaximum = 0;
   let depletedAge: number | null = null;
   let monthsElapsed = 0;
+
+  const processIncomeWaterfall = (
+    itemId: string,
+    needed: number,
+    availIncome: { value: number },
+    fb1: string | null | undefined,
+    fb2: string | null | undefined,
+    accts: LedgerAccount[],
+    pls: PoolDefinition[],
+    bases: SavingsBalances,
+    warn: string[],
+    ageVal: number,
+    retireAge: number
+  ): { status: 'covered' | 'fallback' | 'shortfall'; covered: number } => {
+    let remaining = needed;
+
+    if (availIncome.value >= remaining) {
+      availIncome.value -= remaining;
+      return { status: 'covered', covered: needed };
+    }
+
+    remaining -= availIncome.value;
+    availIncome.value = 0;
+    let status: 'covered' | 'fallback' | 'shortfall' = 'fallback';
+
+    if (remaining > 0.001 && fb1) {
+      const source: SourceLine = { id: `${itemId}-fb1`, enabled: true, sourceType: 'account', sourceId: fb1, mode: 'amount', amount: remaining };
+      const outcome = applyNetTargetWithdrawal(source, remaining, accts, pls, bases, warn, { age: ageVal, retirementAge: retireAge });
+      remaining -= outcome.netCash;
+    }
+
+    if (remaining > 0.001 && fb2) {
+      const source: SourceLine = { id: `${itemId}-fb2`, enabled: true, sourceType: 'account', sourceId: fb2, mode: 'amount', amount: remaining };
+      const outcome = applyNetTargetWithdrawal(source, remaining, accts, pls, bases, warn, { age: ageVal, retirementAge: retireAge });
+      remaining -= outcome.netCash;
+    }
+
+    if (remaining > 0.001) {
+      status = 'shortfall';
+    }
+
+    return { status, covered: needed - remaining };
+  };
 
   for (let offset = 0; offset < totalYears; offset += 1) {
     const age = currentAge + offset;
@@ -581,15 +632,27 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
         });
       });
 
-      applyEmergencyCapOverflow(ledgerAccounts, pools, baseBalances);
+      applyCareerAccountCaps(ledgerAccounts, careerSourceLines, warnings);
       applyMonthlyGrowth(ledgerAccounts);
     }
+
+    const monthlyTakeHome = careerEntry?.takeHomePay?.amount
+      ? (careerEntry.takeHomePay.period === 'yearly'
+          ? careerEntry.takeHomePay.amount / 12
+          : careerEntry.takeHomePay.amount)
+      : 0;
+    const availableIncome = { value: monthlyTakeHome * periodMonths };
 
     const poolBalancesAfterCareer = buildPoolBalances(pools, ledgerAccounts, baseBalances);
     const affordabilityCandidates = scenario.largePurchases.filter((purchase) => purchase.enabled && age >= purchase.age);
 
     affordabilityCandidates.forEach((purchase) => {
       if (purchaseFirstAffordableAge[purchase.id] !== undefined) {
+        return;
+      }
+
+      if (purchase.fundingSource === 'income') {
+        purchaseFirstAffordableAge[purchase.id] = age;
         return;
       }
 
@@ -613,8 +676,21 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
     let purchaseCashflow = 0;
 
     purchasesAtAge.forEach((purchase) => {
+      if (purchase.fundingSource === 'income') {
+        const needed = Math.max(0, purchase.amount);
+        const result = processIncomeWaterfall(
+          purchase.id, needed, availableIncome,
+          scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+          ledgerAccounts, pools, baseBalances, warnings, age, retirementAge
+        );
+        incomeFundedItemStatuses[purchase.id] = { status: result.status, shortfallAmount: needed - result.covered };
+        purchaseCashflow -= result.covered;
+        purchasePostPurchaseDisplayBalances[purchase.id] = toAccountBalancesById(ledgerAccounts);
+        return;
+      }
+
+      const beforeAccountBalances = toAccountBalancesById(ledgerAccounts);
       const requestedSources = ensureSourceLinesForPurchase(purchase).filter((line) => line.enabled);
-      const before = toLegacySavings(buildPoolBalances(pools, ledgerAccounts, baseBalances));
       let remainingNet = Math.max(0, purchase.amount);
       let actualNet = 0;
       let availableNet = 0;
@@ -650,12 +726,15 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
         });
       }
 
-      purchasePostPurchaseDisplayBalances[purchase.id] = {
-        emergencyFund: before.emergencyFund - (purchase.sourceAmounts?.emergencyFund ?? 0),
-        hsa: before.hsa - (purchase.sourceAmounts?.hsa ?? 0),
-        investments: before.investments - (purchase.sourceAmounts?.investments ?? 0),
-        retirement401k: before.retirement401k - (purchase.sourceAmounts?.retirement401k ?? 0)
-      };
+      const postPurchaseAccountBalances = toAccountBalancesById(ledgerAccounts);
+      const fundingSource = purchase.fundingSource ?? 'income';
+      if (fundingSource.startsWith('account:')) {
+        const [, accountId] = fundingSource.split(':', 2);
+        if (accountId) {
+          postPurchaseAccountBalances[accountId] = (beforeAccountBalances[accountId] ?? 0) - Math.max(0, purchase.amount);
+        }
+      }
+      purchasePostPurchaseDisplayBalances[purchase.id] = postPurchaseAccountBalances;
 
       purchaseFundingShortfalls[purchase.id] = (purchaseFundingShortfalls[purchase.id] ?? 0) + Math.max(0, purchase.amount - actualNet);
       purchaseCashflow -= actualNet;
@@ -693,6 +772,16 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           );
           loanFundingShortfalls[loan.id] = (loanFundingShortfalls[loan.id] ?? 0) + Math.max(0, downPayment - outcome.netCash);
           purchaseCashflow -= outcome.netCash;
+        } else {
+          const dpResult = processIncomeWaterfall(
+            `${loan.id}-down`, downPayment, availableIncome,
+            scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+            ledgerAccounts, pools, baseBalances, warnings, age, retirementAge
+          );
+          if (dpResult.status !== 'covered') {
+            incomeFundedItemStatuses[loan.id] = { status: dpResult.status, shortfallAmount: downPayment - dpResult.covered };
+          }
+          purchaseCashflow -= dpResult.covered;
         }
 
         loanDownPaymentApplied[loan.id] = true;
@@ -724,8 +813,18 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
         const paymentTarget = Math.min(plannedMonthlyPayment, withInterest);
 
         if (paymentSource === 'income') {
+          const loanResult = processIncomeWaterfall(
+            loan.id, paymentTarget, availableIncome,
+            scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+            ledgerAccounts, pools, baseBalances, warnings, age, retirementAge
+          );
+          const existingStatus = incomeFundedItemStatuses[loan.id];
+          if (!existingStatus || loanResult.status === 'shortfall' || (loanResult.status === 'fallback' && existingStatus.status !== 'shortfall')) {
+            incomeFundedItemStatuses[loan.id] = { status: loanResult.status, shortfallAmount: paymentTarget - loanResult.covered };
+          }
           balanceLeft = Math.max(0, withInterest - paymentTarget);
           totalPaid += paymentTarget;
+          purchaseCashflow -= loanResult.covered;
           continue;
         }
 
@@ -784,6 +883,18 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
       }
 
       const targetAmount = Math.max(0, purchase.monthlyAmount) * activeMonths;
+
+      if (purchase.fundingSource === 'income') {
+        const result = processIncomeWaterfall(
+          purchase.id, targetAmount, availableIncome,
+          scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+          ledgerAccounts, pools, baseBalances, warnings, age, retirementAge
+        );
+        incomeFundedItemStatuses[purchase.id] = { status: result.status, shortfallAmount: targetAmount - result.covered };
+        purchaseCashflow -= result.covered;
+        return;
+      }
+
       const sourceLines = ensureSourceLinesForPurchase(purchase).filter((line) => line.enabled);
       let remaining = targetAmount;
       let actualNet = 0;
@@ -1014,6 +1125,7 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
     longTermPurchaseFundingShortfalls,
     loanFundingShortfalls,
     warnings,
+    incomeFundedItemStatuses,
     historicalWindowLabel:
       scenario.returnMode === 'historical' && historicalWindow.length > 0
         ? `${historicalWindow[0].year}-${historicalWindow[historicalWindow.length - 1].year}`

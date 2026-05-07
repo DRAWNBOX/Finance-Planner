@@ -7,9 +7,6 @@ import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
 interface CareerPlanEditorProps {
   value: CareerPlan;
   selectedCareerId: string;
-  isRetirementSelected: boolean;
-  showRetirementItem?: boolean;
-  onSelectRetirementItem: () => void;
   onSelectCareer: (careerId: string) => void;
   onChangeCareer: (career: CareerEntry) => void;
   onDuplicateCareer: (careerId: string) => void;
@@ -22,6 +19,10 @@ interface CareerPlanEditorProps {
   birthdayBasedCareerStartAge: number;
   dateOfBirth: string;
   currentAge: number;
+  incomeFallbackAccountId: string | null | undefined;
+  incomeFallbackAccountId2: string | null | undefined;
+  onChangeIncomeFallbackAccount1: (accountId: string | null) => void;
+  onChangeIncomeFallbackAccount2: (accountId: string | null) => void;
 }
 
 const formatCurrency = (value: number) =>
@@ -55,16 +56,15 @@ const resolveCareerLineForAccount = (
     sourceId: account.id,
     contributionRate: 0,
     savingsMonthly: false,
-    monthlyWithdrawal: 0
+    monthlyWithdrawal: 0,
+    maxBalance: 0,
+    overflowFallbackAccountId: null
   };
 };
 
 export const CareerPlanEditor = ({
   value,
   selectedCareerId,
-  isRetirementSelected,
-  showRetirementItem = true,
-  onSelectRetirementItem,
   onSelectCareer,
   onChangeCareer,
   onDuplicateCareer,
@@ -76,10 +76,13 @@ export const CareerPlanEditor = ({
   bankAccounts,
   birthdayBasedCareerStartAge,
   dateOfBirth,
-  currentAge
+  currentAge,
+  incomeFallbackAccountId,
+  incomeFallbackAccountId2,
+  onChangeIncomeFallbackAccount1,
+  onChangeIncomeFallbackAccount2
 }: CareerPlanEditorProps) => {
   const selectedCareer = value.entries.find((career) => career.id === selectedCareerId) ?? value.entries[0];
-  const retirementSelected = showRetirementItem && isRetirementSelected;
   const [dragCareerId, setDragCareerId] = useState<string | null>(null);
   const selectedCareerIndex = selectedCareer ? value.entries.findIndex((career) => career.id === selectedCareer.id) : -1;
   const previousCareer = selectedCareerIndex > 0 ? value.entries[selectedCareerIndex - 1] : undefined;
@@ -118,14 +121,16 @@ export const CareerPlanEditor = ({
   const endYearMonthValue =
     selectedCareer.endYearMonth || formatYearMonthFromAge(selectedCareer.endAge, dateOfBirth, currentAge);
 
-  const annualSavingsFromPercentage = (percentage: number, salary = previewSalary) => roundCurrency(salary * (percentage / 100));
+  const annualSavingsFromPercentage = (percentage: number, salary = previewSalary) => Math.round(salary * (percentage / 100));
 
   const getLineForAccount = (career: CareerEntry, account: BankAccountDefinition) =>
     resolveCareerLineForAccount(career, account);
 
   const updateLineForAccount = (
     account: BankAccountDefinition,
-    updates: Partial<Pick<CareerSourceLine, 'contributionRate' | 'savingsMonthly' | 'monthlyWithdrawal' | 'enabled'>>
+    updates: Partial<
+      Pick<CareerSourceLine, 'contributionRate' | 'savingsMonthly' | 'monthlyWithdrawal' | 'enabled' | 'maxBalance' | 'overflowFallbackAccountId'>
+    >
   ) => {
     const existingLine = getLineForAccount(selectedCareer, account);
     const nextLine: CareerSourceLine = {
@@ -136,7 +141,14 @@ export const CareerPlanEditor = ({
       sourceType: 'account',
       sourceId: account.id,
       contributionRate: Math.max(0, updates.contributionRate ?? existingLine.contributionRate),
-      monthlyWithdrawal: Math.max(0, updates.monthlyWithdrawal ?? existingLine.monthlyWithdrawal)
+      monthlyWithdrawal: Math.max(0, updates.monthlyWithdrawal ?? existingLine.monthlyWithdrawal),
+      maxBalance: Math.max(0, updates.maxBalance ?? existingLine.maxBalance ?? 0),
+      overflowFallbackAccountId:
+        updates.overflowFallbackAccountId === null
+          ? null
+          : typeof updates.overflowFallbackAccountId === 'string'
+            ? updates.overflowFallbackAccountId
+            : existingLine.overflowFallbackAccountId ?? null
     };
     const remainingLines = (selectedCareer.sourceLines ?? []).filter(
       (line) =>
@@ -156,13 +168,16 @@ export const CareerPlanEditor = ({
 
   const savingsInputAmountFromPercentage = (account: BankAccountDefinition) => {
     const annualSavings = annualSavingsFromPercentage(getCareerPercentage(account));
-    return isSavingsMonthly(account) ? roundCurrency(annualSavings / 12) : annualSavings;
+    return isSavingsMonthly(account) ? Math.round(annualSavings / 12) : annualSavings;
   };
 
   const annualSavingsFromInputAmount = (account: BankAccountDefinition, inputAmount: number) =>
-    roundCurrency(isSavingsMonthly(account) ? inputAmount * 12 : inputAmount);
+    Math.round(isSavingsMonthly(account) ? inputAmount * 12 : inputAmount);
 
   const getMonthlyWithdrawal = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).monthlyWithdrawal;
+  const getMaxBalance = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).maxBalance ?? 0;
+  const getOverflowFallbackAccountId = (account: BankAccountDefinition) =>
+    getLineForAccount(selectedCareer, account).overflowFallbackAccountId ?? null;
 
   const calculateCareerEndBalancesThroughIndex = (targetIndex: number): Record<string, number> => {
     let balances: Record<string, number> = Object.fromEntries(
@@ -265,39 +280,21 @@ export const CareerPlanEditor = ({
             {career.label}
           </button>
         ))}
-        {showRetirementItem ? (
-          <button
-            type="button"
-            className={retirementSelected ? 'career-tab retirement-item active' : 'career-tab retirement-item'}
-            onClick={onSelectRetirementItem}
-          >
-            Retirement
-          </button>
-        ) : null}
         <button type="button" className="career-tab add" onClick={onAddCareer}>
           + Career
         </button>
       </div>
 
-      {!retirementSelected ? (
-        <label className="checkbox-row career-enable">
-          <input
-            type="checkbox"
-            checked={selectedCareer?.enabled ?? false}
-            onChange={(event) => selectedCareer && onChangeCareer({ ...selectedCareer, enabled: event.target.checked })}
-          />
-          <span>Estimate income from this career</span>
-        </label>
-      ) : (
-        <div className="career-summary">
-          <p>
-            <strong>Retirement</strong> is a fixed, non-removable career item.
-          </p>
-          <p>Select it to manage all retirement-specific settings and events.</p>
-        </div>
-      )}
+      <label className="checkbox-row career-enable">
+        <input
+          type="checkbox"
+          checked={selectedCareer?.enabled ?? false}
+          onChange={(event) => selectedCareer && onChangeCareer({ ...selectedCareer, enabled: event.target.checked })}
+        />
+        <span>Estimate income from this career</span>
+      </label>
 
-      {!retirementSelected && selectedCareer ? (
+      {selectedCareer ? (
         <>
           <div className="career-grid">
             <label className="full-span">
@@ -469,6 +466,40 @@ export const CareerPlanEditor = ({
             </label>
           </div>
 
+          <div className="career-grid">
+            <label>
+              <span>Take Home Pay</span>
+              <BufferedNumberInput
+                value={selectedCareer.takeHomePay?.amount ?? 0}
+                min={0}
+                max={2000000}
+                step={100}
+                onCommit={(next) =>
+                  onChangeCareer({
+                    ...selectedCareer,
+                    takeHomePay: { amount: next, period: selectedCareer.takeHomePay?.period ?? 'monthly' }
+                  })
+                }
+              />
+            </label>
+            <label>
+              <span>Take Home Period</span>
+              <select
+                aria-label="Take Home Pay Period"
+                value={selectedCareer.takeHomePay?.period ?? 'monthly'}
+                onChange={(event) =>
+                  onChangeCareer({
+                    ...selectedCareer,
+                    takeHomePay: { amount: selectedCareer.takeHomePay?.amount ?? 0, period: event.target.value as 'monthly' | 'yearly' }
+                  })
+                }
+              >
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </label>
+          </div>
+
           <div className="career-savings-grid">
             <div className="career-savings-row career-savings-header">
               <div className="career-savings-cell">Starting Balance</div>
@@ -477,6 +508,8 @@ export const CareerPlanEditor = ({
               <div className="career-savings-cell">Percentage</div>
               <div className="career-savings-cell">Savings</div>
               <div className="career-savings-cell">Return (APY)</div>
+              <div className="career-savings-cell">Max Balance</div>
+              <div className="career-savings-cell">Overflow Fallback</div>
               <div className="career-savings-cell">Balance at end of period</div>
             </div>
             {orderedBankAccounts.map((account) => (
@@ -497,7 +530,7 @@ export const CareerPlanEditor = ({
                 <div className="career-savings-cell career-savings-label">{account.label}</div>
                 <div className="career-savings-cell">
                   <BufferedNumberInput
-                    value={getCareerPercentage(account)}
+                    value={Math.round(getCareerPercentage(account) * 100) / 100}
                     min={0}
                     max={100}
                     step={0.1}
@@ -525,6 +558,30 @@ export const CareerPlanEditor = ({
                     step={0.1}
                     onCommit={(next) => onChangeBankAccountReturn(account.id, next)}
                   />
+                </div>
+                <div className="career-savings-cell">
+                  <BufferedNumberInput
+                    value={getMaxBalance(account)}
+                    min={0}
+                    max={50000000}
+                    step={100}
+                    onCommit={(next) => updateLineForAccount(account, { maxBalance: next })}
+                  />
+                </div>
+                <div className="career-savings-cell">
+                  <select
+                    value={getOverflowFallbackAccountId(account) ?? ''}
+                    onChange={(event) => updateLineForAccount(account, { overflowFallbackAccountId: event.target.value || null })}
+                  >
+                    <option value="">None</option>
+                    {orderedBankAccounts
+                      .filter((candidate) => candidate.id !== account.id)
+                      .map((candidate) => (
+                        <option key={`${account.id}-fallback-${candidate.id}`} value={candidate.id}>
+                          {candidate.label}
+                        </option>
+                      ))}
+                  </select>
                 </div>
                 <div className="career-savings-cell">
                   {formatCurrency(
@@ -555,6 +612,40 @@ export const CareerPlanEditor = ({
                 />
               </label>
             ))}
+          </div>
+
+          <div className="career-grid">
+            <label className="full-span">
+              <span>Income Fallback Accounts</span>
+            </label>
+            <label>
+              <span>Primary Fallback</span>
+              <select
+                value={incomeFallbackAccountId ?? ''}
+                onChange={(event) => onChangeIncomeFallbackAccount1(event.target.value || null)}
+              >
+                <option value="">None</option>
+                {orderedBankAccounts.map((account) => (
+                  <option key={`fallback1-${account.id}`} value={account.id}>
+                    {account.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Secondary Fallback</span>
+              <select
+                value={incomeFallbackAccountId2 ?? ''}
+                onChange={(event) => onChangeIncomeFallbackAccount2(event.target.value || null)}
+              >
+                <option value="">None</option>
+                {orderedBankAccounts.map((account) => (
+                  <option key={`fallback2-${account.id}`} value={account.id}>
+                    {account.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <div className="career-summary">

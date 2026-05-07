@@ -82,6 +82,7 @@ export interface CareerEntry {
   investmentsMonthlyWithdrawal?: number;
   retirement401kMonthlyWithdrawal?: number;
   sourceLines?: CareerSourceLine[];
+  takeHomePay?: { amount: number; period: 'monthly' | 'yearly' };
 }
 
 export interface CareerPlan {
@@ -106,6 +107,7 @@ export interface SourceLine {
   mode: SourceLineMode;
   amount: number;
   startAge?: number;
+  syncWithRetirementAge?: boolean;
 }
 
 export interface CareerSourceLine {
@@ -116,17 +118,22 @@ export interface CareerSourceLine {
   contributionRate: number;
   savingsMonthly: boolean;
   monthlyWithdrawal: number;
+  maxBalance?: number;
+  overflowFallbackAccountId?: string | null;
 }
 
 export interface LargePurchase {
   id: string;
   label: string;
   enabled: boolean;
+  showOnGraph: boolean;
+  flagColor?: string;
   yearMonth: string;
   age: number;
   amount: number;
   sourceAmounts: SavingsBalances;
   sourceLines?: SourceLine[];
+  fundingSource?: 'income' | `account:${string}`;
 }
 
 export type LongTermPurchaseEndMode = 'duration' | 'endDate';
@@ -135,6 +142,8 @@ export interface LongTermPurchase {
   id: string;
   label: string;
   enabled: boolean;
+  showOnGraph: boolean;
+  flagColor?: string;
   startYearMonth: string;
   endMode: LongTermPurchaseEndMode;
   durationMonths: number;
@@ -142,6 +151,7 @@ export interface LongTermPurchase {
   monthlyAmount: number;
   sourceAmounts: SavingsBalances;
   sourceLines?: SourceLine[];
+  fundingSource?: 'income' | `account:${string}`;
 }
 
 export type LoanPaymentSourceAccount = string | 'income';
@@ -151,6 +161,8 @@ export interface Loan {
   id: string;
   label: string;
   enabled: boolean;
+  showOnGraph: boolean;
+  flagColor?: string;
   startYearMonth: string;
   originalAmount: number;
   downPayment: number;
@@ -171,6 +183,7 @@ export interface PoolDefinition {
   label: string;
   enabled: boolean;
   priority: number;
+  color?: string;
   legacyFallbackId?: LegacyPoolId;
 }
 
@@ -278,6 +291,7 @@ export interface ExpenseEntry {
   updatedAt: string;
   categoryId?: string | null;
   color?: string;
+  fundingSource?: 'income' | `account:${string}`;
 }
 
 export interface ExpenseCategory {
@@ -309,6 +323,7 @@ export interface RecurringExpenseEvent {
   anchorDate?: string;
   enabled: boolean;
   color?: string;
+  fundingSource?: 'income' | `account:${string}`;
 }
 
 export interface ExpenseImportSource {
@@ -427,6 +442,8 @@ export interface Scenario {
   cashflowItems: CashflowItem[];
   lifeEvents: LifeEvent[];
   expenses: ExpensesConfig;
+  incomeFallbackAccountId?: string | null;
+  incomeFallbackAccountId2?: string | null;
 }
 
 export interface ProjectionYear {
@@ -451,6 +468,15 @@ export interface ProjectionYear {
   accountBalancesById: Record<string, number>;
 }
 
+export interface PurchaseFlag {
+  id: string;
+  label: string;
+  age: number;
+  amount: number;
+  type: 'large_purchase' | 'long_term_purchase' | 'loan';
+  color: string;
+}
+
 export interface ProjectionResult {
   years: ProjectionYear[];
   survivesToEnd: boolean;
@@ -463,10 +489,11 @@ export interface ProjectionResult {
   firstRetirementYearPlannedAccountWithdrawals: SavingsBalances;
   purchaseFundingShortfalls: Record<string, number>;
   purchaseFirstAffordableAge: Record<string, number | null>;
-  purchasePostPurchaseDisplayBalances: Record<string, SavingsBalances | null>;
+  purchasePostPurchaseDisplayBalances: Record<string, Record<string, number> | null>;
   longTermPurchaseFundingShortfalls: Record<string, number>;
   loanFundingShortfalls: Record<string, number>;
   warnings?: string[];
+  incomeFundedItemStatuses: Record<string, { status: 'covered' | 'fallback' | 'shortfall'; shortfallAmount?: number }>;
 }
 
 export interface HistoricalYear {

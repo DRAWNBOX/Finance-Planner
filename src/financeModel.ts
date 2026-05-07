@@ -46,14 +46,19 @@ const legacyPoolToPreset = (poolId: LegacyPoolId): AccountTypePreset => {
   return 'savings';
 };
 
+const DEFAULT_POOL_COLORS = ['#4b87d9', '#32a884', '#f0a235', '#ca5d7b', '#7a75d8', '#3e9ab1', '#d0735a', '#6e9c4e'];
+
 export const seedDefaultPools = (): PoolDefinition[] =>
   LEGACY_POOL_IDS.map((id, index) => ({
     id,
     label: LEGACY_POOL_LABELS[id],
     enabled: true,
     priority: index,
+    color: DEFAULT_POOL_COLORS[index % DEFAULT_POOL_COLORS.length],
     legacyFallbackId: id
   }));
+
+export { DEFAULT_POOL_COLORS };
 
 export const seedDefaultBankAccounts = (
   balances: SavingsBalances,
@@ -145,7 +150,9 @@ export const careerToSourceLines = (career: CareerEntry): CareerSourceLine[] =>
           ? Math.max(0, career.hsaMonthlyWithdrawal ?? 0)
           : poolId === 'investments'
             ? Math.max(0, career.investmentsMonthlyWithdrawal ?? 0)
-            : Math.max(0, career.retirement401kMonthlyWithdrawal ?? 0)
+            : Math.max(0, career.retirement401kMonthlyWithdrawal ?? 0),
+    maxBalance: 0,
+    overflowFallbackAccountId: null
   })).filter((line) => line.contributionRate > 0 || line.monthlyWithdrawal > 0);
 
 export const getPoolBalanceTotals = (
@@ -202,12 +209,18 @@ export const ensureSourceLinesForWithdrawal = (withdrawal: WithdrawalPlan): Sour
         .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
         .map((line) => [line.sourceId, typeof line.startAge === 'number' ? line.startAge : undefined])
     ) as Partial<Record<LegacyPoolId, number | undefined>>;
+    const legacySyncFlags = Object.fromEntries(
+      (withdrawal.sourceLines ?? [])
+        .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
+        .map((line) => [line.sourceId, line.syncWithRetirementAge ?? true])
+    ) as Partial<Record<LegacyPoolId, boolean>>;
     const legacyLines = legacySavingsToSourceLines(normalizedConfigured, effectiveFourPercentFlags, 'withdrawal-source');
     const legacyLinesWithStartAge = legacyLines.map((line) =>
       line.sourceType === 'pool' && isLegacyPoolId(line.sourceId)
         ? {
             ...line,
-            startAge: legacyStartAges[line.sourceId]
+            startAge: legacyStartAges[line.sourceId],
+            syncWithRetirementAge: legacySyncFlags[line.sourceId]
           }
         : line
     );
@@ -219,6 +232,34 @@ export const ensureSourceLinesForWithdrawal = (withdrawal: WithdrawalPlan): Sour
 
     return [...legacyLinesWithStartAge, ...customLines];
   })();
+
+export const normalizePurchaseFundingSource = (
+  fundingSource: LargePurchase['fundingSource'],
+  purchaseAmount: number,
+  bankAccounts: BankAccountDefinition[] = []
+): SourceLine[] => {
+  if (!fundingSource || fundingSource === 'income') {
+    return [];
+  }
+
+  const [, accountId] = fundingSource.split(':', 2);
+  const accountExists = bankAccounts.some((account) => account.id === accountId);
+
+  if (!accountExists || !accountId) {
+    return [];
+  }
+
+  return [
+    {
+      id: `funding-source-${accountId}`,
+      enabled: true,
+      sourceType: 'account',
+      sourceId: accountId,
+      mode: 'amount',
+      amount: Math.max(0, purchaseAmount)
+    }
+  ];
+};
 
 export const normalizeLoanPaymentSource = (
   loan: Loan,

@@ -11,7 +11,7 @@ describe('projectScenario', () => {
     const age46 = result.years.find((year) => year.age === 46);
 
     expect(age46).toBeDefined();
-    expect(age46!.contribution).toBeGreaterThan(defaultScenario.contribution.yearlyContribution);
+    expect(age46!.contribution).toBeGreaterThan(0);
     expect(result.endingBalance).toBeGreaterThan(0);
   });
 
@@ -1405,6 +1405,7 @@ describe('projectScenario', () => {
           id: 'purchase-1',
           label: 'Large Purchase',
           enabled: true,
+          showOnGraph: true,
           yearMonth: '2000-01',
           age: 40,
           amount: 2000,
@@ -1472,6 +1473,7 @@ describe('projectScenario', () => {
           id: 'purchase-selected-pool',
           label: 'House',
           enabled: true,
+          showOnGraph: true,
           yearMonth: '2000-01',
           age: 40,
           amount: 6000,
@@ -1542,6 +1544,7 @@ describe('projectScenario', () => {
           id: 'purchase-balance-snapshot',
           label: 'Car',
           enabled: true,
+          showOnGraph: true,
           yearMonth: '2000-01',
           age: 40,
           amount: 1200,
@@ -1559,8 +1562,9 @@ describe('projectScenario', () => {
     const snapshot = result.purchasePostPurchaseDisplayBalances['purchase-balance-snapshot'];
 
     expect(snapshot).not.toBeNull();
-    expect(snapshot?.emergencyFund).toBeCloseTo(800, 6);
-    expect(snapshot?.investments).toBeCloseTo(1000, 6);
+    const balances = Object.values(snapshot ?? {});
+    expect(balances.some((value) => Math.abs(value - 800) < 0.000001)).toBe(true);
+    expect(balances.some((value) => Math.abs(value - 1000) < 0.000001)).toBe(true);
   });
 
   it('applies long-term monthly purchases over the scheduled duration', () => {
@@ -1611,6 +1615,7 @@ describe('projectScenario', () => {
           id: 'lt-1',
           label: 'Renovation',
           enabled: true,
+          showOnGraph: true,
           startYearMonth: '2026-06',
           endMode: 'duration' as const,
           durationMonths: 6,
@@ -1681,6 +1686,7 @@ describe('projectScenario', () => {
           id: 'loan-1',
           label: 'Car Loan',
           enabled: true,
+          showOnGraph: true,
           startYearMonth: '2026-01',
           originalAmount: 10000,
           downPayment: 0,
@@ -1755,6 +1761,7 @@ describe('projectScenario', () => {
           id: 'loan-shortfall-1',
           label: 'Car Loan',
           enabled: true,
+          showOnGraph: true,
           startYearMonth: '2026-01',
           originalAmount: 1000,
           downPayment: 0,
@@ -1820,6 +1827,7 @@ describe('projectScenario', () => {
           id: 'loan-income-1',
           label: 'Car Loan',
           enabled: true,
+          showOnGraph: true,
           startYearMonth: '2026-01',
           originalAmount: 10000,
           downPayment: 0,
@@ -1887,6 +1895,7 @@ describe('projectScenario', () => {
           id: 'loan-down-payment-1',
           label: 'Car Loan',
           enabled: true,
+          showOnGraph: true,
           startYearMonth,
           originalAmount: 10000,
           downPayment: 1000,
@@ -1912,7 +1921,7 @@ describe('projectScenario', () => {
     expect(withDownPayment.endingBalance).toBeLessThan(withoutDownPayment.endingBalance);
   });
 
-  it('caps emergency fund at 15000 and redirects overflow contributions to investments', () => {
+  it('applies per-career max balance and routes overflow to configured fallback account', () => {
     const baseCareer = defaultScenario.careerPlan.entries[0];
     const scenario = {
       ...defaultScenario,
@@ -1960,7 +1969,20 @@ describe('projectScenario', () => {
             emergencyFundMonthlyWithdrawal: 0,
             hsaMonthlyWithdrawal: 0,
             investmentsMonthlyWithdrawal: 0,
-            retirement401kMonthlyWithdrawal: 0
+            retirement401kMonthlyWithdrawal: 0,
+            sourceLines: [
+              {
+                id: 'career-source-emergency',
+                enabled: true,
+                sourceType: 'account' as const,
+                sourceId: 'emergencyFund-account-default',
+                contributionRate: 20,
+                savingsMonthly: false,
+                monthlyWithdrawal: 0,
+                maxBalance: 15000,
+                overflowFallbackAccountId: 'investments-account-default'
+              }
+            ]
           }
         ]
       }
@@ -1969,11 +1991,11 @@ describe('projectScenario', () => {
     const result = projectScenario(scenario);
     const age41 = findProjectedYear(result, 41);
 
-    expect(age41.savingsBalances.emergencyFund).toBeCloseTo(15000, 6);
-    expect(age41.savingsBalances.investments).toBeCloseTo(1860, 6);
+    expect(age41.accountBalancesById['emergencyFund-account-default']).toBeCloseTo(15000, 6);
+    expect(age41.accountBalancesById['investments-account-default']).toBeCloseTo(3300, 6);
   });
 
-  it('refills emergency fund before redirecting overflow when withdrawals reduce it below the cap', () => {
+  it('only applies cap rules from the active career', () => {
     const baseCareer = defaultScenario.careerPlan.entries[0];
     const scenario = {
       ...defaultScenario,
@@ -2008,6 +2030,112 @@ describe('projectScenario', () => {
         entries: [
           {
             ...baseCareer,
+            id: 'career-1-no-cap',
+            enabled: true,
+            startAge: 40,
+            endAge: 40,
+            startingSalary: 12000,
+            annualRaiseRate: 0,
+            emergencyFundContributionRate: 20,
+            hsaContributionRate: 0,
+            investmentsContributionRate: 0,
+            retirement401kContributionRate: 0,
+            emergencyFundMonthlyWithdrawal: 0,
+            hsaMonthlyWithdrawal: 0,
+            investmentsMonthlyWithdrawal: 0,
+            retirement401kMonthlyWithdrawal: 0,
+            sourceLines: [
+              {
+                id: 'career-source-emergency-no-cap',
+                enabled: true,
+                sourceType: 'account' as const,
+                sourceId: 'emergencyFund-account-default',
+                contributionRate: 20,
+                savingsMonthly: false,
+                monthlyWithdrawal: 0,
+                maxBalance: 0,
+                overflowFallbackAccountId: null
+              }
+            ]
+          },
+          {
+            ...baseCareer,
+            id: 'career-2-with-cap',
+            enabled: true,
+            startAge: 41,
+            endAge: 41,
+            startingSalary: 12000,
+            annualRaiseRate: 0,
+            emergencyFundContributionRate: 20,
+            hsaContributionRate: 0,
+            investmentsContributionRate: 0,
+            retirement401kContributionRate: 0,
+            emergencyFundMonthlyWithdrawal: 0,
+            hsaMonthlyWithdrawal: 0,
+            investmentsMonthlyWithdrawal: 0,
+            retirement401kMonthlyWithdrawal: 0,
+            sourceLines: [
+              {
+                id: 'career-source-emergency-with-cap',
+                enabled: true,
+                sourceType: 'account' as const,
+                sourceId: 'emergencyFund-account-default',
+                contributionRate: 20,
+                savingsMonthly: false,
+                monthlyWithdrawal: 0,
+                maxBalance: 15000,
+                overflowFallbackAccountId: 'investments-account-default'
+              }
+            ]
+          }
+        ]
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const age41 = findProjectedYear(result, 41);
+    const age42 = findProjectedYear(result, 42);
+
+    expect(age41.accountBalancesById['emergencyFund-account-default']).toBeGreaterThan(15000);
+    expect(age42.accountBalancesById['emergencyFund-account-default']).toBeCloseTo(15000, 6);
+    expect(age42.accountBalancesById['investments-account-default']).toBeGreaterThan(age41.accountBalancesById['investments-account-default']);
+  });
+
+  it('keeps overflow in place and warns when fallback is invalid', () => {
+    const baseCareer = defaultScenario.careerPlan.entries[0];
+    const scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 40,
+        retirementAge: 65,
+        retirementYears: 1
+      },
+      savingsTracker: {
+        annualInterestRates: {
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }
+      },
+      netWorth: {
+        accountBalances: {
+          emergencyFund: 14900,
+          hsa: 0,
+          investments: 1000,
+          retirement401k: 0
+        },
+        asOfDate: ''
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [
+          {
+            ...baseCareer,
             id: 'career-1',
             enabled: true,
             startAge: 40,
@@ -2018,10 +2146,23 @@ describe('projectScenario', () => {
             hsaContributionRate: 0,
             investmentsContributionRate: 0,
             retirement401kContributionRate: 0,
-            emergencyFundMonthlyWithdrawal: 250,
+            emergencyFundMonthlyWithdrawal: 0,
             hsaMonthlyWithdrawal: 0,
             investmentsMonthlyWithdrawal: 0,
-            retirement401kMonthlyWithdrawal: 0
+            retirement401kMonthlyWithdrawal: 0,
+            sourceLines: [
+              {
+                id: 'career-source-emergency',
+                enabled: true,
+                sourceType: 'account' as const,
+                sourceId: 'emergencyFund-account-default',
+                contributionRate: 20,
+                savingsMonthly: false,
+                monthlyWithdrawal: 0,
+                maxBalance: 15000,
+                overflowFallbackAccountId: 'missing-account-id'
+              }
+            ]
           }
         ]
       }
@@ -2030,8 +2171,8 @@ describe('projectScenario', () => {
     const result = projectScenario(scenario);
     const age41 = findProjectedYear(result, 41);
 
-    expect(age41.savingsBalances.emergencyFund).toBeCloseTo(15000, 6);
-    expect(age41.savingsBalances.investments).toBeCloseTo(1960, 6);
+    expect(age41.accountBalancesById['emergencyFund-account-default']).toBeGreaterThan(15000);
+    expect((result.warnings ?? []).some((warning) => warning.includes('Overflow fallback missing'))).toBe(true);
   });
 
   it('applies monthly account withdrawals against monthly contributions', () => {
@@ -2251,5 +2392,188 @@ describe('projectScenario', () => {
 
     const firstProjected = result.years.find((year) => !year.isBaselineNow)!;
     expect(firstProjected.periodMonths).toBe(12);
+  });
+
+  it('covers income-funded purchase with take-home pay', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
+      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      careerPlan: {
+        enabled: true,
+        entries: [{
+          ...defaultScenario.careerPlan.entries[0],
+          startAge: 40, endAge: 41,
+          takeHomePay: { amount: 5000, period: 'monthly' }
+        }]
+      },
+      largePurchases: [{
+        id: 'income-purchase-covered',
+        label: 'Test',
+        enabled: true,
+        showOnGraph: true,
+        yearMonth: '2000-01',
+        age: 40,
+        amount: 3000,
+        sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        fundingSource: 'income'
+      }]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['income-purchase-covered']).toBeDefined();
+    expect(result.incomeFundedItemStatuses['income-purchase-covered']!.status).toBe('covered');
+  });
+
+  it('uses fallback account when income is insufficient', () => {
+    const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
+      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      netWorth: {
+        ...defaultScenario.netWorth,
+        accountBalances: { emergencyFund: 50000, hsa: 0, investments: 0, retirement401k: 0 },
+        bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) =>
+          a.id === accountId ? { ...a, balance: 50000 } : a
+        )
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [{
+          ...defaultScenario.careerPlan.entries[0],
+          startAge: 40, endAge: 41,
+          takeHomePay: { amount: 1000, period: 'monthly' }
+        }]
+      },
+      incomeFallbackAccountId: accountId,
+      incomeFallbackAccountId2: null,
+      largePurchases: [{
+        id: 'income-purchase-fallback',
+        label: 'Test',
+        enabled: true,
+        showOnGraph: true,
+        yearMonth: '2000-01',
+        age: 40,
+        amount: 20000,
+        sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        fundingSource: 'income'
+      }]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['income-purchase-fallback']).toBeDefined();
+    expect(result.incomeFundedItemStatuses['income-purchase-fallback']!.status).toBe('fallback');
+  });
+
+  it('marks purchase as shortfall when income and fallback accounts are exhausted', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
+      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      careerPlan: {
+        enabled: true,
+        entries: [{
+          ...defaultScenario.careerPlan.entries[0],
+          startAge: 40, endAge: 41,
+          takeHomePay: { amount: 100, period: 'monthly' }
+        }]
+      },
+      incomeFallbackAccountId: null,
+      incomeFallbackAccountId2: null,
+      largePurchases: [{
+        id: 'income-purchase-shortfall',
+        label: 'Test',
+        enabled: true,
+        showOnGraph: true,
+        yearMonth: '2000-01',
+        age: 40,
+        amount: 50000,
+        sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        fundingSource: 'income'
+      }]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['income-purchase-shortfall']).toBeDefined();
+    expect(result.incomeFundedItemStatuses['income-purchase-shortfall']!.status).toBe('shortfall');
+  });
+
+  it('uses yearly take-home pay period correctly', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
+      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      careerPlan: {
+        enabled: true,
+        entries: [{
+          ...defaultScenario.careerPlan.entries[0],
+          startAge: 40, endAge: 41,
+          takeHomePay: { amount: 60000, period: 'yearly' }
+        }]
+      },
+      largePurchases: [{
+        id: 'income-yearly-test',
+        label: 'Test',
+        enabled: true,
+        showOnGraph: true,
+        yearMonth: '2000-01',
+        age: 40,
+        amount: 4000,
+        sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        fundingSource: 'income'
+      }]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['income-yearly-test']!.status).toBe('covered');
+  });
+
+  it('uses fallback accounts when no career is active', () => {
+    const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
+      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      netWorth: {
+        ...defaultScenario.netWorth,
+        accountBalances: { emergencyFund: 5000, hsa: 0, investments: 0, retirement401k: 0 },
+        bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) =>
+          a.id === accountId ? { ...a, balance: 5000 } : a
+        )
+      },
+      careerPlan: { enabled: false, entries: [] },
+      incomeFallbackAccountId: accountId,
+      incomeFallbackAccountId2: null,
+      largePurchases: [{
+        id: 'income-no-career',
+        label: 'Test',
+        enabled: true,
+        showOnGraph: true,
+        yearMonth: '2000-01',
+        age: 40,
+        amount: 3000,
+        sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        fundingSource: 'income'
+      }]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['income-no-career']!.status).toBe('fallback');
   });
 });

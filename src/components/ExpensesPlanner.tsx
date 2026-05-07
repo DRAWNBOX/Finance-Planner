@@ -195,6 +195,7 @@ interface RecurringDraftState {
   label: string;
   amount: number;
   paymentAccountId: string;
+  fundingSource: string;
   color: string;
   cadence: RecurringEventCadence;
   rule: RecurringEventRule;
@@ -218,6 +219,7 @@ interface OneTimeDraftState {
   amount: number;
   date: string;
   accountId: string;
+  fundingSource: string;
   categoryId: string | null;
   color: string;
 }
@@ -269,6 +271,7 @@ export const ExpensesPlanner = ({
     label: 'Recurring Event',
     amount: 50,
     paymentAccountId: bankAccounts[0]?.id ?? '',
+    fundingSource: `account:${bankAccounts[0]?.id ?? ''}`,
     color: '#3b82f6',
     cadence: 'weekly' as const,
     rule: 'every_friday' as const,
@@ -282,6 +285,7 @@ export const ExpensesPlanner = ({
     amount: 50,
     date: expenses.ui.windowStartDate,
     accountId: bankAccounts[0]?.id ?? '',
+    fundingSource: `account:${bankAccounts[0]?.id ?? ''}`,
     categoryId: null,
     color: '#3b82f6'
   });
@@ -358,6 +362,7 @@ export const ExpensesPlanner = ({
       amount: 50,
       date: clampIsoDate(weekStartDate ?? expenses.ui.windowStartDate, minDate, maxDate),
       accountId,
+      fundingSource: `account:${accountId}`,
       categoryId: defaultCategoryId,
       color: '#3b82f6'
     });
@@ -406,6 +411,7 @@ export const ExpensesPlanner = ({
                 poolId: account?.poolId ?? null,
                 categoryId: oneTimeDraft.categoryId ?? null,
                 color: oneTimeDraft.color,
+                fundingSource: (oneTimeDraft.fundingSource === 'income' || oneTimeDraft.fundingSource?.startsWith('account:')) ? oneTimeDraft.fundingSource as 'income' | `account:${string}` : undefined,
                 updatedAt: todayIsoDate()
               }
             : entry
@@ -431,7 +437,8 @@ export const ExpensesPlanner = ({
             createdAt: todayIsoDate(),
             updatedAt: todayIsoDate(),
             categoryId: oneTimeDraft.categoryId ?? null,
-            color: oneTimeDraft.color
+            color: oneTimeDraft.color,
+            fundingSource: (oneTimeDraft.fundingSource === 'income' || oneTimeDraft.fundingSource?.startsWith('account:')) ? oneTimeDraft.fundingSource as 'income' | `account:${string}` : undefined
           }
         ]
       });
@@ -519,7 +526,8 @@ export const ExpensesPlanner = ({
           endDate: clampIsoDate(recurringDraft.endDate, minDate, maxDate),
           dayOfMonth: recurringDraft.dayOfMonth,
           anchorDate: recurringDraft.anchorDate,
-          enabled: true
+          enabled: true,
+          fundingSource: (recurringDraft.fundingSource === 'income' || recurringDraft.fundingSource?.startsWith('account:')) ? recurringDraft.fundingSource as 'income' | `account:${string}` : undefined
         }
       ]
     });
@@ -545,7 +553,8 @@ export const ExpensesPlanner = ({
               endDate: clampIsoDate(recurringDraft.endDate, minDate, maxDate),
               dayOfMonth: recurringDraft.dayOfMonth,
               anchorDate: recurringDraft.anchorDate,
-              color: recurringDraft.color
+              color: recurringDraft.color,
+              fundingSource: (recurringDraft.fundingSource === 'income' || recurringDraft.fundingSource?.startsWith('account:')) ? recurringDraft.fundingSource as 'income' | `account:${string}` : undefined
             }
           : event
       )
@@ -973,6 +982,20 @@ export const ExpensesPlanner = ({
                   ))}
                 </select>
               </label>
+              <label>
+                <span>Pay From</span>
+                <select
+                  value={recurringDraft.fundingSource}
+                  onChange={(e) => setRecurringDraft((c) => ({ ...c, fundingSource: e.target.value }))}
+                >
+                  <option value="income">Income</option>
+                  {bankAccounts.map((account) => (
+                    <option key={`recpayfrom-${account.id}`} value={`account:${account.id}`}>
+                      {account.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label><span>Cadence</span><select value={recurringDraft.cadence} onChange={(e) => setRecurringDraft((c) => ({ ...c, cadence: e.target.value as 'weekly' | 'monthly' }))}><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
               <label><span>Rule</span><select value={recurringDraft.rule} onChange={(e) => setRecurringDraft((c) => ({ ...c, rule: e.target.value as 'on_date' | 'every_friday' | 'first_monday_after' }))}><option value="on_date">Pays On Date</option><option value="every_friday">Every Friday</option><option value="first_monday_after">First Monday After Date</option></select></label>
               <label><span>Start Date</span><input type="date" value={recurringDraft.startDate} min={minDate} max={maxDate} onChange={(e) => setRecurringDraft((c) => ({ ...c, startDate: e.target.value }))} /></label>
@@ -1051,6 +1074,20 @@ export const ExpensesPlanner = ({
                 >
                   {bankAccounts.map((account) => (
                     <option key={account.id} value={account.id}>
+                      {account.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Pay From</span>
+                <select
+                  value={oneTimeDraft.fundingSource}
+                  onChange={(e) => setOneTimeDraft((c) => ({ ...c, fundingSource: e.target.value }))}
+                >
+                  <option value="income">Income</option>
+                  {bankAccounts.map((account) => (
+                    <option key={`payfrom-${account.id}`} value={`account:${account.id}`}>
                       {account.label}
                     </option>
                   ))}
@@ -1217,6 +1254,7 @@ export const ExpensesPlanner = ({
                                   label: recurringEvent.label,
                                   amount: recurringEvent.amount,
                                   paymentAccountId: recurringEvent.paymentAccountId ?? recurringEvent.accountId,
+                                  fundingSource: (recurringEvent as unknown as Record<string, unknown>).fundingSource as string ?? `account:${recurringEvent.paymentAccountId ?? recurringEvent.accountId}`,
                                   color: recurringEvent.color ?? '#3b82f6',
                                   cadence: recurringEvent.cadence,
                                   rule: recurringEvent.rule,
@@ -1238,6 +1276,7 @@ export const ExpensesPlanner = ({
                                 amount: sourceEntry.amount,
                                 date: sourceEntry.startDate,
                                 accountId: sourceEntry.accountId ?? (activeAccountId ?? ''),
+                                fundingSource: (sourceEntry as unknown as Record<string, unknown>).fundingSource as string ?? `account:${sourceEntry.accountId ?? activeAccountId ?? ''}`,
                                 categoryId: sourceEntry.categoryId ?? null,
                                 color: sourceEntry.color ?? '#3b82f6'
                               });

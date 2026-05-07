@@ -1,11 +1,18 @@
+import { useState } from 'react';
 import { formatCurrency } from '../engine/projection';
-import type { ProjectionYear } from '../types';
+import type { ProjectionYear, PurchaseFlag } from '../types';
+import { pickFlagColor } from '../utils/colorPalette';
+import { layoutFlagCallouts } from './flagCalloutLayout';
 
 interface ChartPanelProps {
   years: ProjectionYear[];
+  flags?: PurchaseFlag[];
+  onFlagColorChange?: (flagId: string, color: string) => void;
 }
 
-export const ChartPanel = ({ years }: ChartPanelProps) => {
+export const ChartPanel = ({ years, flags = [], onFlagColorChange }: ChartPanelProps) => {
+  const [colorPickerFlagId, setColorPickerFlagId] = useState<string | null>(null);
+
   if (years.length === 0) {
     return null;
   }
@@ -37,6 +44,19 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
     return { x, y };
   };
 
+  const ageToIndex = (age: number): number => {
+    let closest = 0;
+    let closestDist = Infinity;
+    years.forEach((year, index) => {
+      const dist = Math.abs(year.age - age);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = index;
+      }
+    });
+    return closest;
+  };
+
   const linePath = years
     .map((_, index) => {
       const point = pointFor(index);
@@ -57,8 +77,26 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
       return isFirst || isLast || age % 5 === 0;
     });
 
+  const flagsWithColor = flags.map((flag) => {
+    const existingColors = flags.map((f) => f.color);
+    return {
+      ...flag,
+      color: flag.color || pickFlagColor(existingColors)
+    };
+  });
+
+  const flagCallouts = layoutFlagCallouts({
+    flags: flagsWithColor,
+    leftBound: padding.left,
+    rightBound: width - padding.right,
+    topY: padding.top,
+    bottomBound: height - padding.bottom,
+    getAnchorX: (age) => pointFor(ageToIndex(age)).x,
+    getAnchorY: (age) => pointFor(ageToIndex(age)).y
+  });
+
   return (
-    <div className="chart-shell">
+    <div className="chart-shell" style={{ position: 'relative' }}>
       <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Portfolio value over time">
         {yTicks.map((tick) => {
           const y = padding.top + plotHeight - ((tick - minValue) / Math.max(roundedMaxValue - minValue, 1)) * plotHeight;
@@ -94,6 +132,52 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
 
           return <circle key={`${year.age}-point`} cx={point.x} cy={point.y} r={3} className="chart-point" />;
         })}
+
+        {flagCallouts.map((callout) => {
+          const isOpen = colorPickerFlagId === callout.id;
+
+          return (
+            <g key={`flag-${callout.id}`}>
+              <line
+                x1={callout.anchorX}
+                x2={callout.anchorX}
+                y1={callout.stemTopY}
+                y2={callout.stemBottomY}
+                stroke={callout.color}
+                strokeWidth={4}
+                strokeLinecap="round"
+                className="chart-flag-stem"
+              />
+              <rect
+                x={callout.x}
+                y={callout.y}
+                width={callout.width}
+                height={callout.height}
+                rx={4}
+                ry={4}
+                fill="#ffffff"
+                stroke={callout.color}
+                strokeWidth={2}
+                className="chart-flag-callout"
+                style={{ cursor: 'pointer' }}
+                onDoubleClick={() => setColorPickerFlagId(isOpen ? null : callout.id)}
+              />
+              <text
+                x={callout.x + callout.width / 2}
+                y={callout.y + callout.height / 2 + 1}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#1f2937"
+                fontSize={11}
+                fontWeight={600}
+                style={{ pointerEvents: 'none', userSelect: 'none' }}
+              >
+                {callout.label}
+              </text>
+            </g>
+          );
+        })}
+
         <text x={width / 2} y={height - 8} textAnchor="middle" className="chart-title">
           Age
         </text>
@@ -107,6 +191,45 @@ export const ChartPanel = ({ years }: ChartPanelProps) => {
           Portfolio Value ($)
         </text>
       </svg>
+
+      {colorPickerFlagId !== null && onFlagColorChange ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: padding.top + 30,
+            left: (() => {
+              const callout = flagCallouts.find((item) => item.id === colorPickerFlagId);
+              if (!callout) return 80;
+              return Math.max(0, callout.anchorX - 50);
+            })(),
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: '6px',
+            padding: '6px',
+            zIndex: 100,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+          }}
+        >
+          <input
+            type="color"
+            value={flagsWithColor.find((f) => f.id === colorPickerFlagId)?.color ?? '#e74c3c'}
+            onChange={(e) => {
+              onFlagColorChange(colorPickerFlagId, e.target.value);
+              setColorPickerFlagId(null);
+            }}
+            style={{ width: '100px', height: '30px', border: 'none', cursor: 'pointer' }}
+            autoFocus
+          />
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setColorPickerFlagId(null)}
+            style={{ display: 'block', marginTop: '4px', fontSize: '11px' }}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 };

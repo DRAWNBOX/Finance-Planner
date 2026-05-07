@@ -190,7 +190,6 @@ describe('App', () => {
     expect(within(financeSubTabsElement).getByRole('button', { name: 'Careers' })).toBeInTheDocument();
     expect(within(financeSubTabsElement).getByRole('button', { name: 'Timeline Management' })).toBeInTheDocument();
     expect(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' })).toBeInTheDocument();
-    expect(within(financeSubTabsElement).getByRole('button', { name: 'Loans' })).toBeInTheDocument();
     expect(screen.getByText('Career Timeline')).toBeInTheDocument();
     expect(screen.queryByText('Large Purchases Table')).not.toBeInTheDocument();
   });
@@ -219,11 +218,12 @@ describe('App', () => {
     expect(screen.getByText(/Retirement horizon:/i)).toBeInTheDocument();
     expect(screen.getByText(/Retirement assets:/i)).toBeInTheDocument();
 
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Loans' }));
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
+    expect(screen.getByText('Large Purchases Table')).toBeInTheDocument();
     expect(screen.getByText('Loans Table')).toBeInTheDocument();
   });
 
-  it('hides graph and results table in purchases and expenses sub-tab', () => {
+  it('shows graph and results table in purchases and expenses sub-tab', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
@@ -232,8 +232,25 @@ describe('App', () => {
     const financeSubTabsElement = financeSubTabs as HTMLElement;
     fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
 
-    expect(screen.queryByRole('img', { name: /portfolio value over time/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: 'Career' })).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /portfolio value over time/i })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Career' })).toBeInTheDocument();
+
+    const portfolioGraphBefore = screen.getByRole('img', { name: /portfolio value over time/i });
+    const initialPortfolioFlagCount = portfolioGraphBefore.querySelectorAll('.chart-flag-stem').length;
+
+    const addPurchaseButton = screen.getByRole('button', { name: '+ Purchase' });
+    fireEvent.click(addPurchaseButton);
+    fireEvent.click(addPurchaseButton);
+
+    const portfolioGraph = screen.getByRole('img', { name: /portfolio value over time/i });
+    const updatedPortfolioFlagCount = portfolioGraph.querySelectorAll('.chart-flag-stem').length;
+    expect(updatedPortfolioFlagCount).toBeGreaterThan(initialPortfolioFlagCount);
+    expect(portfolioGraph.querySelectorAll('.chart-flag-callout').length).toBe(updatedPortfolioFlagCount);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Stacked Savings Graph' }));
+    const stackedGraph = screen.getByRole('img', { name: /stacked savings balances over time/i });
+    expect(stackedGraph.querySelectorAll('.chart-flag-stem').length).toBe(updatedPortfolioFlagCount);
+    expect(stackedGraph.querySelectorAll('.chart-flag-callout').length).toBe(updatedPortfolioFlagCount);
   });
 
   it('renders expenses as a top-level tab to the right of net worth', () => {
@@ -370,15 +387,7 @@ describe('App', () => {
     expect(hasSyncedValue).toBe(true);
   });
 
-  it('hides the retirement selector chip in the career editor', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    expect(document.querySelector('.career-tab.retirement-item')).toBeNull();
-  });
-
-  it('uses year-month inputs and account columns for purchases', () => {
+  it('uses year-month inputs and funding source dropdown for purchases', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
@@ -398,11 +407,38 @@ describe('App', () => {
     const startingYear = Number(purchaseYearInput.value);
     fireEvent.click(screen.getByRole('button', { name: 'Purchase Year Up' }));
     expect(purchaseYearInput).toHaveValue(String(startingYear + 1));
-    expect(screen.getByRole('columnheader', { name: 'Emergency Fund' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'HSA' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Investments' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: '401K' })).toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: 'Emergency Fund Balance' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Pay From' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Amount' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Account Balance After Purchase' })).toBeInTheDocument();
+    const fundingSource = screen.getByLabelText('Purchase Funding Source');
+    expect(fundingSource).toBeInTheDocument();
+    expect(within(fundingSource).getByRole('option', { name: 'Income' })).toBeInTheDocument();
+  });
+
+  it('shows account balance after purchase and N/A for income-funded large purchases', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
+
+    const row = screen.getByDisplayValue('Large Purchase').closest('tr') as HTMLTableRowElement;
+    const fundingSource = within(row).getByLabelText('Purchase Funding Source') as HTMLSelectElement;
+    const nonIncomeOption = within(fundingSource)
+      .getAllByRole('option')
+      .find((option) => (option as HTMLOptionElement).value.startsWith('account:')) as HTMLOptionElement | undefined;
+    expect(nonIncomeOption).toBeDefined();
+
+    fireEvent.change(fundingSource, { target: { value: nonIncomeOption!.value } });
+
+    const accountCellText = within(row).getAllByRole('cell')[6].textContent ?? '';
+    expect(accountCellText).toMatch(/^-?\$[0-9,]+$/);
+
+    fireEvent.change(fundingSource, { target: { value: 'income' } });
+    expect(within(row).getAllByRole('cell')[6]).toHaveTextContent('Shortfall');
   });
 
   it('supports long-term monthly purchases with start date and duration/end-date scheduling', () => {
@@ -432,14 +468,14 @@ describe('App', () => {
     expect(stored).toContain('"endMode":"endDate"');
   });
 
-  it('supports adding loans in the finances prediction loans tab', () => {
+  it('supports adding loans in the purchases and expenses tab', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
     const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
     expect(financeSubTabs).toBeTruthy();
     const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Loans' }));
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
 
     expect(screen.getByText('Loans Table')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '+ Loan' }));
@@ -465,7 +501,7 @@ describe('App', () => {
     const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
     expect(financeSubTabs).toBeTruthy();
     const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Loans' }));
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
 
     fireEvent.click(screen.getByRole('button', { name: '+ Loan' }));
 
@@ -482,7 +518,7 @@ describe('App', () => {
     fireEvent.change(within(loanRow).getByLabelText('Loan Payment Source'), { target: { value: 'income' } });
 
     await waitFor(() => {
-      expect(loanRow.className).not.toContain('invalid');
+      expect(loanRow.className).toContain('invalid');
     });
   });
 
@@ -524,7 +560,7 @@ describe('App', () => {
     expect(durationInput).toHaveValue(expectedDuration);
   });
 
-  it('marks purchase rows red when a purchase is not viable', () => {
+  it('marks purchase rows red when selected pay-from account balance after purchase is negative', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
@@ -539,15 +575,26 @@ describe('App', () => {
     const purchaseRow = purchaseNameInput.closest('tr') as HTMLTableRowElement;
     expect(purchaseRow.className).toContain('purchase-row');
 
-    const investmentsSourceInput = within(purchaseRow).getAllByRole('spinbutton')[3];
-    fireEvent.change(investmentsSourceInput, { target: { value: '40000' } });
-    fireEvent.blur(investmentsSourceInput);
+    const fundingSource = within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement;
+    const accountOption = within(fundingSource)
+      .getAllByRole('option')
+      .find((option) => (option as HTMLOptionElement).value.startsWith('account:')) as HTMLOptionElement;
+    fireEvent.change(fundingSource, { target: { value: accountOption.value } });
 
+    const accountBalanceCellText = within(purchaseRow).getAllByRole('cell')[6].textContent ?? '';
+    const isNegative = accountBalanceCellText.trim().startsWith('-$');
+    if (isNegative) {
+      expect(purchaseRow.className).toContain('invalid');
+      expect(purchaseRow.getAttribute('title') ?? '').toContain('goes negative');
+    } else {
+      expect(purchaseRow.className).not.toContain('invalid');
+    }
+
+    fireEvent.change(fundingSource, { target: { value: 'income' } });
     expect(purchaseRow.className).toContain('invalid');
-    expect(purchaseRow.getAttribute('title') ?? '').toContain('Not viable: amount does not match source totals.');
   });
 
-  it('marks purchases invalid when source totals are affordable on paper but accounts cannot fund them', () => {
+  it('updates account balance after purchase when amount changes and keeps income rows as N/A', async () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
@@ -559,8 +606,29 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
 
     const purchaseRow = screen.getByDisplayValue('Large Purchase').closest('tr') as HTMLTableRowElement;
-    expect(purchaseRow.className).toContain('invalid');
-    expect(purchaseRow.getAttribute('title') ?? '').toContain('cannot fund the requested amount');
+    const fundingSource = within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement;
+    const accountOption = within(fundingSource)
+      .getAllByRole('option')
+      .find((option) => (option as HTMLOptionElement).value.startsWith('account:')) as HTMLOptionElement;
+    fireEvent.change(fundingSource, { target: { value: accountOption.value } });
+    await waitFor(() => {
+      expect((within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement).value).toBe(accountOption.value);
+    });
+
+    const balanceCell = within(purchaseRow).getAllByRole('cell')[6];
+    const amountInput = purchaseRow.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(amountInput).toBeTruthy();
+    fireEvent.change(amountInput, { target: { value: '2500' } });
+    fireEvent.blur(amountInput);
+
+    await waitFor(() => {
+      expect((purchaseRow.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('2500');
+      const afterText = within(purchaseRow).getAllByRole('cell')[6].textContent ?? '';
+      expect(afterText).toMatch(/^-?\$[0-9,]+$/);
+    });
+
+    fireEvent.change(fundingSource, { target: { value: 'income' } });
+    expect(within(purchaseRow).getAllByRole('cell')[6]).toHaveTextContent('Shortfall');
   });
 
   it('maps saved future retirement tab state into Careers', () => {
@@ -1114,6 +1182,31 @@ describe('App', () => {
     expect(screen.getByRole('img', { name: /stacked savings balances over time/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Filter All' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Unfilter All' })).toBeInTheDocument();
+  });
+
+  it('shows per-career cap controls and persists max balance + overflow fallback', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+
+    expect(screen.getByText('Max Balance')).toBeInTheDocument();
+    expect(screen.getByText('Overflow Fallback')).toBeInTheDocument();
+
+    const emergencyLabel = screen
+      .getAllByText('Emergency Fund')
+      .find((node) => node.classList.contains('career-savings-cell')) as HTMLElement;
+    const emergencyRow = emergencyLabel.closest('.career-savings-row') as HTMLElement;
+    const emergencyInputs = within(emergencyRow).getAllByRole('spinbutton');
+    const maxBalanceInput = emergencyInputs[emergencyInputs.length - 1] as HTMLInputElement;
+    fireEvent.change(maxBalanceInput, { target: { value: '12345' } });
+    fireEvent.blur(maxBalanceInput);
+
+    const fallbackSelect = within(emergencyRow).getByRole('combobox') as HTMLSelectElement;
+    fireEvent.change(fallbackSelect, { target: { value: 'hsa-account-default' } });
+
+    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+    expect(stored).toContain('"maxBalance":12345');
+    expect(stored).toContain('"overflowFallbackAccountId":"hsa-account-default"');
   });
 
   it('keeps careers table balances aligned with the portfolio graph totals', () => {

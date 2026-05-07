@@ -5,14 +5,13 @@ import type {
   LargePurchase,
   Loan,
   LongTermPurchase,
-  LifeEvent,
-  LifeEventType,
   Scenario
 } from './types';
 import { formatYearMonthFromAge } from './utils/ageDate';
 import {
   ensureSourceLinesForPurchase,
   ensureSourceLinesForWithdrawal,
+  getDefaultBankAccountIdForPool,
   normalizeLoanPaymentSource,
   seedDefaultBankAccounts,
   seedDefaultPools
@@ -156,7 +155,6 @@ export const createDefaultCashflowItem = (
   }
 };
 
-const makeEventId = (type: LifeEventType) => `${type}-default`;
 const toIsoDate = (value: Date) => value.toISOString().slice(0, 10);
 const addDays = (date: Date, days: number) => {
   const next = new Date(date);
@@ -190,7 +188,9 @@ const defaultCareerSourceLines = defaultBankAccounts.map((account) => ({
             ? 6
             : 0,
   savingsMonthly: false,
-  monthlyWithdrawal: 0
+  monthlyWithdrawal: 0,
+  maxBalance: 0,
+  overflowFallbackAccountId: null
 }));
 
 export const createDefaultCareerEntry = (
@@ -238,16 +238,19 @@ export const createDefaultCareerEntry = (
 
   return {
     ...base,
-    sourceLines: defaultCareerSourceLines.map((line) => ({ ...line }))
+    sourceLines: defaultCareerSourceLines.map((line) => ({ ...line })),
+    takeHomePay: { amount: 0, period: 'monthly' }
   };
 };
 
 export const createDefaultLargePurchase = (currentAge: number, dateOfBirth: string): LargePurchase => ({
   ...(() => {
+    const defaultAccountId = getDefaultBankAccountIdForPool(defaultBankAccounts, 'investments') ?? defaultBankAccounts[0]?.id ?? '';
     const purchase: LargePurchase = {
       id: makePurchaseId(),
   label: 'Large Purchase',
   enabled: true,
+  showOnGraph: true,
   yearMonth: formatYearMonthFromAge(currentAge + 1, dateOfBirth, currentAge),
   age: currentAge + 1,
   amount: 10000,
@@ -256,7 +259,8 @@ export const createDefaultLargePurchase = (currentAge: number, dateOfBirth: stri
     hsa: 0,
     investments: 10000,
     retirement401k: 0
-  }
+  },
+  fundingSource: `account:${defaultAccountId}`
     };
 
     return { ...purchase, sourceLines: ensureSourceLinesForPurchase(purchase, defaultBankAccounts) };
@@ -268,10 +272,12 @@ export const createDefaultLongTermPurchase = (
   dateOfBirth: string
 ): LongTermPurchase => ({
   ...(() => {
+    const defaultAccountId = getDefaultBankAccountIdForPool(defaultBankAccounts, 'investments') ?? defaultBankAccounts[0]?.id ?? '';
     const purchase: LongTermPurchase = {
       id: makeLongTermPurchaseId(),
   label: 'Long-Term Purchase',
   enabled: true,
+  showOnGraph: true,
   startYearMonth: formatYearMonthFromAge(currentAge + 1, dateOfBirth, currentAge),
   endMode: 'duration',
   durationMonths: 12,
@@ -282,7 +288,8 @@ export const createDefaultLongTermPurchase = (
     hsa: 0,
     investments: 500,
     retirement401k: 0
-  }
+  },
+  fundingSource: `account:${defaultAccountId}`
     };
 
     return { ...purchase, sourceLines: ensureSourceLinesForPurchase(purchase, defaultBankAccounts) };
@@ -295,6 +302,7 @@ export const createDefaultLoan = (currentAge: number, dateOfBirth: string): Loan
       id: makeLoanId(),
   label: 'Loan',
   enabled: true,
+  showOnGraph: true,
   startYearMonth: formatYearMonthFromAge(currentAge, dateOfBirth, currentAge),
   originalAmount: 25000,
   downPayment: 0,
@@ -308,120 +316,6 @@ export const createDefaultLoan = (currentAge: number, dateOfBirth: string): Loan
     return { ...loan, paymentSource: normalizeLoanPaymentSource(loan, defaultBankAccounts) };
   })()
 });
-
-export const createDefaultLifeEvent = (
-  type: LifeEventType,
-  currentAge: number,
-  retirementAge: number
-): LifeEvent => {
-  switch (type) {
-    case 'job_change':
-      return {
-        id: makeEventId(type),
-        type,
-        label: 'Job Change',
-        enabled: true,
-        cadence: 'recurring',
-        direction: 'inflow',
-        startAge: currentAge + 5,
-        endAge: retirementAge,
-        amount: 0,
-        newSalary: 110000,
-        annualSalaryGrowthOverride: 4,
-        inflationAdjusted: false
-      };
-    case 'career_break':
-      return {
-        id: makeEventId(type),
-        type,
-        label: 'Career Break',
-        enabled: true,
-        cadence: 'recurring',
-        direction: 'outflow',
-        startAge: currentAge + 8,
-        endAge: currentAge + 9,
-        amount: 0,
-        newSalary: 0,
-        annualSalaryGrowthOverride: 0,
-        inflationAdjusted: false
-      };
-    case 'house_purchase':
-      return {
-        id: makeEventId(type),
-        type,
-        label: 'House Purchase',
-        enabled: true,
-        cadence: 'one_time',
-        direction: 'outflow',
-        startAge: currentAge + 4,
-        endAge: currentAge + 4,
-        amount: 75000,
-        newSalary: 0,
-        annualSalaryGrowthOverride: 0,
-        inflationAdjusted: false
-      };
-    case 'house_sale':
-      return {
-        id: makeEventId(type),
-        type,
-        label: 'House Sale',
-        enabled: true,
-        cadence: 'one_time',
-        direction: 'inflow',
-        startAge: retirementAge + 6,
-        endAge: retirementAge + 6,
-        amount: 125000,
-        newSalary: 0,
-        annualSalaryGrowthOverride: 0,
-        inflationAdjusted: false
-      };
-    case 'large_expense':
-      return {
-        id: makeEventId(type),
-        type,
-        label: 'Large Expense',
-        enabled: true,
-        cadence: 'one_time',
-        direction: 'outflow',
-        startAge: currentAge + 3,
-        endAge: currentAge + 3,
-        amount: 30000,
-        newSalary: 0,
-        annualSalaryGrowthOverride: 0,
-        inflationAdjusted: false
-      };
-    case 'custom_income':
-      return {
-        id: makeEventId(type),
-        type,
-        label: 'Custom Income',
-        enabled: true,
-        cadence: 'recurring',
-        direction: 'inflow',
-        startAge: currentAge + 2,
-        endAge: retirementAge,
-        amount: 10000,
-        newSalary: 0,
-        annualSalaryGrowthOverride: 0,
-        inflationAdjusted: true
-      };
-    case 'custom_expense':
-      return {
-        id: makeEventId(type),
-        type,
-        label: 'Custom Expense',
-        enabled: true,
-        cadence: 'recurring',
-        direction: 'outflow',
-        startAge: currentAge + 2,
-        endAge: currentAge + 4,
-        amount: 8000,
-        newSalary: 0,
-        annualSalaryGrowthOverride: 0,
-        inflationAdjusted: true
-      };
-  }
-};
 
 export const defaultScenario: Scenario = {
   profile: {
@@ -525,6 +419,8 @@ export const defaultScenario: Scenario = {
   largePurchases: [],
   longTermPurchases: [],
   loans: [],
+  incomeFallbackAccountId: null,
+  incomeFallbackAccountId2: null,
   cashflowItems: [],
   lifeEvents: [],
   expenses: {

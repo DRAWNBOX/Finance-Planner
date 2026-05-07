@@ -2,26 +2,26 @@ import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useId,
 import { ChartPanel } from './components/ChartPanel';
 import { CashflowItemEditor } from './components/CashflowItemEditor';
 import { CareerPlanEditor } from './components/CareerPlanEditor';
-import { LifeEventEditor } from './components/LifeEventEditor';
 import { NetWorthHistoryChart } from './components/NetWorthHistoryChart';
 import { ResultsTable } from './components/ResultsTable';
 import { SavingsStackedChart } from './components/SavingsStackedChart';
 import { BufferedNumberInput } from './components/BufferedNumberInput';
 import { ExpensesPlanner } from './components/ExpensesPlanner';
 import { YearMonthInput } from './components/YearMonthInput';
+import { ColorPickerField } from './components/ColorPickerField';
 import {
   createDefaultCashflowItem,
   createDefaultCareerEntry,
   createDefaultLargePurchase,
   createDefaultLoan,
   createDefaultLongTermPurchase,
-  createDefaultLifeEvent,
   defaultScenario
 } from './defaultScenario';
 import {
   ACCOUNT_TYPE_DEFAULT_RULES,
   ensureSourceLinesForPurchase,
   normalizeLoanPaymentSource,
+  normalizePurchaseFundingSource,
   seedDefaultBankAccounts,
   seedDefaultPools
 } from './financeModel';
@@ -34,7 +34,6 @@ import type {
   BankAccountDefinition,
   CashflowCategory,
   LegacyPoolId,
-  LifeEventType,
   PoolDefinition,
   NetWorthCustomAccount,
   NetWorthHistoryEntry,
@@ -43,10 +42,12 @@ import type {
   NetWorthImportApplyMode,
   NetWorthImportSourceAccount,
   ProjectionYear,
+  PurchaseFlag,
   Scenario,
   SavingsBalances,
   SourceLine
 } from './types';
+import { pickFlagColor } from './utils/colorPalette';
 
 type AppTab = AppUiState['activeTab'];
 type FinancePredictionSubTab = CareersSubTab;
@@ -62,8 +63,7 @@ const FINANCE_PREDICTION_SUB_TABS: Array<{ id: FinancePredictionSubTab; label: s
   { id: 'retirement', label: 'Retirement' },
   { id: 'careers', label: 'Careers' },
   { id: 'timeline', label: 'Timeline Management' },
-  { id: 'purchasesExpenses', label: 'Purchases and expenses' },
-  { id: 'loans', label: 'Loans' }
+  { id: 'purchasesExpenses', label: 'Purchases and expenses' }
 ];
 const EXPENSES_SUB_TABS: Array<{ id: ExpensesTab; label: string }> = [
   { id: 'planning', label: 'Expense Planning' },
@@ -84,15 +84,6 @@ const ADD_OPTIONS: Array<{ category: CashflowCategory; label: string }> = [
   { category: 'home_real_estate', label: 'Home/Real Estate' }
 ];
 
-const EVENT_OPTIONS: Array<{ type: LifeEventType; label: string }> = [
-  { type: 'job_change', label: 'Job Change' },
-  { type: 'career_break', label: 'Career Break' },
-  { type: 'house_purchase', label: 'House Purchase' },
-  { type: 'house_sale', label: 'House Sale' },
-  { type: 'large_expense', label: 'Large Expense' },
-  { type: 'custom_income', label: 'Custom Income' },
-  { type: 'custom_expense', label: 'Custom Expense' }
-];
 const numberFromInput = (value: string) => Number(value) || 0;
 const clampNumber = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const toNumberOrFallback = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
@@ -372,6 +363,7 @@ const ControlRow = ({
   max,
   step = 1,
   disabled = false,
+  title,
   onChange
 }: {
   label: string;
@@ -380,6 +372,7 @@ const ControlRow = ({
   max: number;
   step?: number;
   disabled?: boolean;
+  title?: string;
   onChange: (nextValue: number) => void;
 }) => {
   const [draftValue, setDraftValue] = useState(String(value));
@@ -412,7 +405,7 @@ const ControlRow = ({
 
   return (
     <label className="control-row" htmlFor={inputId}>
-      <span>{label}</span>
+      <span title={title}>{label}</span>
       <div className="control-inputs">
         <input
           type="range"
@@ -617,6 +610,7 @@ const normalizeCareerSourceLinesForBankAccounts = (
   accounts: BankAccountDefinition[]
 ) => {
   const existingLines = career.sourceLines ?? [];
+  const accountIds = new Set(accounts.map((account) => account.id));
 
   return accounts
     .slice()
@@ -633,7 +627,14 @@ const normalizeCareerSourceLinesForBankAccounts = (
         sourceId: account.id,
         contributionRate: Math.max(0, toNumberOrFallback(source?.contributionRate, 0)),
         savingsMonthly: Boolean(source?.savingsMonthly),
-        monthlyWithdrawal: Math.max(0, toNumberOrFallback(source?.monthlyWithdrawal, 0))
+        monthlyWithdrawal: Math.max(0, toNumberOrFallback(source?.monthlyWithdrawal, 0)),
+        maxBalance: Math.max(0, toNumberOrFallback(source?.maxBalance, 0)),
+        overflowFallbackAccountId:
+          typeof source?.overflowFallbackAccountId === 'string' &&
+          source.overflowFallbackAccountId !== account.id &&
+          accountIds.has(source.overflowFallbackAccountId)
+            ? source.overflowFallbackAccountId
+            : null
       };
     });
 };
@@ -732,9 +733,8 @@ const App = () => {
   const usesFinancePredictionResults = activeTab === 'careers' || activeTab === 'options';
   const projection = usesFinancePredictionResults ? futureProjection : retirementProjection;
   const graphProjection = projection;
-  const hideResultsForPurchasesExpenses = activeTab === 'careers' && careersSubTab === 'purchasesExpenses';
   const hideResultsForExpenses = activeTab === 'expenses';
-  const hideResultsPanel = hideResultsForPurchasesExpenses || hideResultsForExpenses;
+  const hideResultsPanel = hideResultsForExpenses;
   const displayedGraphYears = usesFinancePredictionResults && !hasEnabledCareers ? [] : graphProjection.years;
   const displayedPortfolioGraphYears =
     usesFinancePredictionResults
@@ -763,6 +763,7 @@ const App = () => {
       : projection.years;
   const graphYearsForMode = graphMode === 'portfolio' ? displayedPortfolioGraphYears : displayedGraphYears;
   const displayedGraphEndingBalance = graphYearsForMode.length > 0 ? graphYearsForMode[graphYearsForMode.length - 1].endBalance : 0;
+  const displayedGraphBalanceForSummary = displayedGraphEndingBalance;
   const displayedGraphEndAge = graphYearsForMode.length > 0 ? graphYearsForMode[graphYearsForMode.length - 1].age : currentAge;
   const displayedGraphDepleted = graphYearsForMode.some((year) => year.depleted);
   const displayedGraphDepletedAge = graphYearsForMode.find((year) => year.depleted)?.age ?? null;
@@ -773,12 +774,13 @@ const App = () => {
         ? displayedGraphDepleted && displayedGraphDepletedAge !== null
           ? `Your plan runs out of money at age ${displayedGraphDepletedAge}. Consider retiring later, saving more, or lowering withdrawals.`
           : `Congratulations! Based on your retirement plan, you can retire at age ${futureScenario.profile.retirementAge} and finish with ${formatCurrency(
-              displayedGraphEndingBalance
+              displayedGraphBalanceForSummary
             )} at age ${displayedGraphEndAge}.`
         : graphProjection.summary;
   const retirementFirstYearPlannedWithdrawals = retirementProjection.firstRetirementYearPlannedAccountWithdrawals;
   const retirementEndAge = scenario.profile.retirementAge + scenario.profile.retirementYears;
-  const futureEndAge = futureScenario.profile.retirementAge + futureScenario.profile.retirementYears;
+  const futureRetirementAge = futureScenario.profile.retirementAge;
+  const futureEndAge = futureRetirementAge + futureScenario.profile.retirementYears;
   const futureCareerAge = getCareerDerivedRetirementAge(scenario);
   const retirementAssetsFromCareers = scenario.careerPlan.entries.reduce((sum, entry) => {
     const careerBalances = futureProjection.careerEndSavingsBalances[entry.id];
@@ -789,6 +791,61 @@ const App = () => {
 
     return sum + sumSavingsBalances(careerBalances);
   }, 0);
+
+  const purchaseFlags: PurchaseFlag[] = (() => {
+    const raw: PurchaseFlag[] = [
+      ...scenario.largePurchases
+        .filter((p) => p.enabled && p.showOnGraph)
+        .map((p) => ({
+          id: p.id,
+          label: p.label,
+          age: p.age,
+          amount: p.amount,
+          type: 'large_purchase' as const,
+          color: p.flagColor ?? ''
+        })),
+      ...(scenario.longTermPurchases ?? [])
+        .filter((p) => p.enabled && p.showOnGraph)
+        .map((p) => {
+          const startAge = ageFromYearMonth(p.startYearMonth, scenario.options.dateOfBirth, currentAge, currentAge, 110);
+          return {
+            id: p.id,
+            label: p.label,
+            age: startAge ?? currentAge,
+            amount: p.monthlyAmount,
+            type: 'long_term_purchase' as const,
+            color: p.flagColor ?? ''
+          };
+        }),
+      ...(scenario.loans ?? [])
+        .filter((l) => l.enabled && l.showOnGraph)
+        .map((l) => {
+          const startAge = ageFromYearMonth(l.startYearMonth, scenario.options.dateOfBirth, currentAge, currentAge, 110);
+          return {
+            id: l.id,
+            label: l.label,
+            age: startAge ?? currentAge,
+            amount: l.originalAmount,
+            type: 'loan' as const,
+            color: l.flagColor ?? ''
+          };
+        })
+    ];
+    const colorMap = new Map<string, string>();
+    raw.forEach((flag) => {
+      if (flag.color) {
+        colorMap.set(flag.id, flag.color);
+      }
+    });
+    const existingColors = Array.from(colorMap.values());
+    raw.forEach((flag) => {
+      if (!flag.color) {
+        flag.color = pickFlagColor(existingColors);
+        existingColors.push(flag.color);
+      }
+    });
+    return raw;
+  })();
 
   useEffect(() => {
     saveAppState({
@@ -983,6 +1040,9 @@ const App = () => {
       retirement401k: Boolean(nextScenario.withdrawal.firstYearAccountUseFourPercent?.retirement401k)
     };
     const existingWithdrawalLines = nextScenario.withdrawal.sourceLines ?? [];
+    const nextFutureRetirementAge = nextScenario.futureRetirement.useCareerEndAge
+      ? getCareerDerivedRetirementAge(nextScenario)
+      : nextScenario.futureRetirement.retirementAge;
     const legacyWithdrawalStartAges = {
       emergencyFund:
         existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'emergencyFund')?.startAge ??
@@ -996,6 +1056,16 @@ const App = () => {
       retirement401k:
         existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'retirement401k')?.startAge ??
         nextScenario.profile.retirementAge
+    };
+    const legacyWithdrawalSyncFlags = {
+      emergencyFund:
+        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'emergencyFund')?.syncWithRetirementAge ?? true,
+      hsa:
+        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'hsa')?.syncWithRetirementAge ?? true,
+      investments:
+        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'investments')?.syncWithRetirementAge ?? true,
+      retirement401k:
+        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'retirement401k')?.syncWithRetirementAge ?? true
     };
     const normalizedWithdrawalSourceLines: SourceLine[] = [
         {
@@ -1041,18 +1111,16 @@ const App = () => {
       sourceId: typeof line.sourceId === 'string' ? line.sourceId : 'investments',
       mode: line.mode,
       amount: Math.max(0, toNumberOrFallback(line.amount, 0)),
-      startAge: Math.min(110, Math.max(18, toNumberOrFallback(line.startAge, nextScenario.profile.retirementAge)))
+      startAge: Math.min(110, Math.max(18, toNumberOrFallback(line.startAge, nextFutureRetirementAge))),
+      syncWithRetirementAge: line.sourceType === 'pool' && isLegacyPoolKey(line.sourceId)
+        ? legacyWithdrawalSyncFlags[line.sourceId] !== false
+        : true
     }));
-    const normalizedUseRetirementAgeAsWithdrawalStartAge =
-      nextScenario.withdrawal.useRetirementAgeAsWithdrawalStartAge !== undefined
-        ? Boolean(nextScenario.withdrawal.useRetirementAgeAsWithdrawalStartAge)
-        : true;
-    const effectiveWithdrawalSourceLines = normalizedUseRetirementAgeAsWithdrawalStartAge
-      ? normalizedWithdrawalSourceLines.map((line) => ({
-          ...line,
-          startAge: nextScenario.profile.retirementAge
-        }))
-      : normalizedWithdrawalSourceLines;
+    const effectiveWithdrawalSourceLines = normalizedWithdrawalSourceLines.map((line) =>
+      line.syncWithRetirementAge !== false
+        ? { ...line, startAge: nextFutureRetirementAge }
+        : line
+    );
     const normalizedLargePurchases = (nextScenario.largePurchases ?? []).map((purchase) => {
       const sourceLines = normalizePurchaseSourceLinesToAccounts(purchase, normalizedNetWorth.bankAccounts ?? []);
       return {
@@ -1112,6 +1180,8 @@ const App = () => {
       id: typeof loan.id === 'string' && loan.id.trim().length > 0 ? loan.id : `loan-${index + 1}`,
       label: typeof loan.label === 'string' && loan.label.trim().length > 0 ? loan.label : `Loan ${index + 1}`,
       enabled: Boolean(loan.enabled),
+      showOnGraph: loan.showOnGraph !== false,
+      flagColor: typeof loan.flagColor === 'string' && loan.flagColor.trim().length > 0 ? loan.flagColor : undefined,
       startYearMonth:
         normalizeYearMonth(loan.startYearMonth) ||
         formatYearMonthFromAge(resolvedAge, nextScenario.options.dateOfBirth, resolvedAge),
@@ -1162,7 +1232,7 @@ const App = () => {
             0,
             toNumberOrFallback(nextScenario.withdrawal.maximumYearlyWithdrawal, defaultScenario.withdrawal.maximumYearlyWithdrawal)
           ),
-          useRetirementAgeAsWithdrawalStartAge: normalizedUseRetirementAgeAsWithdrawalStartAge,
+          useRetirementAgeAsWithdrawalStartAge: true,
           firstYearAmount: sumAccountBalances(normalizedWithdrawalAccounts),
           firstYearAccountWithdrawals: normalizedWithdrawalAccounts,
           firstYearAccountUseFourPercent: normalizedWithdrawalFourPercentFlags,
@@ -1342,25 +1412,6 @@ const App = () => {
     });
   };
 
-  const toggleEventOption = (type: LifeEventType, checked: boolean) => {
-    if (checked) {
-      if (scenario.lifeEvents.some((event) => event.type === type)) {
-        return;
-      }
-
-      updateScenario({
-        ...scenario,
-        lifeEvents: [...scenario.lifeEvents, createDefaultLifeEvent(type, currentAge, scenario.profile.retirementAge)]
-      });
-      return;
-    }
-
-    updateScenario({
-      ...scenario,
-      lifeEvents: scenario.lifeEvents.filter((event) => event.type !== type)
-    });
-  };
-
   const addLargePurchase = () => {
     const entry = createDefaultLargePurchase(currentAge, scenario.options.dateOfBirth);
 
@@ -1448,6 +1499,25 @@ const App = () => {
     });
   };
 
+  const applyPurchaseFundingSource = <T extends Scenario['largePurchases'][number] | Scenario['longTermPurchases'][number]>(
+    purchase: T,
+    nextFundingSource: string,
+    customAmount?: number
+  ): T => {
+    const amount = customAmount ?? ('amount' in purchase ? purchase.amount : purchase.monthlyAmount);
+    const newFundingSource: 'income' | `account:${string}` = nextFundingSource === 'income' ? 'income' : (nextFundingSource as `account:${string}`);
+    const newSourceLines = normalizePurchaseFundingSource(newFundingSource, amount, bankAccounts);
+    const newSourceAmounts = toLegacySourceAmounts(newSourceLines, bankAccountById);
+
+    return {
+      ...purchase,
+      ...('amount' in purchase ? { amount } : { monthlyAmount: amount }),
+      fundingSource: newFundingSource,
+      sourceLines: newSourceLines,
+      sourceAmounts: newSourceAmounts
+    };
+  };
+
   const addLoan = () => {
     const entry = createDefaultLoan(currentAge, scenario.options.dateOfBirth);
 
@@ -1469,6 +1539,23 @@ const App = () => {
       ...scenario,
       loans: (scenario.loans ?? []).filter((loan) => loan.id !== loanId)
     });
+  };
+
+  const handleFlagColorChange = (flagId: string, color: string) => {
+    const matchLarge = scenario.largePurchases.find((p) => p.id === flagId);
+    if (matchLarge) {
+      updateLargePurchase(flagId, { ...matchLarge, flagColor: color });
+      return;
+    }
+    const matchLongTerm = (scenario.longTermPurchases ?? []).find((p) => p.id === flagId);
+    if (matchLongTerm) {
+      updateLongTermPurchase(flagId, { ...matchLongTerm, flagColor: color });
+      return;
+    }
+    const matchLoan = (scenario.loans ?? []).find((l) => l.id === flagId);
+    if (matchLoan) {
+      updateLoan(flagId, { ...matchLoan, flagColor: color });
+    }
   };
 
   const addPool = () => {
@@ -1954,7 +2041,8 @@ const App = () => {
         sourceId: pool.id,
         mode: 'amount' as const,
         amount: 0,
-        startAge: scenario.profile.retirementAge
+        startAge: scenario.profile.retirementAge,
+        syncWithRetirementAge: true
       };
     const plannedValue = isLegacyPoolKey(pool.id)
       ? Math.round(retirementFirstYearPlannedWithdrawals[pool.id])
@@ -1969,7 +2057,7 @@ const App = () => {
 
   const updateRetirementPoolLine = (
     poolId: string,
-    changes: Partial<{ mode: 'amount' | 'four_percent'; amount: number; enabled: boolean; startAge: number }>
+    changes: Partial<{ mode: 'amount' | 'four_percent'; amount: number; enabled: boolean; startAge: number; syncWithRetirementAge: boolean }>
   ) => {
     const nextLines = [...(scenario.withdrawal.sourceLines ?? [])];
     const existingIndex = nextLines.findIndex((line) => line.sourceType === 'pool' && line.sourceId === poolId);
@@ -1980,7 +2068,8 @@ const App = () => {
       sourceId: poolId,
       mode: 'amount' as const,
       amount: 0,
-      startAge: scenario.profile.retirementAge
+      startAge: scenario.profile.retirementAge,
+      syncWithRetirementAge: true
     };
     const currentLine = existingIndex >= 0 ? nextLines[existingIndex] : fallbackLine;
     const nextLine = {
@@ -2204,35 +2293,10 @@ const App = () => {
             })
           }
         />
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={scenario.withdrawal.useRetirementAgeAsWithdrawalStartAge !== false}
-            onChange={(event) =>
-              updateScenario({
-                ...scenario,
-                withdrawal: {
-                  ...scenario.withdrawal,
-                  useRetirementAgeAsWithdrawalStartAge: event.target.checked,
-                  sourceLines: event.target.checked
-                    ? (scenario.withdrawal.sourceLines ?? []).map((line) =>
-                        line.sourceType === 'pool'
-                          ? {
-                              ...line,
-                              startAge: scenario.profile.retirementAge
-                            }
-                          : line
-                      )
-                    : scenario.withdrawal.sourceLines
-                }
-              })
-            }
-          />
-          <span>Use retirement age as withdrawal start age</span>
-        </label>
         <div className="career-savings-grid">
           <div className="career-savings-row career-savings-header">
             <div className="career-savings-cell">Pool</div>
+            <div className="career-savings-cell">Use Ret. Age</div>
             <div className="career-savings-cell">Start Age</div>
             <div className="career-savings-cell">Use 4% Rule</div>
             <div className="career-savings-cell">First Year Withdrawal</div>
@@ -2241,12 +2305,25 @@ const App = () => {
             <div key={pool.id} className="career-savings-row">
               <div className="career-savings-cell">{pool.label}</div>
               <div className="career-savings-cell">
+                <input
+                  type="checkbox"
+                  checked={sourceLine.syncWithRetirementAge !== false}
+                  onChange={(event) => {
+                    const nextSync = event.target.checked;
+                    updateRetirementPoolLine(pool.id, {
+                      syncWithRetirementAge: nextSync,
+                      startAge: nextSync ? futureRetirementAge : (sourceLine.startAge ?? futureRetirementAge)
+                    });
+                  }}
+                />
+              </div>
+              <div className="career-savings-cell">
                 <BufferedNumberInput
                   value={sourceLine.startAge ?? scenario.profile.retirementAge}
                   min={18}
                   max={110}
                   step={1}
-                  disabled={scenario.withdrawal.useRetirementAgeAsWithdrawalStartAge !== false}
+                  disabled={sourceLine.syncWithRetirementAge !== false}
                   onCommit={(next) => updateRetirementPoolLine(pool.id, { startAge: next })}
                 />
               </div>
@@ -2397,6 +2474,29 @@ const App = () => {
           </select>
         </label>
       </Panel>
+      <Panel title="Chart Colors">
+        <p className="subtle" style={{ marginTop: 0, marginBottom: '0.55rem' }}>
+          Customize the colors used in the stacked savings graph for each pool.
+        </p>
+        {(scenario.netWorth.pools ?? []).map((pool) => (
+          <ColorPickerField
+            key={pool.id}
+            label={pool.label}
+            value={pool.color || '#4b87d9'}
+            onChange={(color) =>
+              updateScenario({
+                ...scenario,
+                netWorth: {
+                  ...scenario.netWorth,
+                  pools: (scenario.netWorth.pools ?? []).map((p) =>
+                    p.id === pool.id ? { ...p, color } : p
+                  )
+                }
+              })
+            }
+          />
+        ))}
+      </Panel>
     </>
   );
 
@@ -2406,9 +2506,6 @@ const App = () => {
         <CareerPlanEditor
           value={scenario.careerPlan}
           selectedCareerId={selectedCareerId}
-          isRetirementSelected={false}
-          showRetirementItem={false}
-          onSelectRetirementItem={() => {}}
           onSelectCareer={updateSelectedCareerId}
         onChangeCareer={updateCareer}
         onDuplicateCareer={duplicateCareer}
@@ -2425,6 +2522,10 @@ const App = () => {
         birthdayBasedCareerStartAge={birthdayBasedCareerStartAge}
         dateOfBirth={scenario.options.dateOfBirth}
         currentAge={currentAge}
+        incomeFallbackAccountId={scenario.incomeFallbackAccountId}
+        incomeFallbackAccountId2={scenario.incomeFallbackAccountId2}
+        onChangeIncomeFallbackAccount1={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId: accountId })}
+        onChangeIncomeFallbackAccount2={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId2: accountId })}
       />
       </Panel>
     </>
@@ -2446,65 +2547,69 @@ const App = () => {
               <thead>
                 <tr>
                   <th title="Enabled">Enabled</th>
+                  <th title="Show flag on graph">Flag</th>
                   <th>Name</th>
                   <th title="Year-Month">Year-Month</th>
-                  {orderedBankAccounts.map((account) => (
-                    <th
-                      key={`large-purchase-account-header-${account.id}`}
-                      title={`${account.label} (${poolLabelById.get(account.poolId) ?? account.poolId})`}
-                    >
-                      {account.label}
-                    </th>
-                  ))}
-                  <th title="Difference">Difference</th>
+                  <th title="Amount">Amount</th>
+                  <th title="Pay From">Pay From</th>
+                  <th title="Account Balance After Purchase">Account Balance After Purchase</th>
                   <th title="Remove">Remove</th>
                 </tr>
               </thead>
               <tbody>
                 {scenario.largePurchases.map((purchase) => {
-                  const purchaseSourceLines = normalizePurchaseSourceLinesForAccounts(purchase);
-                  const sourceAmountByAccountId = new Map(
-                    purchaseSourceLines.map((line) => [line.sourceId, Math.max(0, line.amount)])
-                  );
-                  const totalSources = sumPurchaseSourceLineAmounts(purchaseSourceLines);
-                  const difference = purchase.amount - totalSources;
-                  const sourceMismatch = Math.abs(difference) > 0.01;
-                  const fundingShortfall = futureProjection.purchaseFundingShortfalls[purchase.id] ?? 0;
-                  const hasFundingShortfall = fundingShortfall > 0.01;
-                  const purchaseNotViable = purchase.enabled && (sourceMismatch || hasFundingShortfall);
-                  const firstAffordableAge = futureProjection.purchaseFirstAffordableAge[purchase.id] ?? null;
-                  const firstAffordableYearMonth =
-                    firstAffordableAge !== null
-                      ? formatYearMonthFromAge(firstAffordableAge, scenario.options.dateOfBirth, currentAge)
-                      : null;
-                  const hasNextAffordableDate = firstAffordableAge !== null && firstAffordableAge > purchase.age;
-                  const nonViableTitle = (() => {
-                    if (!purchaseNotViable) {
-                      return undefined;
+                  const fundingSourceValue = purchase.fundingSource ?? 'income';
+                  const selectedAccountId = fundingSourceValue.startsWith('account:')
+                    ? fundingSourceValue.split(':', 2)[1] ?? null
+                    : null;
+                  const postPurchaseBalances = projection.purchasePostPurchaseDisplayBalances[purchase.id];
+                  const selectedAccountPostPurchaseBalance =
+                    selectedAccountId && postPurchaseBalances ? postPurchaseBalances[selectedAccountId] : null;
+                  const purchaseNotViable =
+                    purchase.enabled &&
+                    selectedAccountId !== null &&
+                    Number.isFinite(selectedAccountPostPurchaseBalance) &&
+                    (selectedAccountPostPurchaseBalance as number) < 0;
+                  const incomeStatus = projection.incomeFundedItemStatuses[purchase.id];
+                  const incomeShortfall = incomeStatus?.status === 'shortfall';
+                  const incomeFallback = incomeStatus?.status === 'fallback';
+                  const nonViableTitle = purchaseNotViable
+                    ? 'Not viable: selected pay-from account balance goes negative after this purchase.'
+                    : incomeShortfall
+                      ? 'Not enough income or fallback accounts to cover this purchase.'
+                      : incomeFallback
+                        ? 'Income fallback account used to cover this purchase.'
+                        : undefined;
+                  const rowClass =
+                    purchaseNotViable || incomeShortfall
+                      ? 'purchase-row invalid'
+                      : incomeFallback
+                        ? 'purchase-row warning'
+                        : 'purchase-row';
+                  const accountBalanceAfterPurchase = (() => {
+                    if (fundingSourceValue === 'income') {
+                      if (incomeShortfall) return 'Shortfall';
+                      if (incomeFallback) return 'Fallback';
+                      return 'Income';
                     }
 
-                    const details: string[] = [];
-
-                    if (sourceMismatch) {
-                      details.push('Not viable: amount does not match source totals.');
+                    const [, accountId] = fundingSourceValue.split(':', 2);
+                    if (!accountId || !postPurchaseBalances) {
+                      return 'N/A';
                     }
 
-                    if (hasFundingShortfall) {
-                      details.push('Not viable: one or more source accounts cannot fund the requested amount.');
-                      details.push(
-                        hasNextAffordableDate
-                          ? `First affordable date: ${firstAffordableYearMonth}.`
-                          : 'No affordable future date found in the current projection window.'
-                      );
+                    const postPurchaseBalance = postPurchaseBalances[accountId];
+                    if (!Number.isFinite(postPurchaseBalance)) {
+                      return 'N/A';
                     }
 
-                    return details.join(' ');
+                    return formatCurrency(postPurchaseBalance);
                   })();
 
                   return (
                     <tr
                       key={purchase.id}
-                      className={purchaseNotViable ? 'purchase-row invalid' : 'purchase-row'}
+                      className={rowClass}
                       title={nonViableTitle}
                     >
                       <td>
@@ -2512,6 +2617,13 @@ const App = () => {
                           type="checkbox"
                           checked={purchase.enabled}
                           onChange={(event) => updateLargePurchase(purchase.id, { ...purchase, enabled: event.target.checked })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={purchase.showOnGraph}
+                          onChange={(event) => updateLargePurchase(purchase.id, { ...purchase, showOnGraph: event.target.checked })}
                         />
                       </td>
                       <td>
@@ -2540,24 +2652,37 @@ const App = () => {
                           }}
                         />
                       </td>
-                      {orderedBankAccounts.map((account) => (
-                        <td key={`${purchase.id}-${account.id}`}>
-                          <BufferedNumberInput
-                            value={sourceAmountByAccountId.get(account.id) ?? 0}
-                            min={0}
-                            max={50000000}
-                            step={100}
-                            onCommit={(next) => {
-                              const updatedSources = withUpdatedPurchaseAccountAmount(purchase, account.id, next);
-                              updateLargePurchase(purchase.id, {
-                                ...purchase,
-                                ...updatedSources
-                              });
-                            }}
-                          />
-                        </td>
-                      ))}
-                      <td>{formatCurrency(difference)}</td>
+                      <td>
+                        <BufferedNumberInput
+                          value={purchase.amount}
+                          min={0}
+                          max={50000000}
+                          step={100}
+                          commitOnChange
+                          onCommit={(next) => {
+                            const updated = applyPurchaseFundingSource(purchase, fundingSourceValue, next);
+                            updateLargePurchase(purchase.id, updated);
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <select
+                          aria-label="Purchase Funding Source"
+                          value={fundingSourceValue}
+                          onChange={(event) => {
+                            const updated = applyPurchaseFundingSource(purchase, event.target.value, purchase.amount);
+                            updateLargePurchase(purchase.id, updated);
+                          }}
+                        >
+                          <option value="income">Income</option>
+                          {accountSelectionOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>{accountBalanceAfterPurchase}</td>
                       <td>
                         <button type="button" className="text-button" onClick={() => removeLargePurchase(purchase.id)}>
                           Remove
@@ -2570,9 +2695,7 @@ const App = () => {
             </table>
           </div>
         )}
-        <p className="subtle purchases-legend">
-          Difference = Purchase Amount - Sum of account source totals.
-        </p>
+        <p className="subtle purchases-legend">Account Balance After Purchase reflects the selected Pay From account after purchase is applied.</p>
       </Panel>
 
       <Panel title="Long-Term Purchases (Monthly)" className="panel-wide">
@@ -2589,18 +2712,13 @@ const App = () => {
               <thead>
                 <tr>
                   <th>Enabled</th>
+                  <th>Flag</th>
                   <th>Name</th>
                   <th>Start</th>
                   <th>Duration (Months)</th>
                   <th>End Date</th>
-                  {orderedBankAccounts.map((account) => (
-                    <th
-                      key={`long-term-account-header-${account.id}`}
-                      title={`${account.label} (${poolLabelById.get(account.poolId) ?? account.poolId})`}
-                    >
-                      {account.label}
-                    </th>
-                  ))}
+                  <th>Monthly Amount</th>
+                  <th>Pay From</th>
                   <th>Difference</th>
                   <th>Remove</th>
                 </tr>
@@ -2608,29 +2726,49 @@ const App = () => {
               <tbody>
                 {(scenario.longTermPurchases ?? []).map((purchase) => {
                   const purchaseSourceLines = normalizePurchaseSourceLinesForAccounts(purchase);
-                  const sourceAmountByAccountId = new Map(
-                    purchaseSourceLines.map((line) => [line.sourceId, Math.max(0, line.amount)])
-                  );
                   const monthlySources = sumPurchaseSourceLineAmounts(purchaseSourceLines);
                   const difference = purchase.monthlyAmount - monthlySources;
                   const sourceMismatch = Math.abs(difference) > 0.01;
                   const fundingShortfall = futureProjection.longTermPurchaseFundingShortfalls[purchase.id] ?? 0;
                   const hasFundingShortfall = fundingShortfall > 0.01;
-                  const purchaseNotViable = purchase.enabled && (sourceMismatch || hasFundingShortfall);
+                  const incomeStatus = futureProjection.incomeFundedItemStatuses[purchase.id];
+                  const incomeShortfall = incomeStatus?.status === 'shortfall';
+                  const incomeFallback = incomeStatus?.status === 'fallback';
+                  const purchaseNotViable = purchase.enabled && (sourceMismatch || hasFundingShortfall || incomeShortfall);
                   const title = purchaseNotViable
                     ? sourceMismatch
                       ? 'Not viable: monthly amount does not match source totals.'
-                      : 'Not viable: one or more selected accounts cannot sustain this monthly purchase plan.'
+                      : incomeShortfall
+                        ? 'Not enough income or fallback accounts to cover this purchase.'
+                        : incomeFallback
+                          ? 'Income fallback account used to cover this purchase.'
+                          : 'Not viable: one or more selected accounts cannot sustain this monthly purchase plan.'
                     : undefined;
+                  const rowClass =
+                    purchaseNotViable && (sourceMismatch || hasFundingShortfall || incomeShortfall)
+                      ? 'purchase-row invalid'
+                      : incomeFallback
+                        ? 'purchase-row warning'
+                        : 'purchase-row';
+                  const fundingSourceValue = purchase.fundingSource ?? 'income';
 
                   return (
-                    <tr key={purchase.id} className={purchaseNotViable ? 'purchase-row invalid' : 'purchase-row'} title={title}>
+                    <tr key={purchase.id} className={rowClass} title={title}>
                       <td>
                         <input
                           type="checkbox"
                           checked={purchase.enabled}
                           onChange={(event) =>
                             updateLongTermPurchase(purchase.id, { ...purchase, enabled: event.target.checked })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={purchase.showOnGraph}
+                          onChange={(event) =>
+                            updateLongTermPurchase(purchase.id, { ...purchase, showOnGraph: event.target.checked })
                           }
                         />
                       </td>
@@ -2696,23 +2834,35 @@ const App = () => {
                           }
                         />
                       </td>
-                      {orderedBankAccounts.map((account) => (
-                        <td key={`${purchase.id}-${account.id}`}>
-                          <BufferedNumberInput
-                            value={sourceAmountByAccountId.get(account.id) ?? 0}
-                            min={0}
-                            max={1000000}
-                            step={10}
-                            onCommit={(next) => {
-                              const updatedSources = withUpdatedPurchaseAccountAmount(purchase, account.id, next);
-                              updateLongTermPurchase(purchase.id, {
-                                ...purchase,
-                                ...updatedSources
-                              });
-                            }}
-                          />
-                        </td>
-                      ))}
+                      <td>
+                        <BufferedNumberInput
+                          value={purchase.monthlyAmount}
+                          min={0}
+                          max={1000000}
+                          step={10}
+                          onCommit={(next) => {
+                            const updated = applyPurchaseFundingSource(purchase, fundingSourceValue, next);
+                            updateLongTermPurchase(purchase.id, updated);
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <select
+                          aria-label="Long-Term Funding Source"
+                          value={fundingSourceValue}
+                          onChange={(event) => {
+                            const updated = applyPurchaseFundingSource(purchase, event.target.value, purchase.monthlyAmount);
+                            updateLongTermPurchase(purchase.id, updated);
+                          }}
+                        >
+                          <option value="income">Income</option>
+                          {accountSelectionOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
                       <td>{formatCurrency(difference)}</td>
                       <td>
                         <button type="button" className="text-button" onClick={() => removeLongTermPurchase(purchase.id)}>
@@ -2728,6 +2878,198 @@ const App = () => {
         )}
         <p className="subtle purchases-legend">
           Difference = Monthly Amount - Sum of monthly source totals. End can be defined by duration or explicit end date.
+        </p>
+      </Panel>
+
+      <Panel title="Loans Table" className="panel-wide">
+        <div className="career-actions">
+          <button type="button" className="secondary-button" onClick={addLoan}>
+            + Loan
+          </button>
+        </div>
+        {(scenario.loans ?? []).length === 0 ? (
+          <p className="subtle">Add loans to track balances, rates, payments, and payment source accounts.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="purchases-table">
+              <thead>
+                <tr>
+                  <th>Enabled</th>
+                  <th>Flag</th>
+                  <th>Name</th>
+                  <th>Start</th>
+                  <th>Original Amount</th>
+                  <th>Down Payment</th>
+                  <th>Current Balance</th>
+                  <th>APR %</th>
+                  <th>Minimum Payment</th>
+                  <th>Extra Payment</th>
+                  <th>Total Monthly</th>
+                  <th>Pay From</th>
+                  <th>Est. Payoff</th>
+                  <th>Remove</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(scenario.loans ?? []).map((loan) => {
+                  const totalMonthlyPayment = loan.minimumMonthlyPayment + loan.extraMonthlyPayment;
+                  const payoffMonths = estimateLoanPayoffMonths(loan.currentBalance, loan.annualInterestRate, totalMonthlyPayment);
+                  const fundingShortfall = futureProjection.loanFundingShortfalls[loan.id] ?? 0;
+                  const incomeStatus = futureProjection.incomeFundedItemStatuses[loan.id];
+                  const incomeShortfall = incomeStatus?.status === 'shortfall';
+                  const incomeFallback = incomeStatus?.status === 'fallback';
+                  const loanNotViable = loan.enabled && (fundingShortfall > 0.01 || incomeShortfall);
+                  const title = loanNotViable
+                    ? incomeShortfall
+                      ? 'Not enough income or fallback accounts to cover this loan payment.'
+                      : incomeFallback
+                        ? 'Income fallback account used to cover this loan payment.'
+                        : 'Not viable: selected payment source account cannot fund this loan without running empty.'
+                    : undefined;
+                  const loanRowClass =
+                    (loanNotViable && (fundingShortfall > 0.01 || incomeShortfall))
+                      ? 'purchase-row invalid'
+                      : incomeFallback
+                        ? 'purchase-row warning'
+                        : 'purchase-row';
+
+                  return (
+                    <tr key={loan.id} className={loanRowClass} title={title}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={loan.enabled}
+                          onChange={(event) => updateLoan(loan.id, { ...loan, enabled: event.target.checked })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={loan.showOnGraph}
+                          onChange={(event) => updateLoan(loan.id, { ...loan, showOnGraph: event.target.checked })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          value={loan.label}
+                          onChange={(event) => updateLoan(loan.id, { ...loan, label: event.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <YearMonthInput
+                          label="Loan Start"
+                          value={loan.startYearMonth}
+                          onChange={(nextYearMonth) => updateLoan(loan.id, { ...loan, startYearMonth: nextYearMonth })}
+                        />
+                      </td>
+                      <td>
+                        <BufferedNumberInput
+                          value={loan.originalAmount}
+                          min={0}
+                          max={50000000}
+                          step={100}
+                          onCommit={(next) => updateLoan(loan.id, { ...loan, originalAmount: next })}
+                        />
+                      </td>
+                      <td>
+                        <BufferedNumberInput
+                          value={loan.downPayment}
+                          min={0}
+                          max={50000000}
+                          step={100}
+                          onCommit={(next) => updateLoan(loan.id, { ...loan, downPayment: next })}
+                        />
+                      </td>
+                      <td>
+                        <BufferedNumberInput
+                          value={loan.currentBalance}
+                          min={0}
+                          max={50000000}
+                          step={100}
+                          onCommit={(next) => updateLoan(loan.id, { ...loan, currentBalance: next })}
+                        />
+                      </td>
+                      <td>
+                        <BufferedNumberInput
+                          value={loan.annualInterestRate}
+                          min={-5}
+                          max={80}
+                          step={0.1}
+                          onCommit={(next) => updateLoan(loan.id, { ...loan, annualInterestRate: next })}
+                        />
+                      </td>
+                      <td>
+                        <BufferedNumberInput
+                          value={loan.minimumMonthlyPayment}
+                          min={0}
+                          max={500000}
+                          step={10}
+                          onCommit={(next) => updateLoan(loan.id, { ...loan, minimumMonthlyPayment: next })}
+                        />
+                      </td>
+                      <td>
+                        <BufferedNumberInput
+                          value={loan.extraMonthlyPayment}
+                          min={0}
+                          max={500000}
+                          step={10}
+                          onCommit={(next) => updateLoan(loan.id, { ...loan, extraMonthlyPayment: next })}
+                        />
+                      </td>
+                      <td>{formatCurrency(totalMonthlyPayment)}</td>
+                      <td>
+                        {(() => {
+                          const paymentSourceValue =
+                            typeof loan.paymentSource === 'string'
+                              ? loan.paymentSource
+                              : loan.paymentSourceAccount === 'income'
+                                ? 'income'
+                                : `pool:${loan.paymentSourceAccount}`;
+
+                          return (
+                        <select
+                          aria-label="Loan Payment Source"
+                          value={paymentSourceValue}
+                          onChange={(event) =>
+                            updateLoan(loan.id, {
+                              ...loan,
+                              paymentSource:
+                                event.target.value === 'income'
+                                  ? 'income'
+                                  : (event.target.value as `account:${string}`),
+                              paymentSourceAccount:
+                                event.target.value === 'income'
+                                  ? 'income'
+                                  : 'investments'
+                            })
+                          }
+                        >
+                          <option value="income">Income</option>
+                          {accountSelectionOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                          );
+                        })()}
+                      </td>
+                      <td>{formatLoanPayoffEstimate(payoffMonths)}</td>
+                      <td>
+                        <button type="button" className="text-button" onClick={() => removeLoan(loan.id)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="subtle purchases-legend">
+          Estimated payoff assumes fixed monthly payments and APR with no new borrowing.
         </p>
       </Panel>
     </>
@@ -2805,6 +3147,7 @@ const App = () => {
           min={0}
           max={1000000}
           step={500}
+          title="This value is adjusted for inflation each year"
           onChange={(value) =>
             updateScenario({
               ...scenario,
@@ -2831,179 +3174,6 @@ const App = () => {
         </div>
       </Panel>
     </>
-  );
-
-  const renderLoansTab = () => (
-    <Panel title="Loans Table" className="panel-wide">
-      <div className="career-actions">
-        <button type="button" className="secondary-button" onClick={addLoan}>
-          + Loan
-        </button>
-      </div>
-      {(scenario.loans ?? []).length === 0 ? (
-        <p className="subtle">Add loans to track balances, rates, payments, and payment source accounts.</p>
-      ) : (
-        <div className="table-wrap">
-          <table className="purchases-table">
-            <thead>
-              <tr>
-                <th>Enabled</th>
-                <th>Name</th>
-                <th>Start</th>
-                <th>Original Amount</th>
-                <th>Down Payment</th>
-                <th>Current Balance</th>
-                <th>APR %</th>
-                <th>Minimum Payment</th>
-                <th>Extra Payment</th>
-                <th>Total Monthly</th>
-                <th>Pay From</th>
-                <th>Est. Payoff</th>
-                <th>Remove</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(scenario.loans ?? []).map((loan) => {
-                const totalMonthlyPayment = loan.minimumMonthlyPayment + loan.extraMonthlyPayment;
-                const payoffMonths = estimateLoanPayoffMonths(loan.currentBalance, loan.annualInterestRate, totalMonthlyPayment);
-                const fundingShortfall = futureProjection.loanFundingShortfalls[loan.id] ?? 0;
-                const loanNotViable = loan.enabled && fundingShortfall > 0.01;
-                const title = loanNotViable
-                  ? 'Not viable: selected payment source account cannot fund this loan without running empty.'
-                  : undefined;
-
-                return (
-                  <tr key={loan.id} className={loanNotViable ? 'purchase-row invalid' : 'purchase-row'} title={title}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={loan.enabled}
-                        onChange={(event) => updateLoan(loan.id, { ...loan, enabled: event.target.checked })}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="text"
-                        value={loan.label}
-                        onChange={(event) => updateLoan(loan.id, { ...loan, label: event.target.value })}
-                      />
-                    </td>
-                    <td>
-                      <YearMonthInput
-                        label="Loan Start"
-                        value={loan.startYearMonth}
-                        onChange={(nextYearMonth) => updateLoan(loan.id, { ...loan, startYearMonth: nextYearMonth })}
-                      />
-                    </td>
-                    <td>
-                      <BufferedNumberInput
-                        value={loan.originalAmount}
-                        min={0}
-                        max={50000000}
-                        step={100}
-                        onCommit={(next) => updateLoan(loan.id, { ...loan, originalAmount: next })}
-                      />
-                    </td>
-                    <td>
-                      <BufferedNumberInput
-                        value={loan.downPayment}
-                        min={0}
-                        max={50000000}
-                        step={100}
-                        onCommit={(next) => updateLoan(loan.id, { ...loan, downPayment: next })}
-                      />
-                    </td>
-                    <td>
-                      <BufferedNumberInput
-                        value={loan.currentBalance}
-                        min={0}
-                        max={50000000}
-                        step={100}
-                        onCommit={(next) => updateLoan(loan.id, { ...loan, currentBalance: next })}
-                      />
-                    </td>
-                    <td>
-                      <BufferedNumberInput
-                        value={loan.annualInterestRate}
-                        min={-5}
-                        max={80}
-                        step={0.1}
-                        onCommit={(next) => updateLoan(loan.id, { ...loan, annualInterestRate: next })}
-                      />
-                    </td>
-                    <td>
-                      <BufferedNumberInput
-                        value={loan.minimumMonthlyPayment}
-                        min={0}
-                        max={500000}
-                        step={10}
-                        onCommit={(next) => updateLoan(loan.id, { ...loan, minimumMonthlyPayment: next })}
-                      />
-                    </td>
-                    <td>
-                      <BufferedNumberInput
-                        value={loan.extraMonthlyPayment}
-                        min={0}
-                        max={500000}
-                        step={10}
-                        onCommit={(next) => updateLoan(loan.id, { ...loan, extraMonthlyPayment: next })}
-                      />
-                    </td>
-                    <td>{formatCurrency(totalMonthlyPayment)}</td>
-                    <td>
-                      {(() => {
-                        const paymentSourceValue =
-                          typeof loan.paymentSource === 'string'
-                            ? loan.paymentSource
-                            : loan.paymentSourceAccount === 'income'
-                              ? 'income'
-                              : `pool:${loan.paymentSourceAccount}`;
-
-                        return (
-                      <select
-                        aria-label="Loan Payment Source"
-                        value={paymentSourceValue}
-                        onChange={(event) =>
-                          updateLoan(loan.id, {
-                            ...loan,
-                            paymentSource:
-                              event.target.value === 'income'
-                                ? 'income'
-                                : (event.target.value as `account:${string}`),
-                            paymentSourceAccount:
-                              event.target.value === 'income'
-                                ? 'income'
-                                : 'investments'
-                          })
-                        }
-                      >
-                        <option value="income">Income</option>
-                        {accountSelectionOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                        );
-                      })()}
-                    </td>
-                    <td>{formatLoanPayoffEstimate(payoffMonths)}</td>
-                    <td>
-                      <button type="button" className="text-button" onClick={() => removeLoan(loan.id)}>
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <p className="subtle purchases-legend">
-        Estimated payoff assumes fixed monthly payments and APR with no new borrowing.
-      </p>
-    </Panel>
   );
 
   const renderTimelineManagementTab = () => (
@@ -3829,7 +3999,7 @@ const App = () => {
                   ? renderTimelineManagementTab()
                   : careersSubTab === 'purchasesExpenses'
                     ? renderPurchasesTab()
-                    : renderLoansTab()}
+                    : null}
           </>
         );
       case 'netWorth':
@@ -3980,12 +4150,18 @@ const App = () => {
                         </label>
                       </div>
                       {graphMode === 'portfolio' ? (
-                        <ChartPanel years={displayedPortfolioGraphYears} />
+                        <ChartPanel
+                          years={displayedPortfolioGraphYears}
+                          flags={purchaseFlags}
+                          onFlagColorChange={handleFlagColorChange}
+                        />
                       ) : (
                         <SavingsStackedChart
                           years={displayedGraphYears}
                           pools={poolDefinitions}
                           bankAccounts={orderedBankAccounts}
+                          flags={purchaseFlags}
+                          onFlagColorChange={handleFlagColorChange}
                         />
                       )}
                       <div
@@ -3993,7 +4169,8 @@ const App = () => {
                       >
                         <p>{displayedGraphSummary}</p>
                         <p>
-                          Ending balance at age <strong>{displayedGraphEndAge}</strong>: <strong>{formatCurrency(displayedGraphEndingBalance)}</strong>
+                          Ending balance at age <strong>{displayedGraphEndAge}</strong>
+                          : <strong>{formatCurrency(displayedGraphBalanceForSummary)}</strong>
                         </p>
                       </div>
                     </>
