@@ -1,4 +1,4 @@
-# TODO (Reorganized 2026-05-03)
+# TODO (Audited 2026-05-08)
 
 ## Completed
 - [x] GUI too large; reduced sizing to avoid excessive scrolling
@@ -12,103 +12,90 @@
 - [x] Move Add-Ons controls back into Retirement tab
 - [x] Add Future Retirement tab based on Careers timeline
 - [x] Add student loans and loans
-
-## High Priority (Current UX/Correctness)
-- [ ] Improve overall UI polish
 - [x] Remove top blue header bar
+- [x] Add Priority field to accounts/pools (determines withdrawal/contribution funding order)
+- [x] Add Employer Match % per career (used in projection math)
+- [x] Add Import Folder button (webkitdirectory-based CSV/PDF batch import)
+- [x] Legacy 4-account removal (types, defaults, storage, engine, app, charts, imports, tests, docs)
+
+## UI Polish & Layout
+- [ ] Improve overall UI polish
 - [ ] Add vertical splitter/grip to resize left/right panes
 - [ ] Make purchases table name column wider (at least ~8 chars)
-- [ ] Add balancing validation: ensure income source reflects money that actually exists
-- [ ] Validate "money from income" when used as source for loans and expenses
-- [ ] Fix tooltip: inflation compensation text for max withdrawal value
-- [ ] Net worth history logging
-- [ ] Fix career checkboxes
+- [ ] Make filters work on both portfolio graph and stacked savings graph
+- [ ] Add 250k option for graph Y-axis legend
+- [ ] Stacked savings graph should keep scale when switching from portfolio graph
 
-## Purchases, Loans, and Expenses
-- [ ] Create expense tracking GUI
-- [ ] Add Expense Tracking feature
-- [ ] Move loans into purchases and expenses
-- [ ] Support displaying large purchase events in expense planner
-- [ ] Create Loan UI menu and Purchases/Expenses UI menu similar to Expenses tab
+## Validation & Correctness
+- [ ] Validate "money from income" when used as funding source for loans and expenses (including fallback chain)
+- [ ] Fix tooltip: inflation compensation text for max withdrawal value
+- [ ] Fix career checkboxes
+- [ ] Balance at end of period from career timeline does not take into account emergency fund max (hardcoded 15000 limit)
 - [ ] Allow multiple accounts to be used as funding sources
 - [ ] Add next viable date to long-term purchases and indicate which account is short
+
+## Purchases, Loans & Expenses
+- [ ] Expense tracking GUI (sub-tab exists with account selection, tracking view is placeholder)
+- [ ] Move loans into purchases and expenses
+- [ ] Support displaying large purchase events in expense planner
+- [ ] Create dedicated Loan UI and Purchase/Expense UI menus (similar to Expenses tab)
+- [ ] Add per-purchase/expense priority to determine funding order
 
 ## Importing & Data Ingestion
 - [ ] Improve expense import UI
 - [ ] Fix statement importing (PDF + CSV)
-- [ ] CSV import: allow selecting columns for transaction name/description/etc.
-- [ ] CSV import: highlight auto-detected mappings
-- [ ] CSV import: click to highlight row; support custom rows and row mapping
-- [ ] CSV/PDF import: selectable cell/item for account name, statement balance, or one-off metadata
-- [ ] CSV/PDF import: build inline GUI for mapping/review
-- [ ] Clarify/complete "Import Folder" button behavior
+- [ ] CSV import: column mapping UI (select transaction name, description, amounts; highlight auto-detected mappings)
+- [ ] CSV/PDF import: row-level click-to-select, custom row ranges, account name/balance metadata selection
+- [ ] CSV/PDF import: inline review/reconciliation GUI
 
 ## Retirement & Calculation Logic
 - [ ] Income tax on 401k
 - [ ] Verify withdrawal taxes are implemented correctly
-- [ ] Add 401k retirement withdrawal start date
+- [ ] Add 401k-specific retirement withdrawal start date
 - [ ] Add ability to change when healthcare gets expensive in retirement
 - [ ] Add toggle to enable/disable inflation adjustment for maximum yearly withdrawal
 - [ ] Minimum retirement withdrawal can come from any account with remaining balance (not blocked by 4% rule path)
-- [ ] Modify retirement failure conditions:
-  - [ ] Enforce minimum yearly withdrawal requirement through retirement end
-  - [ ] Add Retirement tab slider/control for this value (Finances Prediction)
-  - [ ] Ensure retirement math uses this value
+- [ ] Modify retirement failure conditions (enforce minimum yearly withdrawal, add slider/control, ensure math uses it)
 - [ ] Add theoretical early retirement year/age in graph summary message
+- [ ] Net worth history logging
 
-## Accounts, Pools, and Configuration
+## Accounts, Pools & Configuration
 - [ ] Replace hardcoded 4-account model with fully generic accounts + per-account rule designation (401k, Roth, HSA, etc.)
-- [ ] Configure savings account colors
-- [ ] Add account option to select due date
-- [ ] Add credit card due date
+- [ ] Configure savings account colors (global per-account, not just pool-level)
+- [ ] Add account/credit card due date option
 - [ ] Add credit card pool
-- [ ] Emergency fund max appears hardcoded:
-  - [ ] Add option to set max per account (0 = no cap)
-  - [ ] Add fallback destination account for overflow deposits
-- [ ] Add lock for time period / specific account and lock net worth updating while allowing transaction data
+- [ ] Emergency fund max: add option per account (0 = no cap) + fallback destination for overflow
+- [ ] Add lock for time period / specific account (lock net worth updating while allowing transactions)
+- [ ] Make flag colors based on account colors; stacked savings graph should also use per-account colors
 
-## Graphs & Visualization
-- [ ] Add 250k option for graph Y-axis legend
-- [ ] Stacked savings graph should keep scale when switching from portfolio graph
-- [ ] Make filters work on both portfolio graph and stacked savings graph
-
-## Tabs, Structure, and Sessions
+## Tabs, Structure & Sessions
 - [ ] Net worth tab should use table/graph from Finances Prediction
-- [ ] Add menu to save session, start new session, and load saved session (local only; no external export required)
+- [ ] Add menu to save session, start new session, load saved session (local only)
 - [ ] Add compare tab for graph overlays
-- [ ] Add spouse support (second plan overlay/combine)
+- [ ] Add spouse/second plan overlay support
 - [ ] Incorporate budgeting
 - [ ] Timeline manager: drag, reorder, delete career items
 - [ ] Make Options page display same graph/table/message as Finances Prediction
+- [ ] If 2+ careers occur at same time, stack them vertically
 
-## Export / Interop / Platform
+## Export & Interop
+- [ ] Create Excel export
 - [ ] Add Docker packaging
-- [ ] Replace local placeholder historical series with sourced web-backed historical market data
-- [ ] Add calendar integration
-- [ ] Add calendar integration for expense events
+- [ ] Replace local placeholder historical series with web-backed historical market data
+- [ ] Calendar integration (including expense events)
 - [ ] Give user ability to configure date format in Options
 - [ ] Export finances as generic formulas for Excel/manual calculations
 - [ ] Make entire GUI color configurable
 
-## Legacy 4-Account Removal Backlog
-- [x] legacy-types-001 (types): remove fixed SavingsBalances and fixed per-account fields from scenario-facing types
-- [x] legacy-defaults-002 (defaults-and-seeding): remove hardcoded emergencyFund/hsa/investments/retirement401k defaults where possible
-- [x] legacy-storage-003 (storage-migration): constrain legacy 4-account logic to migration-only
-- [x] legacy-engine-004 (projection-engine): eliminate fixed LEGACY_POOL_IDS dependency from core runtime math
-- [x] legacy-app-005 (app-runtime): remove remaining hardcoded legacy pool/account ID checks and fallback runtime branches
-- [x] legacy-charts-006 (visualization): replace legacy account-specific class naming/color assumptions with dynamic series styling
-- [x] legacy-imports-007 (imports): remove direct coupling of import account detection to legacy IDs
-- [x] legacy-tests-008 (tests): remove fixed-column/fixed-ID assumptions; update fixtures/assertions
-- [x] legacy-docs-009 (docs): update docs for dynamic bank accounts/pools
+## Uncommitted Changes (working tree)
+- [ ] Review uncommitted diff: taxInfo replaces takeHomePay on CareerEntry (types, defaults, storage, projection, tests, CareerPlanEditor)
+- [ ] Review uncommitted diff: fallbackDetails + firstFallbackYearMonth on incomeFundedItemStatuses for detailed tooltip display
+- [ ] Review uncommitted diff: purchase processing order changed (loans processed before purchases)
+- [ ] Review uncommitted diff: removed Difference column from long-term purchases table
+- [ ] Review uncommitted diff: tsconfig.app.json moduleResolution changed from Node to Bundler
 
-add clarification for careers withdrawals. This is only representative if you expect to predict a certain amount per year. If you are already planning events with the event planner then it will already be accounted for. Add a checkbox disable job based average account withdrawals. Also allow this to be represented by maximum allowed yearly withdrawals.
+loans table should only check if income is valid for events that have 
 
-Add automatic alcohol night. to the exepnse tracker Ie when I go to a bar I will have 5-6 similarly sized transactions, group these together as one event that happened
-Create Excel export
+Create a Debugger. When debug mode is enabled, any value can be right clicked and inspected. The inspection displays  table showing the sequence of math and order of operations interest, teaxes etc that were used in the calculation of the value. This can also be used to see what a value is used for.
 
-Improve Bonus UI and logic, where does the bonus go? Maybe remove bonuses.
-
-Make the flag colors based on the account colors. Make each account have a global color. The stacked sabings graph should also use this global color.
-
-Balance at end of period from career timeline does not take into account emergency fund max. The value in the table is set to some hardcoded imit of 15000
-validate that when a payment with income as the payment source is used and the account is empty, so the fallback accounts is used that
+Add Tax bracket configuration.

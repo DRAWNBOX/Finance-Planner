@@ -18,8 +18,8 @@ import {
   defaultScenario
 } from './defaultScenario';
 import {
-  ACCOUNT_TYPE_DEFAULT_RULES,
   ensureSourceLinesForPurchase,
+  normalizeLoanDownPaymentSource,
   normalizeLoanPaymentSource,
   normalizePurchaseFundingSource,
   seedDefaultBankAccounts,
@@ -41,6 +41,7 @@ import type {
   NetWorthImportRecord,
   NetWorthImportApplyMode,
   NetWorthImportSourceAccount,
+  ProjectionResult,
   ProjectionYear,
   PurchaseFlag,
   Scenario,
@@ -658,7 +659,7 @@ const App = () => {
   const customNetWorthAccounts = scenario.netWorth.customAccounts ?? [];
   const poolDefinitions = (scenario.netWorth.pools ?? seedDefaultPools()).slice().sort((a, b) => a.priority - b.priority);
   const bankAccounts =
-    scenario.netWorth.bankAccounts ?? seedDefaultBankAccounts(scenario.netWorth.accountBalances, scenario.savingsTracker.annualInterestRates);
+    scenario.netWorth.bankAccounts ?? seedDefaultBankAccounts(scenario.netWorth.accountBalances);
   const netWorthImports = scenario.netWorth.imports ?? [];
   const pendingNetWorthImports = netWorthImports.filter((record) => !record.applied);
   const netWorthHistory = scenario.netWorth.history ?? [];
@@ -736,31 +737,9 @@ const App = () => {
   const hideResultsForExpenses = activeTab === 'expenses';
   const hideResultsPanel = hideResultsForExpenses;
   const displayedGraphYears = usesFinancePredictionResults && !hasEnabledCareers ? [] : graphProjection.years;
-  const displayedPortfolioGraphYears =
-    usesFinancePredictionResults
-      ? displayedGraphYears.map((year) => ({
-          ...year,
-          endBalance: sumDynamicAccountBalances(year.accountBalancesById)
-        }))
-      : displayedGraphYears;
+  const displayedPortfolioGraphYears = displayedGraphYears;
   const displayedTableYears =
-    usesFinancePredictionResults
-      ? (() => {
-          let previousEndBalance: number | null = null;
-
-          return projection.years.map((year) => {
-            const endBalance = sumDynamicAccountBalances(year.accountBalancesById);
-            const startBalance = previousEndBalance ?? endBalance;
-            previousEndBalance = endBalance;
-
-            return {
-              ...year,
-              startBalance,
-              endBalance
-            };
-          });
-        })()
-      : projection.years;
+    usesFinancePredictionResults && !hasEnabledCareers ? [] : projection.years;
   const graphYearsForMode = graphMode === 'portfolio' ? displayedPortfolioGraphYears : displayedGraphYears;
   const displayedGraphEndingBalance = graphYearsForMode.length > 0 ? graphYearsForMode[graphYearsForMode.length - 1].endBalance : 0;
   const displayedGraphBalanceForSummary = displayedGraphEndingBalance;
@@ -988,11 +967,16 @@ const App = () => {
           pool.legacyFallbackId === 'investments' ||
           pool.legacyFallbackId === 'retirement401k'
             ? pool.legacyFallbackId
-            : undefined
+            : undefined,
+        annualReturnRate: toNumberOrFallback(pool.annualReturnRate, 0),
+        taxRate: toNumberOrFallback(pool.taxRate, 0),
+        penaltyRate: toNumberOrFallback(pool.penaltyRate, 0),
+        isHSA: pool.isHSA ?? undefined,
+        softRestrictionNote: typeof pool.softRestrictionNote === 'string' ? pool.softRestrictionNote : ''
       })),
       bankAccounts: (
         nextScenario.netWorth.bankAccounts ??
-        seedDefaultBankAccounts(nextScenario.netWorth.accountBalances, nextScenario.savingsTracker.annualInterestRates)
+        seedDefaultBankAccounts(nextScenario.netWorth.accountBalances)
       ).map((account, index) => ({
         id: typeof account.id === 'string' && account.id.trim().length > 0 ? account.id : `bank-account-${index + 1}`,
         label: typeof account.label === 'string' && account.label.trim().length > 0 ? account.label : `Bank Account ${index + 1}`,
@@ -1007,9 +991,7 @@ const App = () => {
           account.accountType === 'hsa'
             ? account.accountType
             : 'taxable',
-        annualReturnRate: toNumberOrFallback(account.annualReturnRate, 0),
-        balance: Math.max(0, toNumberOrFallback(account.balance, 0)),
-        ruleOverrides: account.ruleOverrides ?? {}
+        balance: Math.max(0, toNumberOrFallback(account.balance, 0))
       })),
       imports: (nextScenario.netWorth.imports ?? []).map((record, index) => normalizeNetWorthImportRecord(record, index)),
       history: (nextScenario.netWorth.history ?? []).map((entry, index) => ({
@@ -1200,7 +1182,11 @@ const App = () => {
           ? loan.paymentSourceAccount
           : 'investments',
       paymentSource:
-        normalizeLoanPaymentSource(loan, normalizedNetWorth.bankAccounts ?? []) as Scenario['loans'][number]['paymentSource']
+        normalizeLoanPaymentSource(loan, normalizedNetWorth.bankAccounts ?? []) as Scenario['loans'][number]['paymentSource'],
+      downPaymentSource: normalizeLoanDownPaymentSource(
+        loan,
+        normalizedNetWorth.bankAccounts ?? []
+      ) as Scenario['loans'][number]['downPaymentSource']
     }));
     const normalizedCareerEntriesWithBankTargets = normalizedCareerEntries.map((entry) => ({
       ...entry,
@@ -1563,7 +1549,10 @@ const App = () => {
       id: makePoolId(),
       label: `Pool ${poolDefinitions.length + 1}`,
       enabled: true,
-      priority: poolDefinitions.length
+      priority: poolDefinitions.length,
+      annualReturnRate: 5,
+      taxRate: 0,
+      penaltyRate: 0
     };
 
     updateScenario({
@@ -1609,7 +1598,6 @@ const App = () => {
       poolId: targetPoolId,
       priority: 0,
       accountType: 'taxable',
-      annualReturnRate: 5,
       balance: 0
     };
 
@@ -1629,14 +1617,7 @@ const App = () => {
         ...scenario.netWorth,
         bankAccounts: bankAccounts.map((account) =>
           account.id === accountId
-            ? {
-                ...account,
-                ...changes,
-                ruleOverrides: {
-                  ...(account.ruleOverrides ?? {}),
-                  ...(changes.ruleOverrides ?? {})
-                }
-              }
+            ? { ...account, ...changes }
             : account
         )
       }
@@ -2293,14 +2274,18 @@ const App = () => {
             })
           }
         />
-        <div className="career-savings-grid">
-          <div className="career-savings-row career-savings-header">
-            <div className="career-savings-cell">Pool</div>
-            <div className="career-savings-cell">Use Ret. Age</div>
-            <div className="career-savings-cell">Start Age</div>
-            <div className="career-savings-cell">Use 4% Rule</div>
-            <div className="career-savings-cell">First Year Withdrawal</div>
-          </div>
+          <div className="career-savings-grid">
+            <div className="career-savings-row career-savings-header">
+              <div className="career-savings-cell">Pool</div>
+              <div className="career-savings-cell">Use Ret. Age</div>
+              <div className="career-savings-cell">Start Age</div>
+              <div className="career-savings-cell">Use 4% Rule</div>
+              <div className="career-savings-cell">First Year Withdrawal</div>
+              <div className="career-savings-cell">APY %</div>
+              <div className="career-savings-cell">Tax %</div>
+              <div className="career-savings-cell">Penalty %</div>
+              <div className="career-savings-cell">HSA</div>
+            </div>
           {retirementPoolRows.map(({ pool, sourceLine, plannedValue }) => (
             <div key={pool.id} className="career-savings-row">
               <div className="career-savings-cell">{pool.label}</div>
@@ -2344,10 +2329,43 @@ const App = () => {
                   onCommit={(next) => updateRetirementPoolLine(pool.id, { amount: next })}
                 />
               </div>
+              <div className="career-savings-cell">
+                <BufferedNumberInput
+                  value={pool.annualReturnRate}
+                  min={-20}
+                  max={40}
+                  step={0.1}
+                  onCommit={(next) => updatePool(pool.id, { annualReturnRate: next })}
+                />
+              </div>
+              <div className="career-savings-cell">
+                <BufferedNumberInput
+                  value={pool.taxRate}
+                  min={0}
+                  max={60}
+                  step={0.1}
+                  onCommit={(next) => updatePool(pool.id, { taxRate: next })}
+                />
+              </div>
+              <div className="career-savings-cell">
+                <BufferedNumberInput
+                  value={pool.penaltyRate}
+                  min={0}
+                  max={60}
+                  step={0.1}
+                  onCommit={(next) => updatePool(pool.id, { penaltyRate: next })}
+                />
+              </div>
+              <div className="career-savings-cell">
+                <input
+                  type="checkbox"
+                  checked={pool.isHSA === true}
+                  onChange={(event) => updatePool(pool.id, { isHSA: event.target.checked })}
+                />
+              </div>
             </div>
           ))}
         </div>
-        <p className="subtle">Pool APY is managed through underlying bank accounts in Net Worth.</p>
             </>
           );
         })()}
@@ -2510,7 +2528,6 @@ const App = () => {
         onChangeCareer={updateCareer}
         onDuplicateCareer={duplicateCareer}
         onReorderCareers={reorderCareers}
-        onChangeBankAccountReturn={(accountId, rate) => updateBankAccount(accountId, { annualReturnRate: rate })}
         onAddCareer={addCareer}
         onRemoveCareer={removeCareer}
         previewYear={
@@ -2519,6 +2536,7 @@ const App = () => {
           futureProjection.years[0]
         }
         bankAccounts={bankAccounts}
+        pools={poolDefinitions}
         birthdayBasedCareerStartAge={birthdayBasedCareerStartAge}
         dateOfBirth={scenario.options.dateOfBirth}
         currentAge={currentAge}
@@ -2530,6 +2548,39 @@ const App = () => {
       </Panel>
     </>
   );
+
+  const formatIncomeFallbackTooltip = (
+    incomeStatus: ProjectionResult['incomeFundedItemStatuses'][string] | undefined,
+    incomeUsageByMonth: ProjectionResult['incomeUsageByMonth'],
+    fallbackDetails: { accountId: string; amount: number }[] | undefined,
+    bankAccts: BankAccountDefinition[]
+  ) => {
+    if (!incomeStatus || incomeStatus.status !== 'fallback') return null;
+    const parts: string[] = [];
+    const monthKey = incomeStatus.firstFallbackYearMonth;
+    if (monthKey) {
+      parts.push(`Starting ${monthKey}:`);
+      const usage = incomeUsageByMonth[monthKey];
+      if (usage) {
+        parts.push(`Monthly income: ${formatCurrency(usage.availableIncome)}`);
+        let totalUsed = 0;
+        usage.items.forEach((item) => {
+          parts.push(`  ${item.label}: ${formatCurrency(item.amount)}`);
+          totalUsed += item.amount;
+        });
+        parts.push(`  Total used: ${formatCurrency(totalUsed)}`);
+        parts.push(`  Remaining: ${formatCurrency(Math.max(0, usage.availableIncome - totalUsed))}`);
+      }
+    }
+    if (fallbackDetails?.length) {
+      const detailStrs = fallbackDetails.map((d) => {
+        const acct = bankAccts.find((a) => a.id === d.accountId);
+        return `${acct?.label ?? d.accountId} (${formatCurrency(d.amount)})`;
+      });
+      parts.push(`Using fallback: ${detailStrs.join(', ')}`);
+    }
+    return parts.join('\n');
+  };
 
   const renderPurchasesTab = () => (
     <>
@@ -2573,12 +2624,13 @@ const App = () => {
                   const incomeStatus = projection.incomeFundedItemStatuses[purchase.id];
                   const incomeShortfall = incomeStatus?.status === 'shortfall';
                   const incomeFallback = incomeStatus?.status === 'fallback';
+                  const fallbackTooltip = formatIncomeFallbackTooltip(incomeStatus, projection.incomeUsageByMonth, incomeStatus?.fallbackDetails, bankAccounts);
                   const nonViableTitle = purchaseNotViable
                     ? 'Not viable: selected pay-from account balance goes negative after this purchase.'
                     : incomeShortfall
                       ? 'Not enough income or fallback accounts to cover this purchase.'
-                      : incomeFallback
-                        ? 'Income fallback account used to cover this purchase.'
+                      : fallbackTooltip
+                        ? fallbackTooltip
                         : undefined;
                   const rowClass =
                     purchaseNotViable || incomeShortfall
@@ -2719,33 +2771,25 @@ const App = () => {
                   <th>End Date</th>
                   <th>Monthly Amount</th>
                   <th>Pay From</th>
-                  <th>Difference</th>
                   <th>Remove</th>
                 </tr>
               </thead>
               <tbody>
                 {(scenario.longTermPurchases ?? []).map((purchase) => {
-                  const purchaseSourceLines = normalizePurchaseSourceLinesForAccounts(purchase);
-                  const monthlySources = sumPurchaseSourceLineAmounts(purchaseSourceLines);
-                  const difference = purchase.monthlyAmount - monthlySources;
-                  const sourceMismatch = Math.abs(difference) > 0.01;
                   const fundingShortfall = futureProjection.longTermPurchaseFundingShortfalls[purchase.id] ?? 0;
                   const hasFundingShortfall = fundingShortfall > 0.01;
                   const incomeStatus = futureProjection.incomeFundedItemStatuses[purchase.id];
                   const incomeShortfall = incomeStatus?.status === 'shortfall';
                   const incomeFallback = incomeStatus?.status === 'fallback';
-                  const purchaseNotViable = purchase.enabled && (sourceMismatch || hasFundingShortfall || incomeShortfall);
+                  const purchaseNotViable = purchase.enabled && (hasFundingShortfall || incomeShortfall);
+                  const ltFallbackTooltip = formatIncomeFallbackTooltip(incomeStatus, futureProjection.incomeUsageByMonth, incomeStatus?.fallbackDetails, bankAccounts);
                   const title = purchaseNotViable
-                    ? sourceMismatch
-                      ? 'Not viable: monthly amount does not match source totals.'
-                      : incomeShortfall
-                        ? 'Not enough income or fallback accounts to cover this purchase.'
-                        : incomeFallback
-                          ? 'Income fallback account used to cover this purchase.'
-                          : 'Not viable: one or more selected accounts cannot sustain this monthly purchase plan.'
-                    : undefined;
+                    ? incomeShortfall
+                      ? 'Not enough income or fallback accounts to cover this purchase.'
+                      : 'Not viable: one or more selected accounts cannot sustain this monthly purchase plan.'
+                    : ltFallbackTooltip ?? undefined;
                   const rowClass =
-                    purchaseNotViable && (sourceMismatch || hasFundingShortfall || incomeShortfall)
+                    (purchaseNotViable && (hasFundingShortfall || incomeShortfall))
                       ? 'purchase-row invalid'
                       : incomeFallback
                         ? 'purchase-row warning'
@@ -2863,7 +2907,6 @@ const App = () => {
                           ))}
                         </select>
                       </td>
-                      <td>{formatCurrency(difference)}</td>
                       <td>
                         <button type="button" className="text-button" onClick={() => removeLongTermPurchase(purchase.id)}>
                           Remove
@@ -2877,7 +2920,7 @@ const App = () => {
           </div>
         )}
         <p className="subtle purchases-legend">
-          Difference = Monthly Amount - Sum of monthly source totals. End can be defined by duration or explicit end date.
+          End can be defined by duration or explicit end date.
         </p>
       </Panel>
 
@@ -2900,6 +2943,7 @@ const App = () => {
                   <th>Start</th>
                   <th>Original Amount</th>
                   <th>Down Payment</th>
+                  <th>Down Pay From</th>
                   <th>Current Balance</th>
                   <th>APR %</th>
                   <th>Minimum Payment</th>
@@ -2919,13 +2963,12 @@ const App = () => {
                   const incomeShortfall = incomeStatus?.status === 'shortfall';
                   const incomeFallback = incomeStatus?.status === 'fallback';
                   const loanNotViable = loan.enabled && (fundingShortfall > 0.01 || incomeShortfall);
+                  const loanFallbackTooltip = formatIncomeFallbackTooltip(incomeStatus, futureProjection.incomeUsageByMonth, incomeStatus?.fallbackDetails, bankAccounts);
                   const title = loanNotViable
                     ? incomeShortfall
                       ? 'Not enough income or fallback accounts to cover this loan payment.'
-                      : incomeFallback
-                        ? 'Income fallback account used to cover this loan payment.'
-                        : 'Not viable: selected payment source account cannot fund this loan without running empty.'
-                    : undefined;
+                      : 'Not viable: selected payment source account cannot fund this loan without running empty.'
+                    : loanFallbackTooltip ?? undefined;
                   const loanRowClass =
                     (loanNotViable && (fundingShortfall > 0.01 || incomeShortfall))
                       ? 'purchase-row invalid'
@@ -2980,6 +3023,33 @@ const App = () => {
                           step={100}
                           onCommit={(next) => updateLoan(loan.id, { ...loan, downPayment: next })}
                         />
+                      </td>
+                      <td>
+                        {(() => {
+                          const dpSourceValue = loan.downPaymentSource ?? loan.paymentSource ?? 'income';
+                          return (
+                        <select
+                          aria-label="Loan Down Payment Source"
+                          value={dpSourceValue}
+                          onChange={(event) =>
+                            updateLoan(loan.id, {
+                              ...loan,
+                              downPaymentSource:
+                                event.target.value === 'income'
+                                  ? 'income'
+                                  : (event.target.value as `account:${string}`)
+                            })
+                          }
+                        >
+                          <option value="income">Income</option>
+                          {accountSelectionOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                          );
+                        })()}
                       </td>
                       <td>
                         <BufferedNumberInput
@@ -3254,10 +3324,7 @@ const App = () => {
                 <th>Pool</th>
                 <th>Type</th>
                 <th>Priority</th>
-                <th>APY %</th>
                 <th>Balance</th>
-                <th>Tax %</th>
-                <th>Penalty %</th>
                 <th>Remove</th>
               </tr>
             </thead>
@@ -3288,11 +3355,7 @@ const App = () => {
                       value={account.accountType}
                       onChange={(event) =>
                         updateBankAccount(account.id, {
-                          accountType: event.target.value as AccountTypePreset,
-                          ruleOverrides: {
-                            taxRate: ACCOUNT_TYPE_DEFAULT_RULES[event.target.value as AccountTypePreset]?.taxRate ?? 0,
-                            penaltyRate: ACCOUNT_TYPE_DEFAULT_RULES[event.target.value as AccountTypePreset]?.penaltyRate ?? 0
-                          }
+                          accountType: event.target.value as AccountTypePreset
                         })
                       }
                     >
@@ -3314,52 +3377,11 @@ const App = () => {
                   </td>
                   <td>
                     <BufferedNumberInput
-                      value={account.annualReturnRate}
-                      min={-20}
-                      max={40}
-                      step={0.1}
-                      onCommit={(next) => updateBankAccount(account.id, { annualReturnRate: next })}
-                    />
-                  </td>
-                  <td>
-                    <BufferedNumberInput
                       value={account.balance}
                       min={0}
                       max={20000000}
                       step={100}
                       onCommit={(next) => updateBankAccount(account.id, { balance: next })}
-                    />
-                  </td>
-                  <td>
-                    <BufferedNumberInput
-                      value={
-                        typeof account.ruleOverrides?.taxRate === 'number'
-                          ? account.ruleOverrides.taxRate
-                          : ACCOUNT_TYPE_DEFAULT_RULES[account.accountType].taxRate
-                      }
-                      min={0}
-                      max={60}
-                      step={0.1}
-                      onCommit={(next) =>
-                        updateBankAccount(account.id, { ruleOverrides: { ...(account.ruleOverrides ?? {}), taxRate: next } })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <BufferedNumberInput
-                      value={
-                        typeof account.ruleOverrides?.penaltyRate === 'number'
-                          ? account.ruleOverrides.penaltyRate
-                          : ACCOUNT_TYPE_DEFAULT_RULES[account.accountType].penaltyRate
-                      }
-                      min={0}
-                      max={60}
-                      step={0.1}
-                      onCommit={(next) =>
-                        updateBankAccount(account.id, {
-                          ruleOverrides: { ...(account.ruleOverrides ?? {}), penaltyRate: next }
-                        })
-                      }
                     />
                   </td>
                   <td>

@@ -7,6 +7,7 @@ import {
   ensureSourceLinesForPurchase,
   ensureSourceLinesForWithdrawal,
   normalizeLoanPaymentSource,
+  normalizeLoanDownPaymentSource,
   seedDefaultBankAccounts,
   seedDefaultPools
 } from './financeModel';
@@ -111,15 +112,27 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
           ? line.overflowFallbackAccountId
           : null
     })),
-    takeHomePay: (() => {
-      const thp = entry.takeHomePay;
-      if (!thp || typeof thp !== 'object') {
-        return { amount: 0, period: 'monthly' as const };
+    taxInfo: (() => {
+      const ti = (entry as unknown as Record<string, unknown>).taxInfo;
+      if (ti && typeof ti === 'object') {
+        return {
+          untaxedBenefits: Math.max(0, toNumberOrFallback((ti as Record<string, unknown>).untaxedBenefits, 0)),
+          leftoverIncome: Math.max(0, toNumberOrFallback((ti as Record<string, unknown>).leftoverIncome, 0)),
+          taxRate: Math.max(0, toNumberOrFallback((ti as Record<string, unknown>).taxRate, 0)),
+          lastEditedField:
+            (ti as Record<string, unknown>).lastEditedField === 'leftoverIncome' || (ti as Record<string, unknown>).lastEditedField === 'taxRate'
+              ? (ti as Record<string, unknown>).lastEditedField as 'leftoverIncome' | 'taxRate'
+              : null
+        };
       }
-      return {
-        amount: Math.max(0, toNumberOrFallback((thp as Record<string, unknown>).amount, 0)),
-        period: (thp as Record<string, unknown>).period === 'yearly' ? 'yearly' as const : 'monthly' as const
-      };
+      const thp = (entry as unknown as Record<string, unknown>).takeHomePay;
+      if (thp && typeof thp === 'object') {
+        const amount = Math.max(0, toNumberOrFallback((thp as Record<string, unknown>).amount, 0));
+        const period = (thp as Record<string, unknown>).period;
+        const yearlyAmount = period === 'yearly' ? amount : amount * 12;
+        return { untaxedBenefits: 0, leftoverIncome: yearlyAmount, taxRate: 0, lastEditedField: null };
+      }
+      return { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null };
     })()
   };
 };
@@ -256,9 +269,26 @@ export const loadAppState = (): PersistedAppState => {
             ...defaultScenario.netWorth.accountBalances,
             ...scenario.netWorth?.accountBalances
           },
-          pools:
-            scenario.netWorth?.pools?.length
-              ? scenario.netWorth.pools.map((pool, index) => ({
+          pools: (() => {
+            const rawBankAccounts = (scenario.netWorth?.bankAccounts ?? []) as unknown as Record<string, unknown>[];
+            const firstAccountByPoolId = new Map<string, Record<string, unknown>>();
+            rawBankAccounts.forEach((account) => {
+              const pid = typeof account.poolId === 'string' ? account.poolId : '';
+              if (pid && !firstAccountByPoolId.has(pid)) {
+                firstAccountByPoolId.set(pid, account);
+              }
+            });
+
+            const savedPools = scenario.netWorth?.pools;
+            if (savedPools && savedPools.length > 0) {
+              return savedPools.map((pool, index) => {
+                const firstAccount = firstAccountByPoolId.get(pool.id as string);
+                const ruleOverrides =
+                  firstAccount && typeof firstAccount.ruleOverrides === 'object' && firstAccount.ruleOverrides
+                    ? (firstAccount.ruleOverrides as Record<string, unknown>)
+                    : null;
+
+                return {
                   id: typeof pool.id === 'string' && pool.id.trim().length > 0 ? pool.id : `pool-${index + 1}`,
                   label: typeof pool.label === 'string' && pool.label.trim().length > 0 ? pool.label : `Pool ${index + 1}`,
                   enabled: pool.enabled !== false,
@@ -273,9 +303,41 @@ export const loadAppState = (): PersistedAppState => {
                     pool.legacyFallbackId === 'investments' ||
                     pool.legacyFallbackId === 'retirement401k'
                       ? pool.legacyFallbackId
-                      : undefined
-                }))
-              : seedDefaultPools(),
+                      : undefined,
+                  annualReturnRate:
+                    typeof pool.annualReturnRate === 'number'
+                      ? pool.annualReturnRate
+                      : firstAccount
+                        ? toNumberOrFallback(firstAccount.annualReturnRate, 0)
+                        : 0,
+                  taxRate:
+                    typeof pool.taxRate === 'number'
+                      ? pool.taxRate
+                      : ruleOverrides
+                        ? toNumberOrFallback(ruleOverrides.taxRate, 0)
+                        : 0,
+                  penaltyRate:
+                    typeof pool.penaltyRate === 'number'
+                      ? pool.penaltyRate
+                      : ruleOverrides
+                        ? toNumberOrFallback(ruleOverrides.penaltyRate, 0)
+                        : 0,
+                  isHSA:
+                    typeof pool.isHSA === 'boolean'
+                      ? pool.isHSA
+                      : pool.legacyFallbackId === 'hsa' || undefined,
+                  softRestrictionNote:
+                    typeof pool.softRestrictionNote === 'string'
+                      ? pool.softRestrictionNote
+                      : ruleOverrides && typeof ruleOverrides.softRestrictionNote === 'string'
+                        ? ruleOverrides.softRestrictionNote
+                        : ''
+                };
+              });
+            }
+
+            return seedDefaultPools();
+          })(),
           bankAccounts:
             scenario.netWorth?.bankAccounts?.length
               ? scenario.netWorth.bankAccounts.map((account, index) => ({
@@ -296,20 +358,12 @@ export const loadAppState = (): PersistedAppState => {
                     account.accountType === 'hsa'
                       ? account.accountType
                       : 'taxable',
-                  annualReturnRate: toNumberOrFallback(account.annualReturnRate, 0),
-                  balance: Math.max(0, toNumberOrFallback(account.balance, 0)),
-                  ruleOverrides: account.ruleOverrides ?? {}
+                  balance: Math.max(0, toNumberOrFallback(account.balance, 0))
                 }))
-              : seedDefaultBankAccounts(
-                  {
-                    ...defaultScenario.netWorth.accountBalances,
-                    ...scenario.netWorth?.accountBalances
-                  },
-                  {
-                    ...defaultScenario.savingsTracker.annualInterestRates,
-                    ...scenario.savingsTracker?.annualInterestRates
-                  }
-                ),
+              : seedDefaultBankAccounts({
+                  ...defaultScenario.netWorth.accountBalances,
+                  ...scenario.netWorth?.accountBalances
+                }),
           customAccounts: (scenario.netWorth?.customAccounts ?? defaultScenario.netWorth.customAccounts ?? []).map((account, index) => ({
             id: typeof account.id === 'string' && account.id.trim().length > 0 ? account.id : `custom-account-${index + 1}`,
             label: typeof account.label === 'string' && account.label.trim().length > 0 ? account.label : `Account ${index + 1}`,
@@ -547,6 +601,10 @@ export const loadAppState = (): PersistedAppState => {
               ? loan.paymentSourceAccount
               : 'investments',
           paymentSource: normalizeLoanPaymentSource(
+            loan,
+            scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? []
+          ),
+          downPaymentSource: normalizeLoanDownPaymentSource(
             loan,
             scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? []
           )

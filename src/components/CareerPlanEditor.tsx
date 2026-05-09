@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { BufferedNumberInput } from './BufferedNumberInput';
 import { YearMonthInput } from './YearMonthInput';
-import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, ProjectionYear } from '../types';
+import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, PoolDefinition, ProjectionYear } from '../types';
 import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
 
 interface CareerPlanEditorProps {
@@ -11,11 +11,11 @@ interface CareerPlanEditorProps {
   onChangeCareer: (career: CareerEntry) => void;
   onDuplicateCareer: (careerId: string) => void;
   onReorderCareers: (fromCareerId: string, toCareerId: string) => void;
-  onChangeBankAccountReturn: (accountId: string, rate: number) => void;
   onAddCareer: () => void;
   onRemoveCareer: (careerId: string) => void;
   previewYear?: ProjectionYear;
   bankAccounts: BankAccountDefinition[];
+  pools: PoolDefinition[];
   birthdayBasedCareerStartAge: number;
   dateOfBirth: string;
   currentAge: number;
@@ -69,11 +69,11 @@ export const CareerPlanEditor = ({
   onChangeCareer,
   onDuplicateCareer,
   onReorderCareers,
-  onChangeBankAccountReturn,
   onAddCareer,
   onRemoveCareer,
   previewYear,
   bankAccounts,
+  pools,
   birthdayBasedCareerStartAge,
   dateOfBirth,
   currentAge,
@@ -196,7 +196,8 @@ export const CareerPlanEditor = ({
         const annualSavings = annualSavingsFromPercentage(line.contributionRate, salary);
         const monthlyWithdrawal = Math.max(0, line.monthlyWithdrawal);
         const monthlyContribution = annualSavings / 12;
-        const monthlyRate = account.annualReturnRate / 100 / 12;
+        const pool = pools.find((p) => p.id === account.poolId);
+        const monthlyRate = (pool?.annualReturnRate ?? 0) / 100 / 12;
 
         if (months <= 0 || (startBalance <= 0 && annualSavings <= 0 && monthlyWithdrawal <= 0)) {
           nextBalances[account.id] = roundCurrency(startBalance);
@@ -237,7 +238,8 @@ export const CareerPlanEditor = ({
     }
 
     const monthlyContribution = annualSavings / 12;
-    const monthlyRate = account.annualReturnRate / 100 / 12;
+    const pool = pools.find((p) => p.id === account.poolId);
+    const monthlyRate = (pool?.annualReturnRate ?? 0) / 100 / 12;
     const monthlyWithdrawal = Math.max(0, getMonthlyWithdrawal(account));
     let running = startingBalance;
 
@@ -467,37 +469,103 @@ export const CareerPlanEditor = ({
           </div>
 
           <div className="career-grid">
+            <label className="full-span">
+              <span>Tax Info (Yearly)</span>
+            </label>
+            {(() => {
+              const ti = selectedCareer.taxInfo ?? { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null as 'leftoverIncome' | 'taxRate' | null };
+              const taxableIncome = Math.max(0, selectedCareer.startingSalary - ti.untaxedBenefits);
+              const annualEmployeeSavings = Math.round(selectedCareer.startingSalary * (calculatedTotalSavingsRate / 100));
+              const taxes = ti.lastEditedField === 'leftoverIncome'
+                ? Math.max(0, taxableIncome - ti.leftoverIncome - annualEmployeeSavings)
+                : ti.lastEditedField === 'taxRate'
+                  ? Math.round(taxableIncome * (ti.taxRate / 100) * 100) / 100
+                  : 0;
+              const postTaxSalary = Math.max(0, taxableIncome - taxes);
+              const monthlyTaxes = taxes / 12;
+              const yearlyLeftover = Math.max(0, postTaxSalary - annualEmployeeSavings);
+              const monthlyLeftover = yearlyLeftover / 12;
+
+              const updateTaxInfo = (partial: Partial<typeof ti>) => {
+                const merged = { ...ti, ...partial };
+                const newTaxable = Math.max(0, selectedCareer.startingSalary - merged.untaxedBenefits);
+                const newSavings = Math.round(selectedCareer.startingSalary * (calculatedTotalSavingsRate / 100));
+
+                let { leftoverIncome, taxRate } = merged;
+                const field = merged.lastEditedField || (taxRate > 0 ? 'taxRate' : leftoverIncome > 0 ? 'leftoverIncome' : null);
+                if (field === 'taxRate') {
+                  const t = Math.round(newTaxable * (taxRate / 100) * 100) / 100;
+                  leftoverIncome = Math.max(0, newTaxable - t - newSavings);
+                } else if (field === 'leftoverIncome') {
+                  const t = Math.max(0, newTaxable - leftoverIncome - newSavings);
+                  taxRate = newTaxable > 0 ? Math.round((t / newTaxable) * 10000) / 100 : 0;
+                }
+
+                onChangeCareer({
+                  ...selectedCareer,
+                  taxInfo: {
+                    untaxedBenefits: merged.untaxedBenefits,
+                    leftoverIncome,
+                    taxRate,
+                    lastEditedField: merged.lastEditedField
+                  }
+                });
+              };
+
+              return (
+                <>
             <label>
-              <span>Take Home Pay</span>
+              <span>Untaxed Benefits</span>
               <BufferedNumberInput
-                value={selectedCareer.takeHomePay?.amount ?? 0}
+                value={ti.untaxedBenefits}
                 min={0}
                 max={2000000}
                 step={100}
-                onCommit={(next) =>
-                  onChangeCareer({
-                    ...selectedCareer,
-                    takeHomePay: { amount: next, period: selectedCareer.takeHomePay?.period ?? 'monthly' }
-                  })
-                }
+                commitOnChange
+                onCommit={(next) => updateTaxInfo({ untaxedBenefits: next })}
               />
             </label>
             <label>
-              <span>Take Home Period</span>
-              <select
-                aria-label="Take Home Pay Period"
-                value={selectedCareer.takeHomePay?.period ?? 'monthly'}
-                onChange={(event) =>
-                  onChangeCareer({
-                    ...selectedCareer,
-                    takeHomePay: { amount: selectedCareer.takeHomePay?.amount ?? 0, period: event.target.value as 'monthly' | 'yearly' }
-                  })
-                }
-              >
-                <option value="monthly">Monthly</option>
-                <option value="yearly">Yearly</option>
-              </select>
+              <span>Taxable Income</span>
+              <BufferedNumberInput value={taxableIncome} min={0} max={2000000} step={100} disabled onCommit={() => {}} />
             </label>
+            <label>
+              <span>Tax Rate %</span>
+              <BufferedNumberInput
+                value={ti.taxRate}
+                min={0}
+                max={100}
+                step={0.1}
+                commitOnChange
+                onCommit={(next) => updateTaxInfo({ taxRate: next, lastEditedField: 'taxRate' })}
+              />
+            </label>
+            <label>
+              <span>Taxes</span>
+              <BufferedNumberInput value={taxes} min={0} max={2000000} step={100} disabled onCommit={() => {}} />
+            </label>
+            <label>
+              <span>Post Tax Salary</span>
+              <BufferedNumberInput value={postTaxSalary} min={0} max={2000000} step={100} disabled onCommit={() => {}} />
+            </label>
+            <label>
+              <span>Monthly Taxes</span>
+              <BufferedNumberInput value={monthlyTaxes} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
+            </label>
+            <label className={monthlyLeftover < 0 ? 'tax-info-negative' : ''}>
+              <span>Leftover Income (monthly)</span>
+              <BufferedNumberInput
+                value={monthlyLeftover}
+                min={0}
+                max={2000000}
+                step={10}
+                commitOnChange
+                onCommit={(next) => updateTaxInfo({ leftoverIncome: next * 12, lastEditedField: 'leftoverIncome' })}
+              />
+            </label>
+                </>
+              );
+            })()}
           </div>
 
           <div className="career-savings-grid">
@@ -507,7 +575,6 @@ export const CareerPlanEditor = ({
               <div className="career-savings-cell">Account</div>
               <div className="career-savings-cell">Percentage</div>
               <div className="career-savings-cell">Savings</div>
-              <div className="career-savings-cell">Return (APY)</div>
               <div className="career-savings-cell">Max Balance</div>
               <div className="career-savings-cell">Overflow Fallback</div>
               <div className="career-savings-cell">Balance at end of period</div>
@@ -548,15 +615,6 @@ export const CareerPlanEditor = ({
                       const derivedPercentage = previewSalary > 0 ? roundCurrency((annualSavings / previewSalary) * 100) : 0;
                       updateLineForAccount(account, { contributionRate: derivedPercentage });
                     }}
-                  />
-                </div>
-                <div className="career-savings-cell">
-                  <BufferedNumberInput
-                    value={account.annualReturnRate}
-                    min={-20}
-                    max={25}
-                    step={0.1}
-                    onCommit={(next) => onChangeBankAccountReturn(account.id, next)}
                   />
                 </div>
                 <div className="career-savings-cell">

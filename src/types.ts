@@ -82,7 +82,14 @@ export interface CareerEntry {
   investmentsMonthlyWithdrawal?: number;
   retirement401kMonthlyWithdrawal?: number;
   sourceLines?: CareerSourceLine[];
-  takeHomePay?: { amount: number; period: 'monthly' | 'yearly' };
+  taxInfo?: TaxInfo;
+}
+
+export interface TaxInfo {
+  untaxedBenefits: number;
+  leftoverIncome: number;
+  taxRate: number;
+  lastEditedField: 'leftoverIncome' | 'taxRate' | null;
 }
 
 export interface CareerPlan {
@@ -172,6 +179,7 @@ export interface Loan {
   extraMonthlyPayment: number;
   paymentSourceAccount: LoanPaymentSourceAccount;
   paymentSource?: LoanPaymentSource;
+  downPaymentSource?: LoanPaymentSource;
 }
 
 export interface SavingsTrackerConfig {
@@ -185,12 +193,11 @@ export interface PoolDefinition {
   priority: number;
   color?: string;
   legacyFallbackId?: LegacyPoolId;
-}
-
-export interface AccountRuleConfig {
+  annualReturnRate: number;
   taxRate: number;
   penaltyRate: number;
-  softRestrictionNote: string;
+  isHSA?: boolean;
+  softRestrictionNote?: string;
 }
 
 export interface BankAccountDefinition {
@@ -199,9 +206,7 @@ export interface BankAccountDefinition {
   poolId: string;
   priority: number;
   accountType: AccountTypePreset;
-  annualReturnRate: number;
   balance: number;
-  ruleOverrides?: Partial<AccountRuleConfig>;
 }
 
 export interface NetWorthCustomAccount {
@@ -493,7 +498,8 @@ export interface ProjectionResult {
   longTermPurchaseFundingShortfalls: Record<string, number>;
   loanFundingShortfalls: Record<string, number>;
   warnings?: string[];
-  incomeFundedItemStatuses: Record<string, { status: 'covered' | 'fallback' | 'shortfall'; shortfallAmount?: number }>;
+  incomeFundedItemStatuses: Record<string, { status: 'covered' | 'fallback' | 'shortfall'; shortfallAmount?: number; fallbackDetails?: { accountId: string; amount: number }[]; firstFallbackYearMonth?: string }>;
+  incomeUsageByMonth: Record<string, { availableIncome: number; items: { id: string; label: string; amount: number }[] }>;
 }
 
 export interface HistoricalYear {

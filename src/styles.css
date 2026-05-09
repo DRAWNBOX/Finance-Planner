@@ -620,6 +620,13 @@ td:first-child {
   color: #9a7d0a;
 }
 
+.tax-info-negative {
+  background: #fdecec;
+  color: #9f2f2f;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
 .purchases-table th {
   text-align: center;
   white-space: normal;

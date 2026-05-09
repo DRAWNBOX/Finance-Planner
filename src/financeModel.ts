@@ -1,5 +1,4 @@
 import type {
-  AccountRuleConfig,
   AccountTypePreset,
   BankAccountDefinition,
   CareerEntry,
@@ -23,15 +22,6 @@ export const LEGACY_POOL_LABELS: Record<LegacyPoolId, string> = {
   retirement401k: '401K'
 };
 
-export const ACCOUNT_TYPE_DEFAULT_RULES: Record<AccountTypePreset, AccountRuleConfig> = {
-  checking: { taxRate: 0, penaltyRate: 0, softRestrictionNote: '' },
-  savings: { taxRate: 0, penaltyRate: 0, softRestrictionNote: '' },
-  taxable: { taxRate: 15, penaltyRate: 0, softRestrictionNote: 'Taxable sales may incur taxes.' },
-  retirement401k: { taxRate: 22, penaltyRate: 10, softRestrictionNote: 'Early withdrawals may trigger penalties.' },
-  roth: { taxRate: 0, penaltyRate: 0, softRestrictionNote: 'Non-qualified distributions can be taxed/penalized.' },
-  hsa: { taxRate: 0, penaltyRate: 0, softRestrictionNote: 'Qualified medical withdrawals are tax free.' }
-};
-
 const legacyPoolToPreset = (poolId: LegacyPoolId): AccountTypePreset => {
   if (poolId === 'retirement401k') {
     return 'retirement401k';
@@ -49,34 +39,37 @@ const legacyPoolToPreset = (poolId: LegacyPoolId): AccountTypePreset => {
 const DEFAULT_POOL_COLORS = ['#4b87d9', '#32a884', '#f0a235', '#ca5d7b', '#7a75d8', '#3e9ab1', '#d0735a', '#6e9c4e'];
 
 export const seedDefaultPools = (): PoolDefinition[] =>
-  LEGACY_POOL_IDS.map((id, index) => ({
-    id,
-    label: LEGACY_POOL_LABELS[id],
-    enabled: true,
-    priority: index,
-    color: DEFAULT_POOL_COLORS[index % DEFAULT_POOL_COLORS.length],
-    legacyFallbackId: id
-  }));
+  LEGACY_POOL_IDS.map((id, index) => {
+    const defaults: Pick<PoolDefinition, 'annualReturnRate' | 'taxRate' | 'penaltyRate' | 'isHSA' | 'softRestrictionNote'> =
+      id === 'emergencyFund'
+        ? { annualReturnRate: 2.5, taxRate: 0, penaltyRate: 0, isHSA: false, softRestrictionNote: '' }
+        : id === 'hsa'
+          ? { annualReturnRate: 5, taxRate: 0, penaltyRate: 0, isHSA: true, softRestrictionNote: 'Qualified medical withdrawals are tax free.' }
+          : id === 'investments'
+            ? { annualReturnRate: 6.5, taxRate: 0, penaltyRate: 0, isHSA: false, softRestrictionNote: '' }
+            : { annualReturnRate: 6, taxRate: 0, penaltyRate: 0, isHSA: false, softRestrictionNote: '' };
+
+    return {
+      id,
+      label: LEGACY_POOL_LABELS[id],
+      enabled: true,
+      priority: index,
+      color: DEFAULT_POOL_COLORS[index % DEFAULT_POOL_COLORS.length],
+      legacyFallbackId: id,
+      ...defaults
+    };
+  });
 
 export { DEFAULT_POOL_COLORS };
 
-export const seedDefaultBankAccounts = (
-  balances: SavingsBalances,
-  annualInterestRates: SavingsBalances
-): BankAccountDefinition[] =>
-  LEGACY_POOL_IDS.map((poolId, index) => ({
+export const seedDefaultBankAccounts = (balances: SavingsBalances): BankAccountDefinition[] =>
+  LEGACY_POOL_IDS.map((poolId) => ({
     id: `${poolId}-account-default`,
     label: LEGACY_POOL_LABELS[poolId],
     poolId,
     priority: 0,
     accountType: legacyPoolToPreset(poolId),
-    annualReturnRate: Math.max(0, annualInterestRates[poolId] ?? 0),
-    balance: Math.max(0, balances[poolId] ?? 0),
-    ruleOverrides: {
-      taxRate: 0,
-      penaltyRate: 0,
-      softRestrictionNote: ''
-    }
+    balance: Math.max(0, balances[poolId] ?? 0)
   }));
 
 export const getDefaultBankAccountIdForPool = (accounts: BankAccountDefinition[], poolId: string) =>
@@ -285,4 +278,20 @@ export const normalizeLoanPaymentSource = (
 
   const fallbackId = getDefaultBankAccountIdForPool(bankAccounts, 'investments');
   return fallbackId ? `account:${fallbackId}` : 'pool:investments';
+};
+
+export const normalizeLoanDownPaymentSource = (
+  loan: Loan,
+  bankAccounts: BankAccountDefinition[] = []
+): Loan['downPaymentSource'] => {
+  if (typeof loan.downPaymentSource === 'string') {
+    if (loan.downPaymentSource.startsWith('pool:')) {
+      const poolId = loan.downPaymentSource.slice('pool:'.length);
+      const accountId = getDefaultBankAccountIdForPool(bankAccounts, poolId);
+      return accountId ? `account:${accountId}` : loan.downPaymentSource;
+    }
+    return loan.downPaymentSource;
+  }
+
+  return undefined;
 };

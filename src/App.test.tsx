@@ -1245,13 +1245,13 @@ describe('App', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
 
-    const bankAccountHeader = screen.getByRole('columnheader', { name: 'APY %' });
+    const bankAccountHeader = screen.getByRole('columnheader', { name: 'Balance' });
     const bankAccountTable = bankAccountHeader.closest('table') as HTMLTableElement;
     const emergencyFundInput = bankAccountTable.querySelector(
       'tbody tr td input[type="text"][value="Emergency Fund"]'
     ) as HTMLInputElement;
     const emergencyFundRow = emergencyFundInput.closest('tr') as HTMLTableRowElement;
-    const emergencyFundBalanceInput = within(emergencyFundRow).getAllByRole('spinbutton')[2];
+    const emergencyFundBalanceInput = within(emergencyFundRow).getAllByRole('spinbutton')[1];
     fireEvent.change(emergencyFundBalanceInput, { target: { value: '25000' } });
     fireEvent.blur(emergencyFundBalanceInput);
 
@@ -1395,4 +1395,116 @@ describe('App', () => {
     expect(startAgeInput).toHaveValue(50);
   });
 
+  it('renders Down Pay From dropdown in loans table and persists selection', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    fireEvent.click(within(financeSubTabs as HTMLElement).getByRole('button', { name: 'Purchases and expenses' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Loan' }));
+
+    const loanRow = screen.getByDisplayValue('Loan').closest('tr') as HTMLTableRowElement;
+    const dpSelect = within(loanRow).getByLabelText('Loan Down Payment Source') as HTMLSelectElement;
+    expect(dpSelect).toBeInTheDocument();
+
+    expect(within(dpSelect).getByRole('option', { name: 'Income' })).toBeInTheDocument();
+    const accountOptions = within(dpSelect)
+      .getAllByRole('option')
+      .filter((option) => (option as HTMLOptionElement).value.startsWith('account:'));
+    expect(accountOptions.length).toBeGreaterThan(0);
+  });
+
+  it('shows enriched fallback tooltip on yellow loan row with income usage breakdown', async () => {
+    window.localStorage.setItem(
+      'finance-planner-state',
+      JSON.stringify({
+        scenario: {
+          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
+          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
+          portfolio: { currentAssets: 500000, equityAllocation: 75, fixedIncomeAllocation: 25, fixedIncomeDuration: 'one_year' },
+          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+          careerPlan: {
+            enabled: true,
+            entries: [{
+              id: 'career-1',
+              label: 'Test Career',
+              enabled: true,
+              usePreviousCareerStartAge: false,
+              useBirthdayBasedStartAge: false,
+              startYearMonth: '',
+              endYearMonth: '',
+              startAge: 45,
+              endAge: 65,
+              startingSalary: 98000,
+              annualRaiseRate: 3.5,
+              savingsRate: 10,
+              employerMatchRate: 3,
+              bonusRate: 8,
+              bonusSavingsRate: 50,
+              emergencyFundContributionRate: 2,
+              hsaContributionRate: 3,
+              investmentsContributionRate: 6,
+              retirement401kContributionRate: 6,
+              emergencyFundSavingsMonthly: false,
+              hsaSavingsMonthly: false,
+              investmentsSavingsMonthly: false,
+              retirement401kSavingsMonthly: false,
+              emergencyFundStartBalanceMode: 'auto',
+              hsaStartBalanceMode: 'auto',
+              investmentsStartBalanceMode: 'auto',
+              retirement401kStartBalanceMode: 'auto',
+              emergencyFundManualStartBalance: 0,
+              hsaManualStartBalance: 0,
+              investmentsManualStartBalance: 0,
+              retirement401kManualStartBalance: 0,
+              taxInfo: { untaxedBenefits: 0, leftoverIncome: 12000, taxRate: 25, lastEditedField: 'taxRate' }
+            }]
+          },
+          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
+          withdrawal: { mode: 'specified', firstYearAmount: 40000, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, firstYearAccountWithdrawals: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 40000 }, firstYearAccountUseFourPercent: { emergencyFund: false, hsa: false, investments: false, retirement401k: false }, sourceLines: [], inflationAdjusted: true },
+          returnMode: 'manual',
+          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
+          largePurchases: [],
+          longTermPurchases: [],
+          loans: [{
+            id: 'tooltip-loan',
+            label: 'Test Loan',
+            enabled: true,
+            showOnGraph: true,
+            startYearMonth: '2026-01',
+            originalAmount: 20000,
+            downPayment: 0,
+            currentBalance: 20000,
+            annualInterestRate: 0,
+            minimumMonthlyPayment: 2000,
+            extraMonthlyPayment: 0,
+            paymentSourceAccount: 'income',
+            paymentSource: 'income'
+          }],
+          cashflowItems: [],
+          lifeEvents: [],
+          incomeFallbackAccountId: 'emergencyFund-account-default',
+          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: { groupingMode: 'account', zoomLevel: 1, rowHeight: 56, density: 'comfortable', snapToDay: true, scrubberDate: '2026-05-08', windowStartDate: '2026-05-08', windowEndDate: '2027-05-08', selectedAccountIds: [], selectedPoolIds: [], collapsedTrackIds: [], trackerVisibleAccountIds: [], planningWeekStartDay: 5 } },
+          netWorth: { accountBalances: { emergencyFund: 50000, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 50000 }] },
+          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
+        },
+        ui: { activeTab: 'careers', selectedCareerId: 'career-1', careersSubTab: 'purchasesExpenses', expensesSubTab: 'planning' }
+      })
+    );
+
+    render(<App />);
+
+    const loanRow = screen.getByDisplayValue('Test Loan').closest('tr') as HTMLTableRowElement;
+    await waitFor(() => {
+      expect(loanRow.className).toBeTruthy();
+    });
+
+    const title = loanRow.getAttribute('title') ?? '';
+    expect(title.length).toBeGreaterThan(0);
+    expect(title).toContain('Using fallback');
+    expect(title).toContain('Monthly income');
+    expect(title).toContain('Test Loan');
+  });
 });

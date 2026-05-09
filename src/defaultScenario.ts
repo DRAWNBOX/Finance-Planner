@@ -167,11 +167,7 @@ const makePurchaseId = () => `purchase-${Date.now()}-${Math.round(Math.random() 
 const makeLongTermPurchaseId = () => `long-term-purchase-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeLoanId = () => `loan-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const defaultPoolBalances = { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } as const;
-const defaultPoolRates = { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } as const;
-const defaultBankAccounts = seedDefaultBankAccounts(
-  { ...defaultPoolBalances },
-  { ...defaultPoolRates }
-);
+const defaultBankAccounts = seedDefaultBankAccounts({ ...defaultPoolBalances });
 const defaultCareerSourceLines = defaultBankAccounts.map((account) => ({
   id: `career-source-${account.id}`,
   enabled: true,
@@ -239,7 +235,7 @@ export const createDefaultCareerEntry = (
   return {
     ...base,
     sourceLines: defaultCareerSourceLines.map((line) => ({ ...line })),
-    takeHomePay: { amount: 0, period: 'monthly' }
+    taxInfo: { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null }
   };
 };
 
