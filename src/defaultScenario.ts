@@ -9,8 +9,6 @@ import type {
 } from './types';
 import { formatYearMonthFromAge } from './utils/ageDate';
 import {
-  ensureSourceLinesForPurchase,
-  ensureSourceLinesForWithdrawal,
   getDefaultBankAccountIdForPool,
   normalizeLoanPaymentSource,
   seedDefaultBankAccounts,
@@ -250,16 +248,20 @@ export const createDefaultLargePurchase = (currentAge: number, dateOfBirth: stri
   yearMonth: formatYearMonthFromAge(currentAge + 1, dateOfBirth, currentAge),
   age: currentAge + 1,
   amount: 10000,
-  sourceAmounts: {
-    emergencyFund: 0,
-    hsa: 0,
-    investments: 10000,
-    retirement401k: 0
-  },
-  fundingSource: `account:${defaultAccountId}`
+  fundingSource: `account:${defaultAccountId}`,
+  sourceLines: [
+    {
+      id: `source-${defaultAccountId}`,
+      enabled: true,
+      sourceType: 'account',
+      sourceId: defaultAccountId,
+      mode: 'amount',
+      amount: 10000
+    }
+  ]
     };
 
-    return { ...purchase, sourceLines: ensureSourceLinesForPurchase(purchase, defaultBankAccounts) };
+    return purchase;
   })()
 });
 
@@ -279,16 +281,20 @@ export const createDefaultLongTermPurchase = (
   durationMonths: 12,
   endYearMonth: formatYearMonthFromAge(currentAge + 2, dateOfBirth, currentAge),
   monthlyAmount: 500,
-  sourceAmounts: {
-    emergencyFund: 0,
-    hsa: 0,
-    investments: 500,
-    retirement401k: 0
-  },
-  fundingSource: `account:${defaultAccountId}`
+  fundingSource: `account:${defaultAccountId}`,
+  sourceLines: [
+    {
+      id: `source-${defaultAccountId}`,
+      enabled: true,
+      sourceType: 'account',
+      sourceId: defaultAccountId,
+      mode: 'amount',
+      amount: 500
+    }
+  ]
     };
 
-    return { ...purchase, sourceLines: ensureSourceLinesForPurchase(purchase, defaultBankAccounts) };
+    return purchase;
   })()
 });
 
@@ -337,14 +343,6 @@ export const defaultScenario: Scenario = {
     enabled: true,
     entries: [createDefaultCareerEntry(0, 45, 65)]
   },
-  savingsTracker: {
-    annualInterestRates: {
-      emergencyFund: 2.5,
-      hsa: 5,
-      investments: 6.5,
-      retirement401k: 6
-    }
-  },
   netWorth: {
     accountBalances: {
       emergencyFund: 0,
@@ -370,39 +368,18 @@ export const defaultScenario: Scenario = {
     minimumYearlyWithdrawal: 0,
     maximumYearlyWithdrawal: 1000000,
     useRetirementAgeAsWithdrawalStartAge: true,
-    firstYearAccountWithdrawals: {
-      emergencyFund: 0,
-      hsa: 0,
-      investments: 0,
-      retirement401k: 40000
-    },
-    firstYearAccountUseFourPercent: {
-      emergencyFund: false,
-      hsa: false,
-      investments: false,
-      retirement401k: false
-    },
-    sourceLines: ensureSourceLinesForWithdrawal({
-      mode: 'specified',
-      firstYearAmount: 40000,
-      minimumYearlyWithdrawal: 0,
-      maximumYearlyWithdrawal: 1000000,
-      useRetirementAgeAsWithdrawalStartAge: true,
-      firstYearAccountWithdrawals: {
-        emergencyFund: 0,
-        hsa: 0,
-        investments: 0,
-        retirement401k: 40000
-      },
-      firstYearAccountUseFourPercent: {
-        emergencyFund: false,
-        hsa: false,
-        investments: false,
-        retirement401k: false
-      },
-      inflationAdjusted: true
-    }),
-    inflationAdjusted: true
+    inflationAdjusted: true,
+    sourceLines: [
+      {
+        id: 'withdrawal-source-1',
+        enabled: true,
+        sourceType: 'pool',
+        sourceId: 'retirement401k',
+        mode: 'amount',
+        amount: 40000,
+        syncWithRetirementAge: true
+      }
+    ]
   },
   returnMode: 'manual',
   manualReturns: {

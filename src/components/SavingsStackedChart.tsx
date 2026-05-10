@@ -48,7 +48,6 @@ export const SavingsStackedChart = ({ years, pools, bankAccounts, flags = [], on
       enabledPools.map((pool, index) => ({
         key: pool.id,
         label: pool.label,
-        legacyFallbackId: pool.legacyFallbackId,
         color: pool.color ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length]
       })),
     [enabledPools]
@@ -73,16 +72,12 @@ export const SavingsStackedChart = ({ years, pools, bankAccounts, flags = [], on
 
   const stackedSeries = useMemo(() => {
     const visible = series.filter((entry) => visibleKeys[entry.key] ?? true);
-    const resolvePoolValue = (year: ProjectionYear, poolId: string, legacyFallbackId?: PoolDefinition['legacyFallbackId']) => {
+    const resolvePoolValue = (year: ProjectionYear, poolId: string) => {
       const accountIds = accountIdsByPoolId.get(poolId) ?? [];
-      if (accountIds.length > 0) {
-        return accountIds.reduce((sum, accountId) => sum + Math.max(0, year.accountBalancesById[accountId] ?? 0), 0);
-      }
-
-      return legacyFallbackId ? Math.max(0, year.savingsBalances[legacyFallbackId] ?? 0) : 0;
+      return accountIds.reduce((sum, accountId) => sum + Math.max(0, year.accountBalancesById[accountId] ?? 0), 0);
     };
     const totals = years.map((year) =>
-      visible.reduce((sum, entry) => sum + resolvePoolValue(year, entry.key, entry.legacyFallbackId), 0)
+      visible.reduce((sum, entry) => sum + resolvePoolValue(year, entry.key), 0)
     );
     const maxValue = Math.max(...totals, 1);
     const yStep =
@@ -99,7 +94,7 @@ export const SavingsStackedChart = ({ years, pools, bankAccounts, flags = [], on
     let running = new Array(years.length).fill(0);
     const layers = visible.map((entry) => {
       const lower = [...running];
-      const top = running.map((value, index) => value + resolvePoolValue(years[index], entry.key, entry.legacyFallbackId));
+      const top = running.map((value, index) => value + resolvePoolValue(years[index], entry.key));
       running = top;
 
       return {

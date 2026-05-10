@@ -3,7 +3,6 @@ export type FixedIncomeDuration = 'one_year' | 'ten_year';
 export type WithdrawalMode = 'four_percent' | 'specified';
 export type CashflowCadence = 'one_time' | 'recurring';
 export type CashflowDirection = 'inflow' | 'outflow';
-export type LegacyPoolId = 'emergencyFund' | 'hsa' | 'investments' | 'retirement401k';
 export type SourceType = 'pool' | 'account';
 export type SourceLineMode = 'amount' | 'four_percent';
 export type AccountTypePreset = 'checking' | 'savings' | 'taxable' | 'retirement401k' | 'roth' | 'hsa';
@@ -103,9 +102,6 @@ export interface FutureRetirementPlan {
   retirementYears: number;
 }
 
-export type SavingsBalances = Record<string, number>;
-export type SavingsBalanceFlags = Record<string, boolean>;
-
 export interface SourceLine {
   id: string;
   enabled: boolean;
@@ -138,7 +134,6 @@ export interface LargePurchase {
   yearMonth: string;
   age: number;
   amount: number;
-  sourceAmounts: SavingsBalances;
   sourceLines?: SourceLine[];
   fundingSource?: 'income' | `account:${string}`;
 }
@@ -156,7 +151,6 @@ export interface LongTermPurchase {
   durationMonths: number;
   endYearMonth: string;
   monthlyAmount: number;
-  sourceAmounts: SavingsBalances;
   sourceLines?: SourceLine[];
   fundingSource?: 'income' | `account:${string}`;
 }
@@ -182,17 +176,12 @@ export interface Loan {
   downPaymentSource?: LoanPaymentSource;
 }
 
-export interface SavingsTrackerConfig {
-  annualInterestRates: SavingsBalances;
-}
-
 export interface PoolDefinition {
   id: string;
   label: string;
   enabled: boolean;
   priority: number;
   color?: string;
-  legacyFallbackId?: LegacyPoolId;
   annualReturnRate: number;
   taxRate: number;
   penaltyRate: number;
@@ -266,7 +255,7 @@ export interface NetWorthHistoryEntry {
 }
 
 export interface NetWorthConfig {
-  accountBalances: SavingsBalances;
+  accountBalances: Record<string, number>;
   pools?: PoolDefinition[];
   bankAccounts?: BankAccountDefinition[];
   customAccounts?: NetWorthCustomAccount[];
@@ -378,8 +367,6 @@ export interface WithdrawalPlan {
   minimumYearlyWithdrawal: number;
   maximumYearlyWithdrawal: number;
   useRetirementAgeAsWithdrawalStartAge: boolean;
-  firstYearAccountWithdrawals: SavingsBalances;
-  firstYearAccountUseFourPercent: SavingsBalanceFlags;
   sourceLines?: SourceLine[];
   inflationAdjusted: boolean;
 }
@@ -435,7 +422,6 @@ export interface Scenario {
   portfolio: PortfolioConfig;
   contribution: ContributionPlan;
   careerPlan: CareerPlan;
-  savingsTracker: SavingsTrackerConfig;
   netWorth: NetWorthConfig;
   futureRetirement: FutureRetirementPlan;
   withdrawal: WithdrawalPlan;
@@ -469,7 +455,7 @@ export interface ProjectionYear {
   endBalance: number;
   depleted: boolean;
   careerId: string | null;
-  savingsBalances: SavingsBalances;
+  savingsBalances: Record<string, number>;
   accountBalancesById: Record<string, number>;
 }
 
@@ -490,8 +476,8 @@ export interface ProjectionResult {
   endingBalance: number;
   summary: string;
   historicalWindowLabel?: string;
-  careerEndSavingsBalances: Record<string, SavingsBalances>;
-  firstRetirementYearPlannedAccountWithdrawals: SavingsBalances;
+  careerEndSavingsBalances: Record<string, Record<string, number>>;
+  firstRetirementYearPlannedAccountWithdrawals: Record<string, number>;
   purchaseFundingShortfalls: Record<string, number>;
   purchaseFirstAffordableAge: Record<string, number | null>;
   purchasePostPurchaseDisplayBalances: Record<string, Record<string, number> | null>;

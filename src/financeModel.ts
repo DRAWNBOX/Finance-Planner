@@ -4,14 +4,14 @@ import type {
   CareerEntry,
   CareerSourceLine,
   LargePurchase,
-  LegacyPoolId,
   Loan,
   LongTermPurchase,
   PoolDefinition,
-  SavingsBalances,
   SourceLine,
   WithdrawalPlan
 } from './types';
+
+type LegacyPoolId = 'emergencyFund' | 'hsa' | 'investments' | 'retirement401k';
 
 export const LEGACY_POOL_IDS: LegacyPoolId[] = ['emergencyFund', 'hsa', 'investments', 'retirement401k'];
 
@@ -62,7 +62,7 @@ export const seedDefaultPools = (): PoolDefinition[] =>
 
 export { DEFAULT_POOL_COLORS };
 
-export const seedDefaultBankAccounts = (balances: SavingsBalances): BankAccountDefinition[] =>
+export const seedDefaultBankAccounts = (balances: Record<string, number>): BankAccountDefinition[] =>
   LEGACY_POOL_IDS.map((poolId) => ({
     id: `${poolId}-account-default`,
     label: LEGACY_POOL_LABELS[poolId],
@@ -77,13 +77,13 @@ export const getDefaultBankAccountIdForPool = (accounts: BankAccountDefinition[]
     .filter((account) => account.poolId === poolId)
     .sort((a, b) => a.priority - b.priority || a.label.localeCompare(b.label))[0]?.id ?? null;
 
-const isLegacyPoolId = (value: string): value is LegacyPoolId =>
+export const isLegacyPoolId = (value: string): value is LegacyPoolId =>
   value === 'emergencyFund' || value === 'hsa' || value === 'investments' || value === 'retirement401k';
 
 const makeSourceLineId = (prefix: string, index: number) => `${prefix}-${index + 1}`;
 
 export const legacySavingsToSourceLines = (
-  savings: SavingsBalances,
+  savings: Record<string, number>,
   flags?: Partial<Record<LegacyPoolId, boolean>>,
   prefix = 'source'
 ): SourceLine[] =>
@@ -97,7 +97,7 @@ export const legacySavingsToSourceLines = (
   })).filter((line) => line.mode === 'four_percent' || line.amount > 0);
 
 export const legacySavingsToAccountSourceLines = (
-  savings: SavingsBalances,
+  savings: Record<string, number>,
   accounts: BankAccountDefinition[],
   prefix = 'source'
 ): SourceLine[] =>
@@ -148,83 +148,69 @@ export const careerToSourceLines = (career: CareerEntry): CareerSourceLine[] =>
     overflowFallbackAccountId: null
   })).filter((line) => line.contributionRate > 0 || line.monthlyWithdrawal > 0);
 
-export const getPoolBalanceTotals = (
-  pools: PoolDefinition[],
-  bankAccounts: BankAccountDefinition[],
-  fallbackBalances: SavingsBalances
-) =>
-  pools.reduce<Record<string, number>>((acc, pool) => {
-    const accounts = bankAccounts.filter((account) => account.poolId === pool.id);
-    if (accounts.length > 0) {
-      acc[pool.id] = accounts.reduce((sum, account) => sum + Math.max(0, account.balance), 0);
-      return acc;
-    }
-
-    const fallbackId = pool.legacyFallbackId;
-    acc[pool.id] = fallbackId ? Math.max(0, fallbackBalances[fallbackId] ?? 0) : 0;
-    return acc;
-  }, {});
-
 export const ensureSourceLinesForPurchase = (
   purchase: LargePurchase | LongTermPurchase,
   bankAccounts?: BankAccountDefinition[]
-): SourceLine[] =>
-  purchase.sourceLines && purchase.sourceLines.length > 0
-    ? purchase.sourceLines
-    : bankAccounts && bankAccounts.length > 0
-      ? legacySavingsToAccountSourceLines(purchase.sourceAmounts, bankAccounts, `${purchase.id}-source`)
-      : legacySavingsToSourceLines(purchase.sourceAmounts, undefined, `${purchase.id}-source`);
+): SourceLine[] => {
+  if (purchase.sourceLines && purchase.sourceLines.length > 0) {
+    return purchase.sourceLines;
+  }
+  const rawSaved = purchase as unknown as Record<string, unknown>;
+  const legacySourceAmounts = rawSaved.sourceAmounts as Record<string, number> | undefined;
+  if (!legacySourceAmounts) {
+    return [];
+  }
+  if (bankAccounts && bankAccounts.length > 0) {
+    return legacySavingsToAccountSourceLines(legacySourceAmounts as Record<string, number>, bankAccounts, `${purchase.id}-source`);
+  }
+  return legacySavingsToSourceLines(legacySourceAmounts as Record<string, number>, undefined, `${purchase.id}-source`);
+};
 
-export const ensureSourceLinesForWithdrawal = (withdrawal: WithdrawalPlan): SourceLine[] =>
-  (() => {
-    const configured = withdrawal.firstYearAccountWithdrawals;
-    const configuredTotal = Object.values(configured ?? {}).reduce((sum, value) => sum + Math.max(0, value ?? 0), 0);
-    const normalizedConfigured =
-      configuredTotal > 0
-        ? configured
-        : {
-            emergencyFund: 0,
-            hsa: 0,
-            investments: 0,
-            retirement401k: Math.max(0, withdrawal.firstYearAmount)
-          };
-    const effectiveFourPercentFlags: Partial<Record<LegacyPoolId, boolean>> = {
-      emergencyFund:
-        withdrawal.mode === 'four_percent' || Boolean(withdrawal.firstYearAccountUseFourPercent?.emergencyFund),
-      hsa: withdrawal.mode === 'four_percent' || Boolean(withdrawal.firstYearAccountUseFourPercent?.hsa),
-      investments:
-        withdrawal.mode === 'four_percent' || Boolean(withdrawal.firstYearAccountUseFourPercent?.investments),
-      retirement401k:
-        withdrawal.mode === 'four_percent' || Boolean(withdrawal.firstYearAccountUseFourPercent?.retirement401k)
-    };
-    const legacyStartAges = Object.fromEntries(
-      (withdrawal.sourceLines ?? [])
-        .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
-        .map((line) => [line.sourceId, typeof line.startAge === 'number' ? line.startAge : undefined])
-    ) as Partial<Record<LegacyPoolId, number | undefined>>;
-    const legacySyncFlags = Object.fromEntries(
-      (withdrawal.sourceLines ?? [])
-        .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
-        .map((line) => [line.sourceId, line.syncWithRetirementAge ?? true])
-    ) as Partial<Record<LegacyPoolId, boolean>>;
-    const legacyLines = legacySavingsToSourceLines(normalizedConfigured, effectiveFourPercentFlags, 'withdrawal-source');
-    const legacyLinesWithStartAge = legacyLines.map((line) =>
-      line.sourceType === 'pool' && isLegacyPoolId(line.sourceId)
-        ? {
-            ...line,
-            startAge: legacyStartAges[line.sourceId],
-            syncWithRetirementAge: legacySyncFlags[line.sourceId]
-          }
-        : line
-    );
-    const customLines =
-      withdrawal.sourceLines?.filter(
-        (line) =>
-          line.sourceType === 'pool' && !isLegacyPoolId(line.sourceId) && line.enabled && (line.mode === 'four_percent' || line.amount > 0)
-      ) ?? [];
+export const ensureSourceLinesForWithdrawal = (withdrawal: WithdrawalPlan): SourceLine[] => {
+  if (withdrawal.sourceLines && withdrawal.sourceLines.length > 0) {
+    return withdrawal.sourceLines;
+  }
+  const rawSaved = withdrawal as unknown as Record<string, unknown>;
+  const legacyWithdrawals = rawSaved.firstYearAccountWithdrawals as Record<string, number> | undefined;
+  const legacyFourPercent = rawSaved.firstYearAccountUseFourPercent as Record<string, boolean> | undefined;
+  const configuredTotal = Object.values(legacyWithdrawals ?? {}).reduce((s, v) => s + Math.max(0, v ?? 0), 0);
+  const normalizedConfigured =
+    configuredTotal > 0
+      ? legacyWithdrawals
+      : { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: Math.max(0, withdrawal.firstYearAmount) };
+  const effectiveFourPercentFlags: Partial<Record<LegacyPoolId, boolean>> = {
+    emergencyFund: withdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.emergencyFund),
+    hsa: withdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.hsa),
+    investments: withdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.investments),
+    retirement401k: withdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.retirement401k)
+  };
+  const legacyStartAges = Object.fromEntries(
+    (withdrawal.sourceLines ?? [])
+      .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
+      .map((line) => [line.sourceId, typeof line.startAge === 'number' ? line.startAge : undefined])
+  ) as Partial<Record<LegacyPoolId, number | undefined>>;
+  const legacySyncFlags = Object.fromEntries(
+    (withdrawal.sourceLines ?? [])
+      .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
+      .map((line) => [line.sourceId, line.syncWithRetirementAge ?? true])
+  ) as Partial<Record<LegacyPoolId, boolean>>;
+  const legacyLines = legacySavingsToSourceLines(normalizedConfigured!, effectiveFourPercentFlags, 'withdrawal-source');
+  const legacyLinesWithStartAge = legacyLines.map((line) =>
+    line.sourceType === 'pool' && isLegacyPoolId(line.sourceId)
+      ? {
+          ...line,
+          startAge: legacyStartAges[line.sourceId],
+          syncWithRetirementAge: legacySyncFlags[line.sourceId]
+        }
+      : line
+  );
+  const customLines =
+    withdrawal.sourceLines?.filter(
+      (line) => line.sourceType === 'pool' && !isLegacyPoolId(line.sourceId) && line.enabled && (line.mode === 'four_percent' || line.amount > 0)
+    ) ?? [];
 
-    return [...legacyLinesWithStartAge, ...customLines];
-  })();
+  return [...legacyLinesWithStartAge, ...customLines];
+};
 
 export const normalizePurchaseFundingSource = (
   fundingSource: LargePurchase['fundingSource'],

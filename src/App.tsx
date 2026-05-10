@@ -33,7 +33,6 @@ import type {
   AccountTypePreset,
   BankAccountDefinition,
   CashflowCategory,
-  LegacyPoolId,
   PoolDefinition,
   NetWorthCustomAccount,
   NetWorthHistoryEntry,
@@ -45,7 +44,6 @@ import type {
   ProjectionYear,
   PurchaseFlag,
   Scenario,
-  SavingsBalances,
   SourceLine
 } from './types';
 import { pickFlagColor } from './utils/colorPalette';
@@ -479,47 +477,8 @@ const sumSavingsBalances = (balances: Scenario['netWorth']['accountBalances']) =
   balances.emergencyFund + balances.hsa + balances.investments + balances.retirement401k;
 const sumDynamicAccountBalances = (accountBalancesById: Record<string, number>) =>
   Object.values(accountBalancesById).reduce((sum, value) => sum + Math.max(0, value), 0);
-const sumAccountBalances = (balances: Scenario['savingsTracker']['annualInterestRates']) =>
-  balances.emergencyFund + balances.hsa + balances.investments + balances.retirement401k;
 const sumPurchaseSourceLineAmounts = (sourceLines: SourceLine[]) =>
   sourceLines.reduce((sum, line) => sum + (line.enabled && line.mode === 'amount' ? Math.max(0, line.amount) : 0), 0);
-const toLegacySourceAmounts = (
-  sourceLines: SourceLine[] | undefined,
-  accountsById: ReadonlyMap<string, BankAccountDefinition>
-): SavingsBalances => {
-  const legacy: SavingsBalances = { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 };
-  if (!sourceLines) {
-    return legacy;
-  }
-
-  sourceLines.forEach((line) => {
-    if (!line.enabled || line.mode !== 'amount') {
-      return;
-    }
-
-    if (line.sourceType === 'pool') {
-      if (line.sourceId === 'emergencyFund' || line.sourceId === 'hsa' || line.sourceId === 'investments' || line.sourceId === 'retirement401k') {
-        legacy[line.sourceId] += Math.max(0, line.amount);
-      }
-      return;
-    }
-
-    if (line.sourceType === 'account') {
-      const account = accountsById.get(line.sourceId);
-      if (
-        account &&
-        (account.poolId === 'emergencyFund' ||
-          account.poolId === 'hsa' ||
-          account.poolId === 'investments' ||
-          account.poolId === 'retirement401k')
-      ) {
-        legacy[account.poolId] += Math.max(0, line.amount);
-      }
-    }
-  });
-
-  return legacy;
-};
 const estimateLoanPayoffMonths = (currentBalance: number, annualInterestRate: number, monthlyPayment: number) => {
   let balance = Math.max(0, currentBalance);
   const rate = Math.max(-99, annualInterestRate) / 100 / 12;
@@ -639,7 +598,7 @@ const normalizeCareerSourceLinesForBankAccounts = (
       };
     });
 };
-const isLegacyPoolKey = (value: string): value is LegacyPoolId =>
+const isLegacyPoolKey = (value: string) =>
   value === 'emergencyFund' || value === 'hsa' || value === 'investments' || value === 'retirement401k';
 
 const App = () => {
@@ -961,13 +920,6 @@ const App = () => {
         label: typeof pool.label === 'string' && pool.label.trim().length > 0 ? pool.label : `Pool ${index + 1}`,
         enabled: pool.enabled !== false,
         priority: Math.max(0, Math.floor(toNumberOrFallback(pool.priority, index))),
-        legacyFallbackId:
-          pool.legacyFallbackId === 'emergencyFund' ||
-          pool.legacyFallbackId === 'hsa' ||
-          pool.legacyFallbackId === 'investments' ||
-          pool.legacyFallbackId === 'retirement401k'
-            ? pool.legacyFallbackId
-            : undefined,
         annualReturnRate: toNumberOrFallback(pool.annualReturnRate, 0),
         taxRate: toNumberOrFallback(pool.taxRate, 0),
         penaltyRate: toNumberOrFallback(pool.penaltyRate, 0),
@@ -1009,96 +961,11 @@ const App = () => {
       })),
       asOfDate: nextScenario.netWorth.asOfDate || ''
     };
-    const normalizedWithdrawalAccounts = {
-      emergencyFund: Math.max(0, toNumberOrFallback(nextScenario.withdrawal.firstYearAccountWithdrawals?.emergencyFund, 0)),
-      hsa: Math.max(0, toNumberOrFallback(nextScenario.withdrawal.firstYearAccountWithdrawals?.hsa, 0)),
-      investments: Math.max(0, toNumberOrFallback(nextScenario.withdrawal.firstYearAccountWithdrawals?.investments, 0)),
-      retirement401k: Math.max(0, toNumberOrFallback(nextScenario.withdrawal.firstYearAccountWithdrawals?.retirement401k, 0))
-    };
-    const normalizedWithdrawalFourPercentFlags = {
-      emergencyFund: Boolean(nextScenario.withdrawal.firstYearAccountUseFourPercent?.emergencyFund),
-      hsa: Boolean(nextScenario.withdrawal.firstYearAccountUseFourPercent?.hsa),
-      investments: Boolean(nextScenario.withdrawal.firstYearAccountUseFourPercent?.investments),
-      retirement401k: Boolean(nextScenario.withdrawal.firstYearAccountUseFourPercent?.retirement401k)
-    };
     const existingWithdrawalLines = nextScenario.withdrawal.sourceLines ?? [];
     const nextFutureRetirementAge = nextScenario.futureRetirement.useCareerEndAge
       ? getCareerDerivedRetirementAge(nextScenario)
       : nextScenario.futureRetirement.retirementAge;
-    const legacyWithdrawalStartAges = {
-      emergencyFund:
-        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'emergencyFund')?.startAge ??
-        nextScenario.profile.retirementAge,
-      hsa:
-        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'hsa')?.startAge ??
-        nextScenario.profile.retirementAge,
-      investments:
-        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'investments')?.startAge ??
-        nextScenario.profile.retirementAge,
-      retirement401k:
-        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'retirement401k')?.startAge ??
-        nextScenario.profile.retirementAge
-    };
-    const legacyWithdrawalSyncFlags = {
-      emergencyFund:
-        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'emergencyFund')?.syncWithRetirementAge ?? true,
-      hsa:
-        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'hsa')?.syncWithRetirementAge ?? true,
-      investments:
-        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'investments')?.syncWithRetirementAge ?? true,
-      retirement401k:
-        existingWithdrawalLines.find((line) => line.sourceType === 'pool' && line.sourceId === 'retirement401k')?.syncWithRetirementAge ?? true
-    };
-    const normalizedWithdrawalSourceLines: SourceLine[] = [
-        {
-          id: 'withdrawal-emergency',
-          enabled: true,
-          sourceType: 'pool' as const,
-          sourceId: 'emergencyFund',
-          mode: normalizedWithdrawalFourPercentFlags.emergencyFund ? ('four_percent' as const) : ('amount' as const),
-          amount: normalizedWithdrawalAccounts.emergencyFund,
-          startAge: legacyWithdrawalStartAges.emergencyFund
-        },
-        {
-          id: 'withdrawal-hsa',
-          enabled: true,
-          sourceType: 'pool' as const,
-          sourceId: 'hsa',
-          mode: normalizedWithdrawalFourPercentFlags.hsa ? ('four_percent' as const) : ('amount' as const),
-          amount: normalizedWithdrawalAccounts.hsa,
-          startAge: legacyWithdrawalStartAges.hsa
-        },
-        {
-          id: 'withdrawal-investments',
-          enabled: true,
-          sourceType: 'pool' as const,
-          sourceId: 'investments',
-          mode: normalizedWithdrawalFourPercentFlags.investments ? ('four_percent' as const) : ('amount' as const),
-          amount: normalizedWithdrawalAccounts.investments,
-          startAge: legacyWithdrawalStartAges.investments
-        },
-        {
-          id: 'withdrawal-401k',
-          enabled: true,
-          sourceType: 'pool' as const,
-          sourceId: 'retirement401k',
-          mode: normalizedWithdrawalFourPercentFlags.retirement401k ? ('four_percent' as const) : ('amount' as const),
-          amount: normalizedWithdrawalAccounts.retirement401k,
-          startAge: legacyWithdrawalStartAges.retirement401k
-        }
-      ].map((line, index): SourceLine => ({
-      id: typeof line.id === 'string' && line.id.trim().length > 0 ? line.id : `withdrawal-source-${index + 1}`,
-      enabled: line.enabled !== false,
-      sourceType: line.sourceType,
-      sourceId: typeof line.sourceId === 'string' ? line.sourceId : 'investments',
-      mode: line.mode,
-      amount: Math.max(0, toNumberOrFallback(line.amount, 0)),
-      startAge: Math.min(110, Math.max(18, toNumberOrFallback(line.startAge, nextFutureRetirementAge))),
-      syncWithRetirementAge: line.sourceType === 'pool' && isLegacyPoolKey(line.sourceId)
-        ? legacyWithdrawalSyncFlags[line.sourceId] !== false
-        : true
-    }));
-    const effectiveWithdrawalSourceLines = normalizedWithdrawalSourceLines.map((line) =>
+    const effectiveWithdrawalSourceLines = existingWithdrawalLines.map((line) =>
       line.syncWithRetirementAge !== false
         ? { ...line, startAge: nextFutureRetirementAge }
         : line
@@ -1126,7 +993,6 @@ const App = () => {
         return Math.floor(derivedAge ?? Math.max(resolvedAge, toNumberOrFallback(purchase.age, resolvedAge)));
       })(),
       amount: Math.max(0, toNumberOrFallback(purchase.amount, 0)),
-      sourceAmounts: toLegacySourceAmounts(sourceLines, new Map((normalizedNetWorth.bankAccounts ?? []).map((account) => [account.id, account]))),
       sourceLines
     };
     });
@@ -1154,7 +1020,6 @@ const App = () => {
         durationMonths: Math.max(1, Math.floor(toNumberOrFallback(purchase.durationMonths, 12))),
         endYearMonth: normalizeYearMonth(purchase.endYearMonth) || fallbackEndYearMonth,
         monthlyAmount: Math.max(0, toNumberOrFallback(purchase.monthlyAmount, 0)),
-        sourceAmounts: toLegacySourceAmounts(sourceLines, new Map((normalizedNetWorth.bankAccounts ?? []).map((account) => [account.id, account]))),
         sourceLines
       };
     });
@@ -1219,9 +1084,7 @@ const App = () => {
             toNumberOrFallback(nextScenario.withdrawal.maximumYearlyWithdrawal, defaultScenario.withdrawal.maximumYearlyWithdrawal)
           ),
           useRetirementAgeAsWithdrawalStartAge: true,
-          firstYearAmount: sumAccountBalances(normalizedWithdrawalAccounts),
-          firstYearAccountWithdrawals: normalizedWithdrawalAccounts,
-          firstYearAccountUseFourPercent: normalizedWithdrawalFourPercentFlags,
+          firstYearAmount: effectiveWithdrawalSourceLines.reduce((sum, line) => sum + Math.max(0, line.amount), 0),
           sourceLines: effectiveWithdrawalSourceLines
         },
         largePurchases: normalizedLargePurchases,
@@ -1438,8 +1301,7 @@ const App = () => {
         : filtered;
 
     return {
-      sourceLines: nextSourceLines,
-      sourceAmounts: toLegacySourceAmounts(nextSourceLines, bankAccountById)
+      sourceLines: nextSourceLines
     };
   };
 
@@ -1493,14 +1355,12 @@ const App = () => {
     const amount = customAmount ?? ('amount' in purchase ? purchase.amount : purchase.monthlyAmount);
     const newFundingSource: 'income' | `account:${string}` = nextFundingSource === 'income' ? 'income' : (nextFundingSource as `account:${string}`);
     const newSourceLines = normalizePurchaseFundingSource(newFundingSource, amount, bankAccounts);
-    const newSourceAmounts = toLegacySourceAmounts(newSourceLines, bankAccountById);
 
     return {
       ...purchase,
       ...('amount' in purchase ? { amount } : { monthlyAmount: amount }),
       fundingSource: newFundingSource,
-      sourceLines: newSourceLines,
-      sourceAmounts: newSourceAmounts
+      sourceLines: newSourceLines
     };
   };
 
@@ -2065,27 +1925,12 @@ const App = () => {
       nextLines.push(nextLine);
     }
 
-    let nextLegacyWithdrawals = { ...scenario.withdrawal.firstYearAccountWithdrawals };
-    let nextLegacyFlags = { ...scenario.withdrawal.firstYearAccountUseFourPercent };
-    if (isLegacyPoolKey(poolId)) {
-      nextLegacyWithdrawals = {
-        ...nextLegacyWithdrawals,
-        [poolId]: Math.max(0, toNumberOrFallback(nextLine.amount, 0))
-      };
-      nextLegacyFlags = {
-        ...nextLegacyFlags,
-        [poolId]: nextLine.mode === 'four_percent'
-      };
-    }
-
     updateScenario({
       ...scenario,
       withdrawal: {
         ...scenario.withdrawal,
         sourceLines: nextLines,
-        firstYearAccountWithdrawals: nextLegacyWithdrawals,
-        firstYearAccountUseFourPercent: nextLegacyFlags,
-        firstYearAmount: Object.values(nextLegacyWithdrawals).reduce((sum, value) => sum + value, 0)
+        firstYearAmount: nextLines.reduce((sum, line) => sum + Math.max(0, line.amount), 0)
       }
     });
   };

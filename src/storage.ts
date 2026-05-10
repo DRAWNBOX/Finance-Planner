@@ -1,11 +1,13 @@
 import { defaultScenario } from './defaultScenario';
-import type { CareerEntry, Scenario } from './types';
+import type { CareerEntry, LargePurchase, Scenario, SourceLine } from './types';
 import { ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
 import {
   careerToSourceLines,
   DEFAULT_POOL_COLORS,
   ensureSourceLinesForPurchase,
   ensureSourceLinesForWithdrawal,
+  isLegacyPoolId,
+  legacySavingsToSourceLines,
   normalizeLoanPaymentSource,
   normalizeLoanDownPaymentSource,
   seedDefaultBankAccounts,
@@ -254,14 +256,6 @@ export const loadAppState = (): PersistedAppState => {
               ? normalizeCareerEntries(scenario.careerPlan.entries, bankAccountIds)
               : defaultScenario.careerPlan.entries
         },
-        savingsTracker: {
-          ...defaultScenario.savingsTracker,
-          ...scenario.savingsTracker,
-          annualInterestRates: {
-            ...defaultScenario.savingsTracker.annualInterestRates,
-            ...scenario.savingsTracker?.annualInterestRates
-          }
-        },
         netWorth: {
           ...defaultScenario.netWorth,
           ...scenario.netWorth,
@@ -297,13 +291,6 @@ export const loadAppState = (): PersistedAppState => {
                     typeof pool.color === 'string' && pool.color.trim().length > 0
                       ? pool.color.trim()
                       : DEFAULT_POOL_COLORS[index % DEFAULT_POOL_COLORS.length],
-                  legacyFallbackId:
-                    pool.legacyFallbackId === 'emergencyFund' ||
-                    pool.legacyFallbackId === 'hsa' ||
-                    pool.legacyFallbackId === 'investments' ||
-                    pool.legacyFallbackId === 'retirement401k'
-                      ? pool.legacyFallbackId
-                      : undefined,
                   annualReturnRate:
                     typeof pool.annualReturnRate === 'number'
                       ? pool.annualReturnRate
@@ -325,7 +312,7 @@ export const loadAppState = (): PersistedAppState => {
                   isHSA:
                     typeof pool.isHSA === 'boolean'
                       ? pool.isHSA
-                      : pool.legacyFallbackId === 'hsa' || undefined,
+                      : undefined,
                   softRestrictionNote:
                     typeof pool.softRestrictionNote === 'string'
                       ? pool.softRestrictionNote
@@ -437,12 +424,45 @@ export const loadAppState = (): PersistedAppState => {
         },
         withdrawal: (() => {
           const savedWithdrawal = scenario.withdrawal ?? defaultScenario.withdrawal;
-          const hasSavedAccountWithdrawals = Boolean(savedWithdrawal.firstYearAccountWithdrawals);
-          const hasSavedFourPercentFlags = Boolean(savedWithdrawal.firstYearAccountUseFourPercent);
-          const useAllAccountsFourPercent = savedWithdrawal.mode === 'four_percent';
           const fallbackSpecified = Math.max(0, toNumberOrFallback(savedWithdrawal.firstYearAmount, 0));
 
-          const normalized = {
+          const rawSaved = savedWithdrawal as unknown as Record<string, unknown>;
+          const legacyWithdrawals = rawSaved.firstYearAccountWithdrawals as Record<string, number> | undefined;
+          const legacyFourPercent = rawSaved.firstYearAccountUseFourPercent as Record<string, boolean> | undefined;
+          const hasSavedLines = Array.isArray(savedWithdrawal.sourceLines) && savedWithdrawal.sourceLines.length > 0;
+
+          const migratedSourceLines: SourceLine[] = hasSavedLines
+            ? savedWithdrawal.sourceLines!
+            : (() => {
+                const configuredTotal = Object.values(legacyWithdrawals ?? {}).reduce((s, v) => s + Math.max(0, v ?? 0), 0);
+                const normalizedConfigured = configuredTotal > 0
+                  ? legacyWithdrawals
+                  : { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: fallbackSpecified };
+                const effectiveFlags: Record<string, boolean> = {
+                  emergencyFund: savedWithdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.emergencyFund),
+                  hsa: savedWithdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.hsa),
+                  investments: savedWithdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.investments),
+                  retirement401k: savedWithdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.retirement401k)
+                };
+                return legacySavingsToSourceLines(normalizedConfigured as Record<string, number>, effectiveFlags, 'withdrawal-source');
+              })();
+
+          const legacyStartAges = Object.fromEntries(
+            migratedSourceLines
+              .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
+              .map((line) => [line.sourceId, typeof line.startAge === 'number' ? line.startAge : undefined])
+          );
+          const legacySyncFlags = Object.fromEntries(
+            migratedSourceLines
+              .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
+              .map((line) => [line.sourceId, line.syncWithRetirementAge ?? true])
+          );
+          const savedLines = Array.isArray(savedWithdrawal.sourceLines) ? savedWithdrawal.sourceLines : [];
+          const customLines = savedLines.filter(
+            (line) => line.sourceType === 'pool' && !isLegacyPoolId(line.sourceId) && line.enabled && (line.mode === 'four_percent' || line.amount > 0)
+          );
+
+          return {
             ...defaultScenario.withdrawal,
             ...savedWithdrawal,
             minimumYearlyWithdrawal: Math.max(0, toNumberOrFallback(savedWithdrawal.minimumYearlyWithdrawal, 0)),
@@ -454,88 +474,52 @@ export const loadAppState = (): PersistedAppState => {
               savedWithdrawal.useRetirementAgeAsWithdrawalStartAge !== undefined
                 ? Boolean(savedWithdrawal.useRetirementAgeAsWithdrawalStartAge)
                 : true,
-            firstYearAccountWithdrawals: hasSavedAccountWithdrawals
-              ? {
-                  ...defaultScenario.withdrawal.firstYearAccountWithdrawals,
-                  ...savedWithdrawal.firstYearAccountWithdrawals
-                }
-              : {
-                  emergencyFund: 0,
-                  hsa: 0,
-                  investments: 0,
-                  retirement401k: fallbackSpecified
-                },
-            firstYearAccountUseFourPercent: hasSavedFourPercentFlags
-              ? {
-                  ...defaultScenario.withdrawal.firstYearAccountUseFourPercent,
-                  ...savedWithdrawal.firstYearAccountUseFourPercent
-                }
-              : {
-                  emergencyFund: useAllAccountsFourPercent,
-                  hsa: useAllAccountsFourPercent,
-                  investments: useAllAccountsFourPercent,
-                  retirement401k: useAllAccountsFourPercent
-                }
-          };
-
-          return {
-            ...normalized,
-            sourceLines: ensureSourceLinesForWithdrawal(normalized)
+            sourceLines: [
+              ...migratedSourceLines.map((line) =>
+                line.sourceType === 'pool' && isLegacyPoolId(line.sourceId)
+                  ? { ...line, startAge: legacyStartAges[line.sourceId] ?? line.startAge, syncWithRetirementAge: legacySyncFlags[line.sourceId] ?? true }
+                  : line
+              ),
+              ...customLines
+            ]
           };
         })(),
         manualReturns: { ...defaultScenario.manualReturns, ...scenario.manualReturns },
-        largePurchases: (scenario.largePurchases ?? defaultScenario.largePurchases).map((purchase) => ({
-          ...purchase,
-          enabled: Boolean(purchase.enabled),
-          showOnGraph: purchase.showOnGraph !== false,
-          flagColor: typeof purchase.flagColor === 'string' && purchase.flagColor.trim().length > 0 ? purchase.flagColor : undefined,
-          ...derivePurchaseAgeAndYearMonth(
-            purchase,
-            scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
-            scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
-          ),
-          amount: Math.max(0, toNumberOrFallback(purchase.amount, 0)),
-          sourceAmounts: (() => {
-            const hasSourceAmounts =
-              typeof purchase.sourceAmounts?.emergencyFund === 'number' ||
-              typeof purchase.sourceAmounts?.hsa === 'number' ||
-              typeof purchase.sourceAmounts?.investments === 'number' ||
-              typeof purchase.sourceAmounts?.retirement401k === 'number';
-
-            if (hasSourceAmounts) {
-              return {
-                emergencyFund: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.emergencyFund, 0)),
-                hsa: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.hsa, 0)),
-                investments: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.investments, 0)),
-                retirement401k: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.retirement401k, 0))
-              };
-            }
-
-            const selected = {
-              emergencyFund: Boolean((purchase as unknown as { sourceAccounts?: { emergencyFund?: boolean } }).sourceAccounts?.emergencyFund),
-              hsa: Boolean((purchase as unknown as { sourceAccounts?: { hsa?: boolean } }).sourceAccounts?.hsa),
-              investments: Boolean((purchase as unknown as { sourceAccounts?: { investments?: boolean } }).sourceAccounts?.investments),
-              retirement401k: Boolean((purchase as unknown as { sourceAccounts?: { retirement401k?: boolean } }).sourceAccounts?.retirement401k)
-            };
-            const selectedCount =
-              Number(selected.emergencyFund) +
-              Number(selected.hsa) +
-              Number(selected.investments) +
-              Number(selected.retirement401k);
-            const splitAmount = selectedCount > 0 ? Math.max(0, toNumberOrFallback(purchase.amount, 0)) / selectedCount : 0;
-
-            return {
-              emergencyFund: selected.emergencyFund ? splitAmount : 0,
-              hsa: selected.hsa ? splitAmount : 0,
-              investments: selected.investments ? splitAmount : 0,
-              retirement401k: selected.retirement401k ? splitAmount : 0
-            };
-          })(),
-          sourceLines: ensureSourceLinesForPurchase(
-            purchase,
-            scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? []
-          )
-        })),
+        largePurchases: (scenario.largePurchases ?? defaultScenario.largePurchases).map((purchase, pIdx) => {
+          const rawSaved = purchase as unknown as Record<string, unknown>;
+          const savedLines = Array.isArray(rawSaved.sourceLines) ? rawSaved.sourceLines as SourceLine[] : [];
+          const legacySourceAmounts = rawSaved.sourceAmounts as Record<string, number> | undefined;
+          const bankAccounts = scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? [];
+          const hasLegacyAmounts = legacySourceAmounts && (
+            typeof legacySourceAmounts.emergencyFund === 'number' ||
+            typeof legacySourceAmounts.hsa === 'number' ||
+            typeof legacySourceAmounts.investments === 'number' ||
+            typeof legacySourceAmounts.retirement401k === 'number'
+          );
+          return {
+            id: typeof purchase.id === 'string' && purchase.id.trim().length > 0 ? purchase.id : `purchase-${pIdx + 1}`,
+            label: typeof purchase.label === 'string' && purchase.label.trim().length > 0 ? purchase.label : `Purchase ${pIdx + 1}`,
+            enabled: Boolean(purchase.enabled),
+            showOnGraph: purchase.showOnGraph !== false,
+            flagColor: typeof purchase.flagColor === 'string' && purchase.flagColor.trim().length > 0 ? purchase.flagColor : undefined,
+            ...derivePurchaseAgeAndYearMonth(
+              purchase,
+              scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
+              scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
+            ),
+            amount: Math.max(0, toNumberOrFallback(purchase.amount, 0)),
+            fundingSource: typeof rawSaved.fundingSource === 'string' ? rawSaved.fundingSource as LargePurchase['fundingSource'] : undefined,
+            sourceLines: savedLines.length > 0
+              ? savedLines
+              : hasLegacyAmounts
+                ? legacySavingsToSourceLines(
+                    legacySourceAmounts as Record<string, number>,
+                    undefined,
+                    `${purchase.id ?? `purchase-${pIdx}`}-source`
+                  )
+                : []
+          };
+        }),
         longTermPurchases: (scenario.longTermPurchases ?? defaultScenario.longTermPurchases ?? []).map((purchase, index) => {
           const fallbackStartAge = scenario.profile?.currentAge ?? defaultScenario.profile.currentAge;
           const startYearMonth =
@@ -550,6 +534,11 @@ export const loadAppState = (): PersistedAppState => {
           );
           const endYearMonth = normalizeYearMonth(purchase.endYearMonth) || fallbackEndYearMonth;
 
+          const rawSaved = purchase as unknown as Record<string, unknown>;
+          const savedLines = Array.isArray(rawSaved.sourceLines) ? rawSaved.sourceLines as SourceLine[] : [];
+          const legacySourceAmounts = rawSaved.sourceAmounts as Record<string, number> | undefined;
+          const bankAccounts = scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? [];
+
           return {
             id: typeof purchase.id === 'string' && purchase.id.trim().length > 0 ? purchase.id : `long-term-purchase-${index + 1}`,
             label: typeof purchase.label === 'string' && purchase.label.trim().length > 0 ? purchase.label : `Long-Term Purchase ${index + 1}`,
@@ -561,16 +550,15 @@ export const loadAppState = (): PersistedAppState => {
             durationMonths,
             endYearMonth,
             monthlyAmount: Math.max(0, toNumberOrFallback(purchase.monthlyAmount, 0)),
-            sourceAmounts: {
-              emergencyFund: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.emergencyFund, 0)),
-              hsa: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.hsa, 0)),
-              investments: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.investments, 0)),
-              retirement401k: Math.max(0, toNumberOrFallback(purchase.sourceAmounts?.retirement401k, 0))
-            },
-            sourceLines: ensureSourceLinesForPurchase(
-              purchase,
-              scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? []
-            )
+            sourceLines: savedLines.length > 0
+              ? savedLines
+              : legacySourceAmounts
+                ? legacySavingsToSourceLines(
+                    legacySourceAmounts as Record<string, number>,
+                    undefined,
+                    `${purchase.id ?? `lt-purchase-${index}`}-source`
+                  )
+                : []
           };
         }),
         loans: (scenario.loans ?? defaultScenario.loans ?? []).map((loan, index) => ({

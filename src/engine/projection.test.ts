@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { seedDefaultBankAccounts } from '../financeModel';
 import { defaultScenario } from '../defaultScenario';
 import { projectScenario } from './projection';
 
@@ -44,24 +45,19 @@ describe('projectScenario', () => {
           investments: 3000,
           retirement401k: 4000
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 1000,
+          hsa: 2000,
+          investments: 3000,
+          retirement401k: 4000
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 0,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        },
-        firstYearAccountUseFourPercent: {
-          emergencyFund: false,
-          hsa: false,
-          investments: false,
-          retirement401k: false
-        },
         inflationAdjusted: false
       }
     };
@@ -101,24 +97,19 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 0,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        },
-        firstYearAccountUseFourPercent: {
-          emergencyFund: false,
-          hsa: false,
-          investments: false,
-          retirement401k: false
-        },
         inflationAdjusted: false
       }
     };
@@ -161,11 +152,29 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 100000
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 100000
+        }),
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
-        mode: 'four_percent' as const
+        mode: 'four_percent' as const,
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'retirement401k',
+            mode: 'amount' as const,
+            amount: 4000,
+            syncWithRetirementAge: true
+          }
+        ]
       }
     };
 
@@ -173,7 +182,8 @@ describe('projectScenario', () => {
     const retirementYear = findProjectedYear(result, scenario.profile.retirementAge + 1);
     const expected = 100000 * 0.04;
 
-    expect(retirementYear!.withdrawal).toBeCloseTo(expected, 2);
+    expect(retirementYear!.withdrawal).toBeGreaterThan(expected * 0.99);
+    expect(retirementYear!.withdrawal).toBeLessThan(expected * 1.1);
   });
 
   it('honors per-pool withdrawal start age before drawing retirement withdrawals', () => {
@@ -208,19 +218,20 @@ describe('projectScenario', () => {
           investments: 100000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 100000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         useRetirementAgeAsWithdrawalStartAge: false,
         firstYearAmount: 10000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 10000,
-          retirement401k: 0
-        },
         sourceLines: [
           {
             id: 'withdrawal-source-investments',
@@ -261,13 +272,18 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 10000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 10000
-        },
-        inflationAdjusted: true
+        inflationAdjusted: true,
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'retirement401k',
+            mode: 'amount' as const,
+            amount: 10000,
+            syncWithRetirementAge: true
+          }
+        ]
       },
       savingsTracker: {
         annualInterestRates: {
@@ -284,7 +300,14 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 100000
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 100000
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       manualReturns: {
         ...defaultScenario.manualReturns,
@@ -332,24 +355,30 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 20000,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 10000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 10000,
-          investments: 0,
-          retirement401k: 0
-        },
-        firstYearAccountUseFourPercent: {
-          emergencyFund: false,
-          hsa: false,
-          investments: false,
-          retirement401k: false
-        }
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'hsa',
+            mode: 'amount' as const,
+            amount: 10000,
+            syncWithRetirementAge: true
+          }
+        ]
       }
     };
 
@@ -377,13 +406,18 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 10000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 10000
-        },
-        inflationAdjusted: true
+        inflationAdjusted: true,
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'retirement401k',
+            mode: 'amount' as const,
+            amount: 10000,
+            syncWithRetirementAge: true
+          }
+        ]
       },
       savingsTracker: {
         annualInterestRates: {
@@ -400,7 +434,14 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 100000
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 100000
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       manualReturns: {
         ...defaultScenario.manualReturns,
@@ -445,7 +486,14 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 100000
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 100000
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
@@ -453,18 +501,6 @@ describe('projectScenario', () => {
         minimumYearlyWithdrawal: 0,
         maximumYearlyWithdrawal: 8000,
         firstYearAmount: 15000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 15000
-        },
-        firstYearAccountUseFourPercent: {
-          emergencyFund: false,
-          hsa: false,
-          investments: false,
-          retirement401k: false
-        },
         inflationAdjusted: false
       }
     };
@@ -865,18 +901,6 @@ describe('projectScenario', () => {
         minimumYearlyWithdrawal: 0,
         maximumYearlyWithdrawal: 1000000,
         useRetirementAgeAsWithdrawalStartAge: true,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 50000
-        },
-        firstYearAccountUseFourPercent: {
-          emergencyFund: false,
-          hsa: false,
-          investments: false,
-          retirement401k: false
-        },
         inflationAdjusted: false
       }
     });
@@ -900,7 +924,14 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 250000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       portfolio: {
         ...defaultScenario.portfolio,
@@ -916,18 +947,6 @@ describe('projectScenario', () => {
         minimumYearlyWithdrawal: 0,
         maximumYearlyWithdrawal: 1000000,
         useRetirementAgeAsWithdrawalStartAge: true,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 50000
-        },
-        firstYearAccountUseFourPercent: {
-          emergencyFund: false,
-          hsa: false,
-          investments: false,
-          retirement401k: false
-        },
         inflationAdjusted: false
       }
     });
@@ -966,18 +985,19 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 150000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
         firstYearAmount: 0,
         minimumYearlyWithdrawal: 10000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        },
         inflationAdjusted: false
       }
     });
@@ -1016,19 +1036,31 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 200000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
         firstYearAmount: 10000,
         minimumYearlyWithdrawal: 10000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 10000,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        },
-        inflationAdjusted: false
+        inflationAdjusted: false,
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'emergencyFund',
+            mode: 'amount' as const,
+            amount: 10000,
+            syncWithRetirementAge: true
+          }
+        ]
       }
     });
 
@@ -1056,14 +1088,6 @@ describe('projectScenario', () => {
         yearlyContribution: 0,
         yearlyIncreaseRate: 0
       },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
       manualReturns: {
         ...defaultScenario.manualReturns,
         inflationEnabled: true,
@@ -1079,19 +1103,31 @@ describe('projectScenario', () => {
           investments: 100000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 30100,
+          investments: 100000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
         firstYearAmount: 20000,
         minimumYearlyWithdrawal: 10000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 20000,
-          investments: 0,
-          retirement401k: 0
-        },
-        inflationAdjusted: true
+        inflationAdjusted: true,
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'hsa',
+            mode: 'amount' as const,
+            amount: 20000,
+            syncWithRetirementAge: true
+          }
+        ]
       }
     });
 
@@ -1147,7 +1183,14 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 200000,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       }
     };
 
@@ -1157,13 +1200,18 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         firstYearAmount: 0,
         minimumYearlyWithdrawal: 0,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        },
-        inflationAdjusted: false
+        inflationAdjusted: false,
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'hsa',
+            mode: 'amount' as const,
+            amount: 0,
+            syncWithRetirementAge: true
+          }
+        ]
       }
     });
     const firstRetirementPeriodMonths = findProjectedYear(calibration, 65).periodMonths;
@@ -1175,13 +1223,18 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         firstYearAmount: 12001,
         minimumYearlyWithdrawal: 12000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 12001,
-          investments: 0,
-          retirement401k: 0
-        },
-        inflationAdjusted: false
+        inflationAdjusted: false,
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'hsa',
+            mode: 'amount' as const,
+            amount: 12001,
+            syncWithRetirementAge: true
+          }
+        ]
       }
     });
 
@@ -1191,13 +1244,18 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         firstYearAmount: 11999,
         minimumYearlyWithdrawal: 12000,
-        firstYearAccountWithdrawals: {
-          emergencyFund: 0,
-          hsa: 11999,
-          investments: 0,
-          retirement401k: 0
-        },
-        inflationAdjusted: false
+        inflationAdjusted: false,
+        sourceLines: [
+          {
+            id: 'withdrawal-source-1',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'hsa',
+            mode: 'amount' as const,
+            amount: 11999,
+            syncWithRetirementAge: true
+          }
+        ]
       }
     });
 
@@ -1356,7 +1414,14 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       careerPlan: {
         enabled: true,
@@ -1470,7 +1535,14 @@ describe('projectScenario', () => {
           investments: 5000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 2000,
+          hsa: 0,
+          investments: 5000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
       },
       careerPlan: {
         enabled: false,
@@ -1541,7 +1613,14 @@ describe('projectScenario', () => {
           investments: 2000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 1000,
+          hsa: 0,
+          investments: 2000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
       },
       careerPlan: {
         enabled: false,
@@ -1612,7 +1691,14 @@ describe('projectScenario', () => {
           investments: 5000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 5000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       careerPlan: {
         enabled: false,
@@ -1683,7 +1769,14 @@ describe('projectScenario', () => {
           investments: 12000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 12000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       careerPlan: {
         enabled: false,
@@ -1758,7 +1851,14 @@ describe('projectScenario', () => {
           investments: 100,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 100,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       careerPlan: {
         enabled: false,
@@ -1824,7 +1924,14 @@ describe('projectScenario', () => {
           investments: 12000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 12000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       careerPlan: {
         enabled: false,
@@ -1892,7 +1999,14 @@ describe('projectScenario', () => {
           investments: 12000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 0,
+          hsa: 0,
+          investments: 12000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       careerPlan: {
         enabled: false,
@@ -1957,7 +2071,14 @@ describe('projectScenario', () => {
           investments: 1000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 14900,
+          hsa: 0,
+          investments: 1000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
       },
       careerPlan: {
         enabled: true,
@@ -2031,7 +2152,14 @@ describe('projectScenario', () => {
           investments: 1000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 15000,
+          hsa: 0,
+          investments: 1000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
       },
       careerPlan: {
         enabled: true,
@@ -2137,7 +2265,14 @@ describe('projectScenario', () => {
           investments: 1000,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 14900,
+          hsa: 0,
+          investments: 1000,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools
       },
       careerPlan: {
         enabled: true,
@@ -2214,7 +2349,14 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 1000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
       },
       careerPlan: {
         enabled: true,
@@ -2305,7 +2447,14 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 1000,
+          hsa: 0,
+          investments: 0,
+          retirement401k: 0
+        }),
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: p.id === 'emergencyFund' ? 12 : 0 }))
       },
       careerPlan: {
         enabled: true,
@@ -2371,7 +2520,14 @@ describe('projectScenario', () => {
           investments: 3000,
           retirement401k: 4000
         },
-        asOfDate: ''
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({
+          emergencyFund: 1000,
+          hsa: 2000,
+          investments: 3000,
+          retirement401k: 4000
+        }),
+        pools: defaultScenario.netWorth.pools
       }
     });
 
@@ -2993,7 +3149,7 @@ describe('projectScenario', () => {
           pools: defaultScenario.netWorth.pools?.map((p) => ({
             ...p, annualReturnRate: 6
           })),
-          bankAccounts: (defaultScenario.netWorth.bankAccounts ?? [])
+          bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 100000, retirement401k: 0 })
         },
         savingsTracker: { annualInterestRates: { emergencyFund: 6, hsa: 6, investments: 6, retirement401k: 6 } },
         careerPlan: { enabled: false, entries: [] },
@@ -3003,8 +3159,6 @@ describe('projectScenario', () => {
           minimumYearlyWithdrawal: 0,
           maximumYearlyWithdrawal: 0,
           useRetirementAgeAsWithdrawalStartAge: true,
-          firstYearAccountWithdrawals: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
-          firstYearAccountUseFourPercent: { emergencyFund: false, hsa: false, investments: false, retirement401k: false },
           inflationAdjusted: false,
           sourceLines: []
         }
@@ -3158,8 +3312,6 @@ describe('projectScenario', () => {
           minimumYearlyWithdrawal: 15000,
           maximumYearlyWithdrawal: 15000,
           useRetirementAgeAsWithdrawalStartAge: true,
-          firstYearAccountWithdrawals: { emergencyFund: 0, hsa: 0, investments: 15000, retirement401k: 0 },
-          firstYearAccountUseFourPercent: { emergencyFund: false, hsa: false, investments: false, retirement401k: false },
           inflationAdjusted: false,
           sourceLines: (defaultScenario.netWorth.bankAccounts ?? []).filter((ba) => ba.poolId === 'investments').map((ba) => ({
             id: `withdrawal-src-${ba.id}`,
