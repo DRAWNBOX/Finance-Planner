@@ -1,4 +1,4 @@
-import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChartPanel } from './components/ChartPanel';
 import { CashflowItemEditor } from './components/CashflowItemEditor';
 import { CareerPlanEditor } from './components/CareerPlanEditor';
@@ -12,18 +12,15 @@ import { ColorPickerField } from './components/ColorPickerField';
 import {
   createDefaultCashflowItem,
   createDefaultCareerEntry,
+  createDefaultHousingEntry,
   createDefaultLargePurchase,
   createDefaultLoan,
   createDefaultLongTermPurchase,
+  createDefaultRentalEntry,
   defaultScenario
 } from './defaultScenario';
 import {
-  ensureSourceLinesForPurchase,
-  normalizeLoanDownPaymentSource,
-  normalizeLoanPaymentSource,
-  normalizePurchaseFundingSource,
-  seedDefaultBankAccounts,
-  seedDefaultPools
+  normalizePurchaseFundingSource
 } from './financeModel';
 import { calculateAgeFromBirthDate, formatCurrency, projectScenario, resolveCurrentAge } from './engine/projection';
 import { parseBankImportFiles } from './importers/bankImport';
@@ -62,7 +59,8 @@ const FINANCE_PREDICTION_SUB_TABS: Array<{ id: FinancePredictionSubTab; label: s
   { id: 'retirement', label: 'Retirement' },
   { id: 'careers', label: 'Careers' },
   { id: 'timeline', label: 'Timeline Management' },
-  { id: 'purchasesExpenses', label: 'Purchases and expenses' }
+  { id: 'purchasesExpenses', label: 'Purchases and expenses' },
+  { id: 'housing', label: 'Housing Expenses' }
 ];
 const EXPENSES_SUB_TABS: Array<{ id: ExpensesTab; label: string }> = [
   { id: 'planning', label: 'Expense Planning' },
@@ -526,7 +524,7 @@ const normalizePurchaseSourceLinesToAccounts = (
   purchase: Scenario['largePurchases'][number] | Scenario['longTermPurchases'][number],
   bankAccounts: BankAccountDefinition[]
 ): SourceLine[] => {
-  const normalizedLines = ensureSourceLinesForPurchase(purchase, bankAccounts);
+  const normalizedLines = purchase.sourceLines ?? [];
   const byAccount = new Map<string, SourceLine>();
   const bankAccountById = new Map(bankAccounts.map((account) => [account.id, account]));
 
@@ -604,6 +602,9 @@ const isLegacyPoolKey = (value: string) =>
 const App = () => {
   const [appState, setAppState] = useState(() => loadAppState());
   const [graphMode, setGraphMode] = useState<'portfolio' | 'savings'>('portfolio');
+  const [showRealDollars, setShowRealDollars] = useState(false);
+  const [showPurchaseFlags, setShowPurchaseFlags] = useState(true);
+  const [showHousingFlags, setShowHousingFlags] = useState(true);
   const [isImportingNetWorthFiles, setIsImportingNetWorthFiles] = useState(false);
   const [netWorthHistoryRange, setNetWorthHistoryRange] = useState<NetWorthHistoryRange>('all');
   const [showNetWorthImportsModal, setShowNetWorthImportsModal] = useState(false);
@@ -616,9 +617,9 @@ const App = () => {
   const scenario = appState.scenario;
   const inflationEnabled = scenario.manualReturns.inflationEnabled;
   const customNetWorthAccounts = scenario.netWorth.customAccounts ?? [];
-  const poolDefinitions = (scenario.netWorth.pools ?? seedDefaultPools()).slice().sort((a, b) => a.priority - b.priority);
+  const poolDefinitions = (scenario.netWorth.pools ?? []).slice().sort((a, b) => a.priority - b.priority);
   const bankAccounts =
-    scenario.netWorth.bankAccounts ?? seedDefaultBankAccounts(scenario.netWorth.accountBalances);
+    scenario.netWorth.bankAccounts ?? [];
   const netWorthImports = scenario.netWorth.imports ?? [];
   const pendingNetWorthImports = netWorthImports.filter((record) => !record.applied);
   const netWorthHistory = scenario.netWorth.history ?? [];
@@ -699,6 +700,31 @@ const App = () => {
   const displayedPortfolioGraphYears = displayedGraphYears;
   const displayedTableYears =
     usesFinancePredictionResults && !hasEnabledCareers ? [] : projection.years;
+  const adjustedTableYears = useMemo(() => {
+    if (!showRealDollars || displayedTableYears.length === 0) return displayedTableYears;
+    let cumFactor = 1;
+    return displayedTableYears.map((year) => {
+      if (!year.isBaselineNow && year.inflationRate !== 0) {
+        cumFactor *= (1 + year.inflationRate);
+      }
+      if (Math.abs(cumFactor - 1) < 0.0001) return year;
+      const d = (v: number) => v / cumFactor;
+      return {
+        ...year,
+        startBalance: d(year.startBalance),
+        salary: d(year.salary),
+        careerContribution: d(year.careerContribution),
+        accountBalancesById: Object.fromEntries(
+          Object.entries(year.accountBalancesById).map(([k, v]) => [k, d(v)])
+        ),
+        withdrawal: d(year.withdrawal),
+        extraCashflow: d(year.extraCashflow),
+        taxesPaid: d(year.taxesPaid),
+        penaltiesPaid: d(year.penaltiesPaid),
+        endBalance: d(year.endBalance),
+      };
+    });
+  }, [showRealDollars, displayedTableYears]);
   const graphYearsForMode = graphMode === 'portfolio' ? displayedPortfolioGraphYears : displayedGraphYears;
   const displayedGraphEndingBalance = graphYearsForMode.length > 0 ? graphYearsForMode[graphYearsForMode.length - 1].endBalance : 0;
   const displayedGraphBalanceForSummary = displayedGraphEndingBalance;
@@ -767,6 +793,19 @@ const App = () => {
             type: 'loan' as const,
             color: l.flagColor ?? ''
           };
+        }),
+      ...(scenario.housing ?? [])
+        .filter((h) => h.enabled && h.showOnGraph)
+        .map((h) => {
+          const startAge = ageFromYearMonth(h.startYearMonth, scenario.options.dateOfBirth, currentAge, currentAge, 110);
+          return {
+            id: h.id,
+            label: h.label,
+            age: startAge ?? currentAge,
+            amount: h.purchasePrice || h.monthlyRent,
+            type: 'housing' as const,
+            color: h.flagColor ?? ''
+          };
         })
     ];
     const colorMap = new Map<string, string>();
@@ -784,6 +823,11 @@ const App = () => {
     });
     return raw;
   })();
+
+  const visibleFlags = purchaseFlags.filter((flag) => {
+    if (flag.type === 'housing') return showHousingFlags;
+    return showPurchaseFlags;
+  });
 
   useEffect(() => {
     saveAppState({
@@ -888,8 +932,6 @@ const App = () => {
   const updateScenario = (nextScenario: Scenario) => {
     const resolvedAge = resolveCurrentAge(nextScenario);
     const normalizedBirthdayBasedCareerStartAge = resolveBirthdayBasedCareerStartAge(nextScenario);
-    const equityAllocation = Math.min(Math.max(nextScenario.portfolio.equityAllocation, 0), 100);
-    const fixedIncomeAllocation = 100 - equityAllocation;
     const normalizedCareerEntries = normalizeCareerEntries(
       nextScenario.careerPlan.entries,
       normalizedBirthdayBasedCareerStartAge,
@@ -915,12 +957,13 @@ const App = () => {
             : `Account ${index + 1}`,
         balance: Math.max(0, toNumberOrFallback(account.balance, 0))
       })),
-      pools: (nextScenario.netWorth.pools ?? seedDefaultPools()).map((pool, index) => ({
+      pools: (nextScenario.netWorth.pools ?? []).map((pool, index) => ({
         id: typeof pool.id === 'string' && pool.id.trim().length > 0 ? pool.id : `pool-${index + 1}`,
         label: typeof pool.label === 'string' && pool.label.trim().length > 0 ? pool.label : `Pool ${index + 1}`,
         enabled: pool.enabled !== false,
         priority: Math.max(0, Math.floor(toNumberOrFallback(pool.priority, index))),
-        annualReturnRate: toNumberOrFallback(pool.annualReturnRate, 0),
+        preRetirementReturnRate: toNumberOrFallback(pool.preRetirementReturnRate, toNumberOrFallback((pool as unknown as Record<string, unknown>).annualReturnRate, 5)),
+        postRetirementReturnRate: toNumberOrFallback(pool.postRetirementReturnRate, toNumberOrFallback((pool as unknown as Record<string, unknown>).annualReturnRate, 5)),
         taxRate: toNumberOrFallback(pool.taxRate, 0),
         penaltyRate: toNumberOrFallback(pool.penaltyRate, 0),
         isHSA: pool.isHSA ?? undefined,
@@ -928,7 +971,7 @@ const App = () => {
       })),
       bankAccounts: (
         nextScenario.netWorth.bankAccounts ??
-        seedDefaultBankAccounts(nextScenario.netWorth.accountBalances)
+        []
       ).map((account, index) => ({
         id: typeof account.id === 'string' && account.id.trim().length > 0 ? account.id : `bank-account-${index + 1}`,
         label: typeof account.label === 'string' && account.label.trim().length > 0 ? account.label : `Bank Account ${index + 1}`,
@@ -1046,12 +1089,8 @@ const App = () => {
         loan.paymentSourceAccount === 'income'
           ? loan.paymentSourceAccount
           : 'investments',
-      paymentSource:
-        normalizeLoanPaymentSource(loan, normalizedNetWorth.bankAccounts ?? []) as Scenario['loans'][number]['paymentSource'],
-      downPaymentSource: normalizeLoanDownPaymentSource(
-        loan,
-        normalizedNetWorth.bankAccounts ?? []
-      ) as Scenario['loans'][number]['downPaymentSource']
+      paymentSource: (loan.paymentSource ?? 'income') as Scenario['loans'][number]['paymentSource'],
+      downPaymentSource: loan.downPaymentSource as Scenario['loans'][number]['downPaymentSource']
     }));
     const normalizedCareerEntriesWithBankTargets = normalizedCareerEntries.map((entry) => ({
       ...entry,
@@ -1090,11 +1129,7 @@ const App = () => {
         largePurchases: normalizedLargePurchases,
         longTermPurchases: normalizedLongTermPurchases,
         loans: normalizedLoans,
-        portfolio: {
-          ...nextScenario.portfolio,
-          equityAllocation,
-          fixedIncomeAllocation
-        }
+        portfolio: { ...nextScenario.portfolio }
       }
     }));
   };
@@ -1387,6 +1422,30 @@ const App = () => {
     });
   };
 
+  const addHousing = (type: 'mortgage' | 'rental') => {
+    const entry = type === 'mortgage'
+      ? createDefaultHousingEntry(currentAge, scenario.options.dateOfBirth)
+      : createDefaultRentalEntry(currentAge, scenario.options.dateOfBirth);
+    updateScenario({
+      ...scenario,
+      housing: [...(scenario.housing ?? []), entry]
+    });
+  };
+
+  const updateHousing = (housingId: string, nextHousing: Scenario['housing'][number]) => {
+    updateScenario({
+      ...scenario,
+      housing: (scenario.housing ?? []).map((h) => (h.id === housingId ? nextHousing : h))
+    });
+  };
+
+  const removeHousing = (housingId: string) => {
+    updateScenario({
+      ...scenario,
+      housing: (scenario.housing ?? []).filter((h) => h.id !== housingId)
+    });
+  };
+
   const handleFlagColorChange = (flagId: string, color: string) => {
     const matchLarge = scenario.largePurchases.find((p) => p.id === flagId);
     if (matchLarge) {
@@ -1401,6 +1460,11 @@ const App = () => {
     const matchLoan = (scenario.loans ?? []).find((l) => l.id === flagId);
     if (matchLoan) {
       updateLoan(flagId, { ...matchLoan, flagColor: color });
+      return;
+    }
+    const matchHousing = (scenario.housing ?? []).find((h) => h.id === flagId);
+    if (matchHousing) {
+      updateHousing(flagId, { ...matchHousing, flagColor: color });
     }
   };
 
@@ -1410,7 +1474,8 @@ const App = () => {
       label: `Pool ${poolDefinitions.length + 1}`,
       enabled: true,
       priority: poolDefinitions.length,
-      annualReturnRate: 5,
+      preRetirementReturnRate: 5,
+      postRetirementReturnRate: 5,
       taxRate: 0,
       penaltyRate: 0
     };
@@ -2051,19 +2116,6 @@ const App = () => {
 
           return (
             <>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={inflationEnabled}
-            onChange={(event) =>
-              updateScenario({
-                ...scenario,
-                manualReturns: { ...scenario.manualReturns, inflationEnabled: event.target.checked }
-              })
-            }
-          />
-          <span>Enable inflation</span>
-        </label>
         <ControlRow
           label="First Year Expenses"
           value={displayedFirstYearTotal}
@@ -2072,20 +2124,6 @@ const App = () => {
           step={500}
           disabled
           onChange={() => {}}
-        />
-        <ControlRow
-          label="Inflation %"
-          value={scenario.manualReturns.inflationRate}
-          min={-2}
-          max={15}
-          step={0.1}
-          disabled={!inflationEnabled}
-          onChange={(value) =>
-            updateScenario({
-              ...scenario,
-              manualReturns: { ...scenario.manualReturns, inflationRate: value }
-            })
-          }
         />
         <ControlRow
           label="Minimum Yearly Withdrawal"
@@ -2126,7 +2164,7 @@ const App = () => {
               <div className="career-savings-cell">Start Age</div>
               <div className="career-savings-cell">Use 4% Rule</div>
               <div className="career-savings-cell">First Year Withdrawal</div>
-              <div className="career-savings-cell">APY %</div>
+              <div className="career-savings-cell">Post-Ret %</div>
               <div className="career-savings-cell">Tax %</div>
               <div className="career-savings-cell">Penalty %</div>
               <div className="career-savings-cell">HSA</div>
@@ -2176,11 +2214,11 @@ const App = () => {
               </div>
               <div className="career-savings-cell">
                 <BufferedNumberInput
-                  value={pool.annualReturnRate}
+                  value={pool.postRetirementReturnRate}
                   min={-20}
                   max={40}
                   step={0.1}
-                  onCommit={(next) => updatePool(pool.id, { annualReturnRate: next })}
+                  onCommit={(next) => updatePool(pool.id, { postRetirementReturnRate: next })}
                 />
               </div>
               <div className="career-savings-cell">
@@ -2214,20 +2252,6 @@ const App = () => {
             </>
           );
         })()}
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={scenario.withdrawal.inflationAdjusted}
-            disabled={!inflationEnabled}
-            onChange={(event) =>
-              updateScenario({
-                ...scenario,
-                withdrawal: { ...scenario.withdrawal, inflationAdjusted: event.target.checked }
-              })
-            }
-          />
-          <span>Adjust expenses for inflation</span>
-        </label>
       </Panel>
 
       <Panel title="Retirement Add-Ons" className="panel-wide">
@@ -2254,7 +2278,6 @@ const App = () => {
                 retirementEndAge={retirementEndAge}
                 dateOfBirth={scenario.options.dateOfBirth}
                 currentAge={currentAge}
-                inflationControlsDisabled={!inflationEnabled}
                 onChange={(nextItem) =>
                   updateScenario({
                     ...scenario,
@@ -2308,6 +2331,40 @@ const App = () => {
             Reset Scenario
           </button>
         </div>
+      </Panel>
+      <Panel title="Inflation">
+        <p className="subtle" style={{ marginTop: 0, marginBottom: '0.55rem' }}>
+          When enabled, cashflow items, life events, and retirement withdrawals grow with inflation each year.
+        </p>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={inflationEnabled}
+            onChange={(event) =>
+              updateScenario({
+                ...scenario,
+                manualReturns: { ...scenario.manualReturns, inflationEnabled: event.target.checked }
+              })
+            }
+          />
+          <span>Enable inflation</span>
+        </label>
+        <label>
+          <span>Inflation Rate %</span>
+          <BufferedNumberInput
+            value={scenario.manualReturns.inflationRate}
+            min={-2}
+            max={15}
+            step={0.1}
+            disabled={!inflationEnabled}
+            onCommit={(next) =>
+              updateScenario({
+                ...scenario,
+                manualReturns: { ...scenario.manualReturns, inflationRate: next }
+              })
+            }
+          />
+        </label>
       </Panel>
       <Panel title="Expense Planning Options">
         <label className="full-span">
@@ -2427,6 +2484,51 @@ const App = () => {
     return parts.join('\n');
   };
 
+  const formatPurchaseTooltip = (
+    purchase: Scenario['largePurchases'][number],
+    incomeStatus: ProjectionResult['incomeFundedItemStatuses'][string] | undefined,
+    incomeUsageByMonth: ProjectionResult['incomeUsageByMonth'],
+    bankAccounts: BankAccountDefinition[]
+  ) => {
+    const parts: string[] = [];
+    const fbTotal = (incomeStatus?.fallbackDetails ?? []).reduce((s, d) => s + d.amount, 0);
+    const shortfallAmt = incomeStatus?.shortfallAmount ?? 0;
+    const incomeUsed = Math.max(0, purchase.amount - fbTotal - shortfallAmt);
+
+    parts.push(`Amount: ${formatCurrency(purchase.amount)}`);
+
+    if (purchase.fundingSource === 'income') {
+      if (incomeUsed > 0) parts.push(`  From income: ${formatCurrency(incomeUsed)}`);
+      if (fbTotal > 0) {
+        parts.push('  From fallback:');
+        (incomeStatus!.fallbackDetails ?? []).forEach((d) => {
+          const acct = bankAccounts.find((a) => a.id === d.accountId);
+          parts.push(`    ${acct?.label ?? d.accountId}: ${formatCurrency(d.amount)}`);
+        });
+      }
+      if (shortfallAmt > 0) parts.push(`  Unpaid: ${formatCurrency(shortfallAmt)}`);
+    } else {
+      const acct = bankAccounts.find((a) => a.id === (purchase.fundingSource ?? '').replace('account:', ''));
+      parts.push(`  From: ${acct?.label ?? purchase.fundingSource ?? 'Unknown'}`);
+    }
+
+    const monthKey = purchase.yearMonth;
+    if (monthKey) {
+      const usage = incomeUsageByMonth[monthKey];
+      if (usage && usage.items.length > 0) {
+        parts.push(`Monthly income: ${formatCurrency(usage.availableIncome)}`);
+        usage.items.forEach((item) => {
+          const isThis = item.id === purchase.id;
+          parts.push(`  ${isThis ? '\u2192 ' : '  '}${item.label}: ${formatCurrency(item.amount)}`);
+        });
+        const total = usage.items.reduce((s, i) => s + i.amount, 0);
+        parts.push(`  Total: ${formatCurrency(total)}`);
+      }
+    }
+
+    return parts.join('\n');
+  };
+
   const renderPurchasesTab = () => (
     <>
       <Panel title="Large Purchases Table" className="panel-wide">
@@ -2469,14 +2571,10 @@ const App = () => {
                   const incomeStatus = projection.incomeFundedItemStatuses[purchase.id];
                   const incomeShortfall = incomeStatus?.status === 'shortfall';
                   const incomeFallback = incomeStatus?.status === 'fallback';
-                  const fallbackTooltip = formatIncomeFallbackTooltip(incomeStatus, projection.incomeUsageByMonth, incomeStatus?.fallbackDetails, bankAccounts);
+                  const purchaseTooltip = formatPurchaseTooltip(purchase, incomeStatus, projection.incomeUsageByMonth, bankAccounts);
                   const nonViableTitle = purchaseNotViable
-                    ? 'Not viable: selected pay-from account balance goes negative after this purchase.'
-                    : incomeShortfall
-                      ? 'Not enough income or fallback accounts to cover this purchase.'
-                      : fallbackTooltip
-                        ? fallbackTooltip
-                        : undefined;
+                    ? `Not viable: selected pay-from account balance goes negative after this purchase.\n\n${purchaseTooltip}`
+                    : purchaseTooltip;
                   const rowClass =
                     purchaseNotViable || incomeShortfall
                       ? 'purchase-row invalid'
@@ -2485,9 +2583,13 @@ const App = () => {
                         : 'purchase-row';
                   const accountBalanceAfterPurchase = (() => {
                     if (fundingSourceValue === 'income') {
-                      if (incomeShortfall) return 'Shortfall';
-                      if (incomeFallback) return 'Fallback';
-                      return 'Income';
+                      const monthKey = purchase.yearMonth;
+                      const usage = monthKey ? projection.incomeUsageByMonth[monthKey] : undefined;
+                      if (usage) {
+                        const consumed = usage.items.reduce((sum, item) => sum + item.amount, 0);
+                        return formatCurrency(Math.max(0, usage.availableIncome - consumed));
+                      }
+                      return formatCurrency(0);
                     }
 
                     const [, accountId] = fundingSourceValue.split(':', 2);
@@ -3091,6 +3193,187 @@ const App = () => {
     </>
   );
 
+  const renderHousingTab = () => {
+    const housing = scenario.housing ?? [];
+    const mortgages = housing.filter((h) => h.housingType === 'mortgage');
+    const rentals = housing.filter((h) => h.housingType === 'rental');
+
+    const renderHousingRow = (h: Scenario['housing'][number]) => {
+      const isMortgage = h.housingType === 'mortgage';
+      const loanAmount = Math.max(0, h.purchasePrice - h.downPayment);
+      const totalTermMonths = Math.max(1, h.loanTermYears * 12);
+      const monthlyRate = h.annualInterestRate / 100 / 12;
+      const monthlyPI = loanAmount > 0 ? (monthlyRate > 0
+        ? loanAmount * (monthlyRate * Math.pow(1 + monthlyRate, totalTermMonths)) / (Math.pow(1 + monthlyRate, totalTermMonths) - 1)
+        : loanAmount / totalTermMonths) : 0;
+      const totalMonthly = isMortgage
+        ? monthlyPI + h.extraMonthlyPayment + h.propertyTaxYearly / 12 + h.homeInsuranceYearly / 12 + h.hoaMonthly + h.maintenanceMonthly + h.pmiMonthly
+        : h.monthlyRent + h.propertyTaxYearly / 12 + h.homeInsuranceYearly / 12 + h.hoaMonthly + h.maintenanceMonthly;
+      const payoff = projection?.housingPayoffMonths?.[h.id];
+      const payoffText = payoff != null ? `${payoff} mo` : '';
+      const shortfall = projection?.housingFundingShortfalls?.[h.id] ?? 0;
+      const incomeStatus = projection?.incomeFundedItemStatuses?.[h.id];
+      const incomeShortfall = incomeStatus?.status === 'shortfall';
+      const incomeFallback = incomeStatus?.status === 'fallback';
+      const housingNotViable = h.enabled && (shortfall > 0.01 || incomeShortfall);
+      const housingTooltip = formatIncomeFallbackTooltip(incomeStatus, projection?.incomeUsageByMonth ?? {}, incomeStatus?.fallbackDetails, bankAccounts);
+      const title = housingNotViable
+        ? (incomeShortfall
+            ? 'Not enough income or fallback accounts to cover this housing payment.'
+            : 'Not viable: selected payment source cannot fund this housing payment.')
+        : housingTooltip ?? undefined;
+      const rowClass = (housingNotViable && (shortfall > 0.01 || incomeShortfall))
+        ? 'purchase-row invalid'
+        : incomeFallback
+          ? 'purchase-row warning'
+          : 'purchase-row';
+
+      return (
+        <tr key={h.id} className={rowClass} title={title}>
+          <td><input type="checkbox" checked={h.enabled} onChange={(e) => updateHousing(h.id, { ...h, enabled: e.target.checked })} /></td>
+          <td><input type="checkbox" checked={h.showOnGraph} onChange={(e) => updateHousing(h.id, { ...h, showOnGraph: e.target.checked })} /></td>
+          <td><input type="text" value={h.label} onChange={(e) => updateHousing(h.id, { ...h, label: e.target.value })} /></td>
+          <td><YearMonthInput label="Start" value={h.startYearMonth} onChange={(next) => updateHousing(h.id, { ...h, startYearMonth: next })} /></td>
+          {h.housingType === 'rental' && <td><YearMonthInput label="End" value={h.endYearMonth} onChange={(next) => updateHousing(h.id, { ...h, endYearMonth: next })} /></td>}
+          {isMortgage && (
+            <>
+              <td><BufferedNumberInput value={h.purchasePrice} min={0} max={50000000} step={1000} onCommit={(next) => updateHousing(h.id, { ...h, purchasePrice: next })} /></td>
+              <td><BufferedNumberInput value={h.downPayment} min={0} max={50000000} step={1000} onCommit={(next) => updateHousing(h.id, { ...h, downPayment: next })} /></td>
+              <td>
+                <select aria-label="Down Payment Source" value={h.downPaymentSource ?? h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, downPaymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
+                  <option value="income">Income</option>
+                  {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </td>
+              <td><BufferedNumberInput value={h.annualInterestRate} min={0} max={80} step={0.1} onCommit={(next) => updateHousing(h.id, { ...h, annualInterestRate: next })} /></td>
+              <td><BufferedNumberInput value={h.loanTermYears} min={1} max={50} step={1} onCommit={(next) => updateHousing(h.id, { ...h, loanTermYears: next })} /></td>
+              <td>{formatCurrency(monthlyPI)}</td>
+              <td><BufferedNumberInput value={h.pmiMonthly} min={0} max={10000} step={10} onCommit={(next) => updateHousing(h.id, { ...h, pmiMonthly: next })} /></td>
+              <td><BufferedNumberInput value={h.appreciationRate} min={0} max={30} step={0.1} onCommit={(next) => updateHousing(h.id, { ...h, appreciationRate: next })} /></td>
+              <td><YearMonthInput label="Sell" value={h.sellYearMonth} onChange={(next) => updateHousing(h.id, { ...h, sellYearMonth: next })} /></td>
+              <td>
+                <select aria-label="Sale Proceeds Account" value={h.saleProceedsAccountId ?? ''} onChange={(e) => updateHousing(h.id, { ...h, saleProceedsAccountId: e.target.value || undefined })}>
+                  <option value="">-</option>
+                  {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+                </select>
+              </td>
+              <td>{payoffText}</td>
+            </>
+          )}
+          {!isMortgage && (
+            <td><BufferedNumberInput value={h.monthlyRent} min={0} max={100000} step={50} onCommit={(next) => updateHousing(h.id, { ...h, monthlyRent: next })} /></td>
+          )}
+          <td><BufferedNumberInput value={h.propertyTaxYearly} min={0} max={500000} step={100} onCommit={(next) => updateHousing(h.id, { ...h, propertyTaxYearly: next })} /></td>
+          <td><BufferedNumberInput value={h.homeInsuranceYearly} min={0} max={100000} step={50} onCommit={(next) => updateHousing(h.id, { ...h, homeInsuranceYearly: next })} /></td>
+          <td><BufferedNumberInput value={h.hoaMonthly} min={0} max={50000} step={10} onCommit={(next) => updateHousing(h.id, { ...h, hoaMonthly: next })} /></td>
+          <td><BufferedNumberInput value={h.maintenanceMonthly} min={0} max={50000} step={10} onCommit={(next) => updateHousing(h.id, { ...h, maintenanceMonthly: next })} /></td>
+          <td><BufferedNumberInput value={h.rentalIncomeMonthly} min={0} max={100000} step={50} onCommit={(next) => updateHousing(h.id, { ...h, rentalIncomeMonthly: next })} /></td>
+          <td>
+            <select aria-label="Rental Income Account" value={h.rentalIncomeAccountId ?? ''} onChange={(e) => updateHousing(h.id, { ...h, rentalIncomeAccountId: e.target.value || undefined })}>
+              <option value="">-</option>
+              {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+            </select>
+          </td>
+          <td>
+            <select aria-label="Pay From" value={h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, paymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
+              <option value="income">Income</option>
+              {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </td>
+          <td>{formatCurrency(totalMonthly)}</td>
+          <td><button type="button" className="text-button" onClick={() => removeHousing(h.id)}>Remove</button></td>
+        </tr>
+      );
+    };
+
+    return (
+      <Panel title="Housing Expenses" className="panel-wide">
+        <div className="career-actions">
+          <button type="button" className="secondary-button" onClick={() => addHousing('mortgage')}>
+            + Mortgage
+          </button>
+        </div>
+        {mortgages.length === 0 ? (
+          <p className="subtle">Add a mortgage to track home purchase, amortization, property tax, insurance, PMI, and sell proceeds.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="purchases-table">
+              <thead>
+                <tr>
+                  <th>Enabled</th>
+                  <th>Flag</th>
+                  <th>Name</th>
+                  <th>Start</th>
+                  <th>Purchase Price</th>
+                  <th>Down Pay</th>
+                  <th>Down From</th>
+                  <th>APR %</th>
+                  <th>Term yrs</th>
+                  <th>P&amp;I/mo</th>
+                  <th>PMI/mo</th>
+                  <th>Apprec%</th>
+                  <th>Sell Date</th>
+                  <th>Sell To</th>
+                  <th>Est Payoff</th>
+                  <th>PropTax/yr</th>
+                  <th>Ins/yr</th>
+                  <th>HOA/mo</th>
+                  <th>Maint/mo</th>
+                  <th>Rent Inc</th>
+                  <th>Inc To</th>
+                  <th>Pay From</th>
+                  <th>Total/mo</th>
+                  <th>Remove</th>
+                </tr>
+              </thead>
+              <tbody>{mortgages.map(renderHousingRow)}</tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="career-actions" style={{ marginTop: mortgages.length > 0 ? '1rem' : 0 }}>
+          <button type="button" className="secondary-button" onClick={() => addHousing('rental')}>
+            + Rental
+          </button>
+        </div>
+        {rentals.length === 0 ? (
+          <p className="subtle">Add a rental to track monthly rent and associated expenses.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="purchases-table">
+              <thead>
+                <tr>
+                  <th>Enabled</th>
+                  <th>Flag</th>
+                  <th>Name</th>
+                  <th>Start</th>
+                  <th>End Date</th>
+                  <th>Monthly Rent</th>
+                  <th>PropTax/yr</th>
+                  <th>Ins/yr</th>
+                  <th>HOA/mo</th>
+                  <th>Maint/mo</th>
+                  <th>Rent Inc</th>
+                  <th>Inc To</th>
+                  <th>Pay From</th>
+                  <th>Total/mo</th>
+                  <th>Remove</th>
+                </tr>
+              </thead>
+              <tbody>{rentals.map(renderHousingRow)}</tbody>
+            </table>
+          </div>
+        )}
+
+        {housing.length > 0 && (
+          <p className="subtle purchases-legend">
+            PMI drops automatically at 20% equity. Sale proceeds are calculated as sale price minus selling costs minus remaining balance.
+          </p>
+        )}
+      </Panel>
+    );
+  };
+
   const renderTimelineManagementTab = () => (
     <></>
   );
@@ -3121,6 +3404,7 @@ const App = () => {
                 <th>Pool</th>
                 <th>Enabled</th>
                 <th>Priority</th>
+                <th>Pre-Ret %</th>
                 <th>Remove</th>
               </tr>
             </thead>
@@ -3150,6 +3434,15 @@ const App = () => {
                       onCommit={(next) => updatePool(pool.id, { priority: Math.floor(next) })}
                     />
                     <span className="subtle">Order {index + 1}</span>
+                  </td>
+                  <td>
+                    <BufferedNumberInput
+                      value={pool.preRetirementReturnRate}
+                      min={-20}
+                      max={40}
+                      step={0.1}
+                      onCommit={(next) => updatePool(pool.id, { preRetirementReturnRate: next })}
+                    />
                   </td>
                   <td>
                     <button type="button" className="text-button" onClick={() => removePool(pool.id)}>
@@ -3866,7 +4159,9 @@ const App = () => {
                   ? renderTimelineManagementTab()
                   : careersSubTab === 'purchasesExpenses'
                     ? renderPurchasesTab()
-                    : null}
+                    : careersSubTab === 'housing'
+                      ? renderHousingTab()
+                      : null}
           </>
         );
       case 'netWorth':
@@ -4016,10 +4311,20 @@ const App = () => {
                           <span>Stacked Savings Graph</span>
                         </label>
                       </div>
+                      <div className="chart-mode-row">
+                        <label className="checkbox-row">
+                          <input type="checkbox" checked={showPurchaseFlags} onChange={(e) => setShowPurchaseFlags(e.target.checked)} />
+                          <span>Purchases / Expenses</span>
+                        </label>
+                        <label className="checkbox-row">
+                          <input type="checkbox" checked={showHousingFlags} onChange={(e) => setShowHousingFlags(e.target.checked)} />
+                          <span>Housing Expenses</span>
+                        </label>
+                      </div>
                       {graphMode === 'portfolio' ? (
                         <ChartPanel
                           years={displayedPortfolioGraphYears}
-                          flags={purchaseFlags}
+                          flags={visibleFlags}
                           onFlagColorChange={handleFlagColorChange}
                         />
                       ) : (
@@ -4027,7 +4332,7 @@ const App = () => {
                           years={displayedGraphYears}
                           pools={poolDefinitions}
                           bankAccounts={orderedBankAccounts}
-                          flags={purchaseFlags}
+                          flags={visibleFlags}
                           onFlagColorChange={handleFlagColorChange}
                         />
                       )}
@@ -4045,8 +4350,16 @@ const App = () => {
                 </div>
 
                 <div className="results-card table-card">
+                  <label className="checkbox-row" style={{ padding: '0.5rem 1rem 0', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={showRealDollars}
+                      onChange={(e) => setShowRealDollars(e.target.checked)}
+                    />
+                    <span>Display values in current dollars</span>
+                  </label>
                   <ResultsTable
-                    years={displayedTableYears}
+                    years={adjustedTableYears}
                     accountColumns={orderedBankAccounts.map((account) => ({ id: account.id, label: account.label }))}
                   />
                 </div>

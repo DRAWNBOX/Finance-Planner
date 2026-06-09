@@ -7,7 +7,6 @@ interface CashflowItemEditorProps {
   retirementEndAge: number;
   dateOfBirth: string;
   currentAge: number;
-  inflationControlsDisabled: boolean;
   onChange: (item: CashflowItem) => void;
   onRemove: (id: string) => void;
 }
@@ -19,7 +18,6 @@ export const CashflowItemEditor = ({
   retirementEndAge,
   dateOfBirth,
   currentAge,
-  inflationControlsDisabled,
   onChange,
   onRemove
 }: CashflowItemEditorProps) => (
@@ -115,15 +113,6 @@ export const CashflowItemEditor = ({
           </label>
         </>
       ) : null}
-      <label className="checkbox-row">
-        <input
-          type="checkbox"
-          checked={item.inflationAdjusted}
-          disabled={inflationControlsDisabled}
-          onChange={(event) => onChange({ ...item, inflationAdjusted: event.target.checked })}
-        />
-        <span>Adjust for inflation</span>
-      </label>
     </div>
   </div>
 );

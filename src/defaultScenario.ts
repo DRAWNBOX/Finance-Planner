@@ -2,18 +2,13 @@ import type {
   CareerEntry,
   CashflowCategory,
   CashflowItem,
+  HousingEntry,
   LargePurchase,
   Loan,
   LongTermPurchase,
   Scenario
 } from './types';
 import { formatYearMonthFromAge } from './utils/ageDate';
-import {
-  getDefaultBankAccountIdForPool,
-  normalizeLoanPaymentSource,
-  seedDefaultBankAccounts,
-  seedDefaultPools
-} from './financeModel';
 
 const makeItemId = (category: CashflowCategory) => `${category}-default`;
 
@@ -37,7 +32,6 @@ export const createDefaultCashflowItem = (
         amount: 24000,
         startAge: retirementAge,
         endAge: retirementEndAge,
-        inflationAdjusted: true
       };
     case 'social_security_spouse':
       return {
@@ -50,7 +44,6 @@ export const createDefaultCashflowItem = (
         amount: 18000,
         startAge: retirementAge,
         endAge: retirementEndAge,
-        inflationAdjusted: true
       };
     case 'inheritance':
       return {
@@ -63,7 +56,6 @@ export const createDefaultCashflowItem = (
         amount: 50000,
         startAge: retirementAge + 5,
         endAge: retirementAge + 5,
-        inflationAdjusted: false
       };
     case 'college_child_1':
     case 'college_child_2':
@@ -83,7 +75,6 @@ export const createDefaultCashflowItem = (
         amount: 12000,
         startAge: currentAge + 5,
         endAge: currentAge + 8,
-        inflationAdjusted: true
       };
     case 'pension_1':
       return {
@@ -96,7 +87,6 @@ export const createDefaultCashflowItem = (
         amount: 15000,
         startAge: retirementAge,
         endAge: retirementEndAge,
-        inflationAdjusted: true
       };
     case 'pension_2':
       return {
@@ -109,7 +99,6 @@ export const createDefaultCashflowItem = (
         amount: 10000,
         startAge: retirementAge,
         endAge: retirementEndAge,
-        inflationAdjusted: true
       };
     case 'cash_benefit_1':
       return {
@@ -122,7 +111,6 @@ export const createDefaultCashflowItem = (
         amount: 25000,
         startAge: retirementAge + 3,
         endAge: retirementAge + 3,
-        inflationAdjusted: false
       };
     case 'cash_benefit_2':
       return {
@@ -135,7 +123,6 @@ export const createDefaultCashflowItem = (
         amount: 15000,
         startAge: retirementAge + 10,
         endAge: retirementAge + 10,
-        inflationAdjusted: false
       };
     case 'home_real_estate':
       return {
@@ -148,7 +135,6 @@ export const createDefaultCashflowItem = (
         amount: 80000,
         startAge: retirementAge + 8,
         endAge: retirementAge + 8,
-        inflationAdjusted: false
       };
   }
 };
@@ -164,8 +150,13 @@ const makeCareerId = (index: number) => `career-${index + 1}-default`;
 const makePurchaseId = () => `purchase-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeLongTermPurchaseId = () => `long-term-purchase-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeLoanId = () => `loan-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-const defaultPoolBalances = { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } as const;
-const defaultBankAccounts = seedDefaultBankAccounts({ ...defaultPoolBalances });
+const defaultInvestmentsAccountId = 'investments-account-default';
+const defaultBankAccounts: import('./types').BankAccountDefinition[] = [
+  { id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 },
+  { id: 'hsa-account-default', label: 'HSA', poolId: 'hsa', priority: 0, accountType: 'hsa', balance: 0 },
+  { id: defaultInvestmentsAccountId, label: 'Investments', poolId: 'investments', priority: 0, accountType: 'taxable', balance: 0 },
+  { id: 'retirement401k-account-default', label: '401K', poolId: 'retirement401k', priority: 0, accountType: 'retirement401k', balance: 0 }
+];
 const defaultCareerSourceLines = defaultBankAccounts.map((account) => ({
   id: `career-source-${account.id}`,
   enabled: true,
@@ -233,13 +224,12 @@ export const createDefaultCareerEntry = (
   return {
     ...base,
     sourceLines: defaultCareerSourceLines.map((line) => ({ ...line })),
-    taxInfo: { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null }
+    taxInfo: { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
   };
 };
 
 export const createDefaultLargePurchase = (currentAge: number, dateOfBirth: string): LargePurchase => ({
   ...(() => {
-    const defaultAccountId = getDefaultBankAccountIdForPool(defaultBankAccounts, 'investments') ?? defaultBankAccounts[0]?.id ?? '';
     const purchase: LargePurchase = {
       id: makePurchaseId(),
   label: 'Large Purchase',
@@ -248,13 +238,13 @@ export const createDefaultLargePurchase = (currentAge: number, dateOfBirth: stri
   yearMonth: formatYearMonthFromAge(currentAge + 1, dateOfBirth, currentAge),
   age: currentAge + 1,
   amount: 10000,
-  fundingSource: `account:${defaultAccountId}`,
+  fundingSource: `account:${defaultInvestmentsAccountId}`,
   sourceLines: [
     {
-      id: `source-${defaultAccountId}`,
+      id: `source-${defaultInvestmentsAccountId}`,
       enabled: true,
       sourceType: 'account',
-      sourceId: defaultAccountId,
+      sourceId: defaultInvestmentsAccountId,
       mode: 'amount',
       amount: 10000
     }
@@ -270,7 +260,6 @@ export const createDefaultLongTermPurchase = (
   dateOfBirth: string
 ): LongTermPurchase => ({
   ...(() => {
-    const defaultAccountId = getDefaultBankAccountIdForPool(defaultBankAccounts, 'investments') ?? defaultBankAccounts[0]?.id ?? '';
     const purchase: LongTermPurchase = {
       id: makeLongTermPurchaseId(),
   label: 'Long-Term Purchase',
@@ -281,13 +270,13 @@ export const createDefaultLongTermPurchase = (
   durationMonths: 12,
   endYearMonth: formatYearMonthFromAge(currentAge + 2, dateOfBirth, currentAge),
   monthlyAmount: 500,
-  fundingSource: `account:${defaultAccountId}`,
+  fundingSource: `account:${defaultInvestmentsAccountId}`,
   sourceLines: [
     {
-      id: `source-${defaultAccountId}`,
+      id: `source-${defaultInvestmentsAccountId}`,
       enabled: true,
       sourceType: 'account',
-      sourceId: defaultAccountId,
+      sourceId: defaultInvestmentsAccountId,
       mode: 'amount',
       amount: 500
     }
@@ -312,11 +301,67 @@ export const createDefaultLoan = (currentAge: number, dateOfBirth: string): Loan
   annualInterestRate: 6.5,
   minimumMonthlyPayment: 350,
   extraMonthlyPayment: 0,
-  paymentSourceAccount: 'investments'
+  paymentSourceAccount: 'investments',
+  paymentSource: `account:${defaultInvestmentsAccountId}`
     };
 
-    return { ...loan, paymentSource: normalizeLoanPaymentSource(loan, defaultBankAccounts) };
+    return loan;
   })()
+});
+
+const makeHousingId = () => `housing-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+
+export const createDefaultHousingEntry = (currentAge: number, dateOfBirth: string): HousingEntry => ({
+  id: makeHousingId(),
+  label: 'My Home',
+  enabled: true,
+  showOnGraph: true,
+  housingType: 'mortgage',
+  startYearMonth: formatYearMonthFromAge(currentAge, dateOfBirth, currentAge),
+  purchasePrice: 300000,
+  downPayment: 60000,
+  downPaymentSource: `account:${defaultInvestmentsAccountId}`,
+  annualInterestRate: 6.5,
+  loanTermYears: 30,
+  extraMonthlyPayment: 0,
+          monthlyRent: 0,
+          endYearMonth: '',
+  propertyTaxYearly: 3600,
+  homeInsuranceYearly: 1200,
+  hoaMonthly: 0,
+  maintenanceMonthly: 250,
+  pmiMonthly: 150,
+  rentalIncomeMonthly: 0,
+  sellYearMonth: '',
+  appreciationRate: 3,
+  sellingCostsRate: 6,
+  paymentSource: 'income'
+});
+
+export const createDefaultRentalEntry = (currentAge: number, dateOfBirth: string): HousingEntry => ({
+  id: makeHousingId(),
+  label: 'Apartment',
+  enabled: true,
+  showOnGraph: true,
+  housingType: 'rental',
+  startYearMonth: formatYearMonthFromAge(currentAge, dateOfBirth, currentAge),
+  purchasePrice: 0,
+  downPayment: 0,
+  annualInterestRate: 0,
+  loanTermYears: 0,
+  extraMonthlyPayment: 0,
+          monthlyRent: 1500,
+          endYearMonth: '',
+  propertyTaxYearly: 0,
+  homeInsuranceYearly: 300,
+  hoaMonthly: 0,
+  maintenanceMonthly: 0,
+  pmiMonthly: 0,
+  rentalIncomeMonthly: 0,
+  sellYearMonth: '',
+  appreciationRate: 0,
+  sellingCostsRate: 0,
+  paymentSource: 'income'
 });
 
 export const defaultScenario: Scenario = {
@@ -330,10 +375,7 @@ export const defaultScenario: Scenario = {
     dateOfBirth: '1980-10-01'
   },
   portfolio: {
-    currentAssets: 500000,
-    equityAllocation: 75,
-    fixedIncomeAllocation: 25,
-    fixedIncomeDuration: 'one_year'
+    currentAssets: 500000
   },
   contribution: {
     yearlyContribution: 17500,
@@ -350,7 +392,12 @@ export const defaultScenario: Scenario = {
       investments: 0,
       retirement401k: 0
     },
-    pools: seedDefaultPools(),
+    pools: [
+      { id: 'emergencyFund', label: 'Emergency Fund', enabled: true, priority: 0, preRetirementReturnRate: 2.5, postRetirementReturnRate: 2.5, taxRate: 0, penaltyRate: 0 },
+      { id: 'hsa', label: 'HSA', enabled: true, priority: 1, preRetirementReturnRate: 5, postRetirementReturnRate: 5, taxRate: 0, penaltyRate: 0, isHSA: true, softRestrictionNote: 'Qualified medical withdrawals are tax free.' },
+      { id: 'investments', label: 'Investments', enabled: true, priority: 2, preRetirementReturnRate: 6.5, postRetirementReturnRate: 6.5, taxRate: 0, penaltyRate: 0 },
+      { id: 'retirement401k', label: '401K', enabled: true, priority: 3, preRetirementReturnRate: 6, postRetirementReturnRate: 6, taxRate: 0, penaltyRate: 0 }
+    ],
     bankAccounts: defaultBankAccounts,
     customAccounts: [],
     imports: [],
@@ -368,7 +415,6 @@ export const defaultScenario: Scenario = {
     minimumYearlyWithdrawal: 0,
     maximumYearlyWithdrawal: 1000000,
     useRetirementAgeAsWithdrawalStartAge: true,
-    inflationAdjusted: true,
     sourceLines: [
       {
         id: 'withdrawal-source-1',
@@ -381,17 +427,14 @@ export const defaultScenario: Scenario = {
       }
     ]
   },
-  returnMode: 'manual',
   manualReturns: {
     inflationEnabled: true,
-    inflationRate: 2.9,
-    preRetirementEquityReturn: 5,
-    postRetirementEquityReturn: 5,
-    fixedIncomeReturn: 2.9
+    inflationRate: 2.9
   },
   largePurchases: [],
   longTermPurchases: [],
   loans: [],
+  housing: [],
   incomeFallbackAccountId: null,
   incomeFallbackAccountId2: null,
   cashflowItems: [],

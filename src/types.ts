@@ -1,5 +1,3 @@
-export type ReturnMode = 'manual' | 'historical';
-export type FixedIncomeDuration = 'one_year' | 'ten_year';
 export type WithdrawalMode = 'four_percent' | 'specified';
 export type CashflowCadence = 'one_time' | 'recurring';
 export type CashflowDirection = 'inflow' | 'outflow';
@@ -32,9 +30,6 @@ export interface AgeOptions {
 
 export interface PortfolioConfig {
   currentAssets: number;
-  equityAllocation: number;
-  fixedIncomeAllocation: number;
-  fixedIncomeDuration: FixedIncomeDuration;
 }
 
 export interface ContributionPlan {
@@ -89,6 +84,8 @@ export interface TaxInfo {
   leftoverIncome: number;
   taxRate: number;
   lastEditedField: 'leftoverIncome' | 'taxRate' | null;
+  otherExpenses: number;
+  taxRateLocked: boolean;
 }
 
 export interface CareerPlan {
@@ -176,13 +173,53 @@ export interface Loan {
   downPaymentSource?: LoanPaymentSource;
 }
 
+export type HousingType = 'mortgage' | 'rental';
+
+export interface HousingEntry {
+  id: string;
+  label: string;
+  enabled: boolean;
+  showOnGraph: boolean;
+  flagColor?: string;
+
+  housingType: HousingType;
+  startYearMonth: string;
+
+  purchasePrice: number;
+  downPayment: number;
+  downPaymentSource?: LoanPaymentSource;
+  annualInterestRate: number;
+  loanTermYears: number;
+  extraMonthlyPayment: number;
+
+  monthlyRent: number;
+  endYearMonth: string;
+
+  propertyTaxYearly: number;
+  homeInsuranceYearly: number;
+  hoaMonthly: number;
+  maintenanceMonthly: number;
+  pmiMonthly: number;
+
+  rentalIncomeMonthly: number;
+  rentalIncomeAccountId?: string;
+
+  sellYearMonth: string;
+  appreciationRate: number;
+  sellingCostsRate: number;
+  saleProceedsAccountId?: string;
+
+  paymentSource?: LoanPaymentSource;
+}
+
 export interface PoolDefinition {
   id: string;
   label: string;
   enabled: boolean;
   priority: number;
   color?: string;
-  annualReturnRate: number;
+  preRetirementReturnRate: number;
+  postRetirementReturnRate: number;
   taxRate: number;
   penaltyRate: number;
   isHSA?: boolean;
@@ -368,15 +405,11 @@ export interface WithdrawalPlan {
   maximumYearlyWithdrawal: number;
   useRetirementAgeAsWithdrawalStartAge: boolean;
   sourceLines?: SourceLine[];
-  inflationAdjusted: boolean;
 }
 
 export interface ManualReturnModel {
   inflationEnabled: boolean;
   inflationRate: number;
-  preRetirementEquityReturn: number;
-  postRetirementEquityReturn: number;
-  fixedIncomeReturn: number;
 }
 
 export interface CashflowItem {
@@ -389,7 +422,6 @@ export interface CashflowItem {
   amount: number;
   startAge: number;
   endAge: number;
-  inflationAdjusted: boolean;
 }
 
 export type LifeEventType =
@@ -413,7 +445,6 @@ export interface LifeEvent {
   amount: number;
   newSalary: number;
   annualSalaryGrowthOverride: number;
-  inflationAdjusted: boolean;
 }
 
 export interface Scenario {
@@ -425,11 +456,11 @@ export interface Scenario {
   netWorth: NetWorthConfig;
   futureRetirement: FutureRetirementPlan;
   withdrawal: WithdrawalPlan;
-  returnMode: ReturnMode;
   manualReturns: ManualReturnModel;
   largePurchases: LargePurchase[];
   longTermPurchases: LongTermPurchase[];
   loans: Loan[];
+  housing: HousingEntry[];
   cashflowItems: CashflowItem[];
   lifeEvents: LifeEvent[];
   expenses: ExpensesConfig;
@@ -455,6 +486,8 @@ export interface ProjectionYear {
   endBalance: number;
   depleted: boolean;
   careerId: string | null;
+  taxesPaid: number;
+  penaltiesPaid: number;
   savingsBalances: Record<string, number>;
   accountBalancesById: Record<string, number>;
 }
@@ -464,7 +497,7 @@ export interface PurchaseFlag {
   label: string;
   age: number;
   amount: number;
-  type: 'large_purchase' | 'long_term_purchase' | 'loan';
+  type: 'large_purchase' | 'long_term_purchase' | 'loan' | 'housing';
   color: string;
 }
 
@@ -475,7 +508,6 @@ export interface ProjectionResult {
   endAge: number;
   endingBalance: number;
   summary: string;
-  historicalWindowLabel?: string;
   careerEndSavingsBalances: Record<string, Record<string, number>>;
   firstRetirementYearPlannedAccountWithdrawals: Record<string, number>;
   purchaseFundingShortfalls: Record<string, number>;
@@ -486,11 +518,7 @@ export interface ProjectionResult {
   warnings?: string[];
   incomeFundedItemStatuses: Record<string, { status: 'covered' | 'fallback' | 'shortfall'; shortfallAmount?: number; fallbackDetails?: { accountId: string; amount: number }[]; firstFallbackYearMonth?: string }>;
   incomeUsageByMonth: Record<string, { availableIncome: number; items: { id: string; label: string; amount: number }[] }>;
-}
-
-export interface HistoricalYear {
-  year: number;
-  equityReturn: number;
-  inflationRate: number;
-  fixedIncomeReturn: number;
+  housingPayoffMonths: Record<string, number | null>;
+  housingTotalMonthlyCosts: Record<string, number>;
+  housingFundingShortfalls: Record<string, number>;
 }

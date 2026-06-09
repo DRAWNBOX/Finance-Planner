@@ -627,6 +627,34 @@ td:first-child {
   padding: 2px 4px;
 }
 
+.tax-rate-row {
+  display: flex;
+  align-items: center;
+}
+
+.tax-rate-row input {
+  flex: 1;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.lock-btn {
+  background: #f0f4f8;
+  border: 1px solid #d0d9e6;
+  border-left: none;
+  border-radius: 0 0.45rem 0.45rem 0;
+  padding: 0.32rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.lock-btn.locked {
+  background: #e5e7eb;
+}
+
 .purchases-table th {
   text-align: center;
   white-space: normal;

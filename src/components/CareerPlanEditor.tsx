@@ -197,7 +197,7 @@ export const CareerPlanEditor = ({
         const monthlyWithdrawal = Math.max(0, line.monthlyWithdrawal);
         const monthlyContribution = annualSavings / 12;
         const pool = pools.find((p) => p.id === account.poolId);
-        const monthlyRate = (pool?.annualReturnRate ?? 0) / 100 / 12;
+        const monthlyRate = (pool?.preRetirementReturnRate ?? 0) / 100 / 12;
 
         if (months <= 0 || (startBalance <= 0 && annualSavings <= 0 && monthlyWithdrawal <= 0)) {
           nextBalances[account.id] = roundCurrency(startBalance);
@@ -239,7 +239,7 @@ export const CareerPlanEditor = ({
 
     const monthlyContribution = annualSavings / 12;
     const pool = pools.find((p) => p.id === account.poolId);
-    const monthlyRate = (pool?.annualReturnRate ?? 0) / 100 / 12;
+    const monthlyRate = (pool?.preRetirementReturnRate ?? 0) / 100 / 12;
     const monthlyWithdrawal = Math.max(0, getMonthlyWithdrawal(account));
     let running = startingBalance;
 
@@ -473,7 +473,7 @@ export const CareerPlanEditor = ({
               <span>Tax Info (Yearly)</span>
             </label>
             {(() => {
-              const ti = selectedCareer.taxInfo ?? { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null as 'leftoverIncome' | 'taxRate' | null };
+              const ti = selectedCareer.taxInfo ?? { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null as 'leftoverIncome' | 'taxRate' | null, otherExpenses: 0, taxRateLocked: false };
               const taxableIncome = Math.max(0, selectedCareer.startingSalary - ti.untaxedBenefits);
               const annualEmployeeSavings = Math.round(selectedCareer.startingSalary * (calculatedTotalSavingsRate / 100));
               const taxes = ti.lastEditedField === 'leftoverIncome'
@@ -484,33 +484,43 @@ export const CareerPlanEditor = ({
               const postTaxSalary = Math.max(0, taxableIncome - taxes);
               const monthlyTaxes = taxes / 12;
               const yearlyLeftover = Math.max(0, postTaxSalary - annualEmployeeSavings);
-              const monthlyLeftover = yearlyLeftover / 12;
+              const monthlyExpenses = (ti.otherExpenses ?? 0);
+              const availableMonthly = Math.max(0, (yearlyLeftover / 12) - monthlyExpenses);
 
-              const updateTaxInfo = (partial: Partial<typeof ti>) => {
-                const merged = { ...ti, ...partial };
-                const newTaxable = Math.max(0, selectedCareer.startingSalary - merged.untaxedBenefits);
-                const newSavings = Math.round(selectedCareer.startingSalary * (calculatedTotalSavingsRate / 100));
+               const updateTaxInfo = (partial: Partial<typeof ti>) => {
+                 const merged = { ...ti, ...partial };
+                 const newTaxable = Math.max(0, selectedCareer.startingSalary - merged.untaxedBenefits);
+                 const newSavings = Math.round(selectedCareer.startingSalary * (calculatedTotalSavingsRate / 100));
 
-                let { leftoverIncome, taxRate } = merged;
-                const field = merged.lastEditedField || (taxRate > 0 ? 'taxRate' : leftoverIncome > 0 ? 'leftoverIncome' : null);
-                if (field === 'taxRate') {
-                  const t = Math.round(newTaxable * (taxRate / 100) * 100) / 100;
-                  leftoverIncome = Math.max(0, newTaxable - t - newSavings);
-                } else if (field === 'leftoverIncome') {
-                  const t = Math.max(0, newTaxable - leftoverIncome - newSavings);
-                  taxRate = newTaxable > 0 ? Math.round((t / newTaxable) * 10000) / 100 : 0;
-                }
+                 let { leftoverIncome, taxRate } = merged;
 
-                onChangeCareer({
-                  ...selectedCareer,
-                  taxInfo: {
-                    untaxedBenefits: merged.untaxedBenefits,
-                    leftoverIncome,
-                    taxRate,
-                    lastEditedField: merged.lastEditedField
-                  }
-                });
-              };
+                 if (merged.taxRateLocked && partial.lastEditedField === 'leftoverIncome') {
+                 } else if (merged.taxRateLocked && partial.lastEditedField !== 'taxRate') {
+                   const t = Math.round(newTaxable * (taxRate / 100) * 100) / 100;
+                   leftoverIncome = Math.max(0, newTaxable - t - newSavings);
+                 } else {
+                   const field = merged.lastEditedField || (taxRate > 0 ? 'taxRate' : leftoverIncome > 0 ? 'leftoverIncome' : null);
+                   if (field === 'taxRate') {
+                     const t = Math.round(newTaxable * (taxRate / 100) * 100) / 100;
+                     leftoverIncome = Math.max(0, newTaxable - t - newSavings);
+                   } else if (field === 'leftoverIncome') {
+                     const t = Math.max(0, newTaxable - leftoverIncome - newSavings);
+                     taxRate = newTaxable > 0 ? Math.round((t / newTaxable) * 10000) / 100 : 0;
+                   }
+                 }
+
+                 onChangeCareer({
+                   ...selectedCareer,
+                   taxInfo: {
+                     untaxedBenefits: merged.untaxedBenefits,
+                     leftoverIncome,
+                     taxRate,
+                     lastEditedField: merged.lastEditedField,
+                     otherExpenses: Math.max(0, merged.otherExpenses ?? 0),
+                     taxRateLocked: merged.taxRateLocked ?? false
+                   }
+                 });
+               };
 
               return (
                 <>
@@ -531,14 +541,25 @@ export const CareerPlanEditor = ({
             </label>
             <label>
               <span>Tax Rate %</span>
-              <BufferedNumberInput
-                value={ti.taxRate}
-                min={0}
-                max={100}
-                step={0.1}
-                commitOnChange
-                onCommit={(next) => updateTaxInfo({ taxRate: next, lastEditedField: 'taxRate' })}
-              />
+              <div className="tax-rate-row">
+                <BufferedNumberInput
+                  value={ti.taxRate}
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  commitOnChange
+                  disabled={ti.taxRateLocked}
+                  onCommit={(next) => updateTaxInfo({ taxRate: next, lastEditedField: 'taxRate' })}
+                />
+                <button
+                  type="button"
+                  className={`lock-btn${ti.taxRateLocked ? ' locked' : ''}`}
+                  onClick={() => updateTaxInfo({ taxRateLocked: !(ti.taxRateLocked ?? false) })}
+                  title={ti.taxRateLocked ? 'Unlock tax rate' : 'Lock tax rate'}
+                >
+                  {ti.taxRateLocked ? '\u{1F512}' : '\u{1F513}'}
+                </button>
+              </div>
             </label>
             <label>
               <span>Taxes</span>
@@ -552,16 +573,24 @@ export const CareerPlanEditor = ({
               <span>Monthly Taxes</span>
               <BufferedNumberInput value={monthlyTaxes} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
             </label>
-            <label className={monthlyLeftover < 0 ? 'tax-info-negative' : ''}>
-              <span>Leftover Income (monthly)</span>
+            <label>
+              <span>Other Expenses (monthly)</span>
               <BufferedNumberInput
-                value={monthlyLeftover}
+                value={ti.otherExpenses ?? 0}
                 min={0}
                 max={2000000}
-                step={10}
+                step={100}
                 commitOnChange
-                onCommit={(next) => updateTaxInfo({ leftoverIncome: next * 12, lastEditedField: 'leftoverIncome' })}
+                onCommit={(next) => updateTaxInfo({ otherExpenses: next })}
               />
+            </label>
+            <label>
+              <span>Available Monthly</span>
+              <BufferedNumberInput value={availableMonthly} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
+            </label>
+            <label>
+              <span>Monthly Savings</span>
+              <BufferedNumberInput value={annualEmployeeSavings / 12} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
             </label>
                 </>
               );
@@ -668,7 +697,7 @@ export const CareerPlanEditor = ({
                   step={50}
                   onCommit={(next) => updateLineForAccount(account, { monthlyWithdrawal: next })}
                 />
-              </label>
+            </label>
             ))}
           </div>
 
@@ -705,6 +734,10 @@ export const CareerPlanEditor = ({
               </select>
             </label>
           </div>
+
+          <p className="subtle" style={{ gridColumn: '1 / -1', margin: '-0.2rem 0 0.5rem', fontSize: '0.78rem' }}>
+            Used when income-funded purchases or loan payments exceed your available monthly income.
+          </p>
 
           <div className="career-summary">
             <p>

@@ -11,7 +11,6 @@ Primary interfaces live in `src/types.ts`.
 - `portfolio`: base portfolio settings
 - `contribution`: non-career yearly contribution plan
 - `careerPlan`: timeline entries
-- `savingsTracker`: APY for each account
 - `netWorth`: starting balances + as-of date
 - `futureRetirement`, `withdrawal`, `manualReturns`
 - `cashflowItems`, `lifeEvents`
@@ -21,9 +20,12 @@ Primary interfaces live in `src/types.ts`.
 Each career entry represents a timeline segment:
 
 - Ages and label: `startAge`, `endAge`, `label`, `enabled`
-- Income behavior: salary, raises, bonus, employer match
+- Income behavior: salary, raises, bonus
 - Account source lines (`sourceLines`) define contribution/withdrawal behavior for dynamic pools/accounts.
-- Legacy per-pool fields are retained only for backward compatibility with older saved states.
+- `taxInfo` drives income-funded purchases/loans:
+  - `untaxedBenefits`, `taxRate`, `leftoverIncome` — tax/savings math
+  - `otherExpenses` — subtracted from leftoverIncome before computing `monthlyTakeHome`
+  - `monthlyTakeHome = max(0, (leftoverIncome - otherExpenses) / 12)`
 
 ## Projection Outputs
 

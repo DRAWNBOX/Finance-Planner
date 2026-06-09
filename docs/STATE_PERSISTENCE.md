@@ -17,11 +17,9 @@ Persistence is handled by `src/storage.ts` with local storage key:
 
 - `saveAppState(state)` writes full `scenario` + `ui`.
 
-## Backward Compatibility Principles
+## Backward Compatibility
 
-- New fields should be optional in type until normalized.
-- Normalize missing numeric fields with safe defaults.
-- Keep migrations in `storage.ts` as deterministic pure transforms.
+This version breaks compatibility with saved data from before 2026-05. All legacy migration code (`seedDefaultBankAccounts`, `seedDefaultPools`, `legacySavingsToSourceLines`, `ensureSourceLinesForPurchase`, `ensureSourceLinesForWithdrawal`, etc.) has been removed. Saved data from this version forward uses the modern schema directly.
 
 ## Practical Rule For New Fields
 

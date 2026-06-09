@@ -1,21 +1,10 @@
 import { defaultScenario } from './defaultScenario';
-import type { CareerEntry, LargePurchase, Scenario, SourceLine } from './types';
+import type { CareerEntry, HousingEntry, LargePurchase, LoanPaymentSource, LongTermPurchase, Scenario, SourceLine } from './types';
 import { ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
-import {
-  careerToSourceLines,
-  DEFAULT_POOL_COLORS,
-  ensureSourceLinesForPurchase,
-  ensureSourceLinesForWithdrawal,
-  isLegacyPoolId,
-  legacySavingsToSourceLines,
-  normalizeLoanPaymentSource,
-  normalizeLoanDownPaymentSource,
-  seedDefaultBankAccounts,
-  seedDefaultPools
-} from './financeModel';
+// Removed financeModel imports (functions inlined or simplified)
 
 const APP_TABS = ['options', 'careers', 'netWorth', 'expenses'] as const;
-const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses'] as const;
+const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses', 'housing'] as const;
 export type CareersSubTab = (typeof CAREERS_SUB_TABS)[number];
 const EXPENSES_SUB_TABS = ['planning', 'tracking'] as const;
 export type ExpensesSubTab = (typeof EXPENSES_SUB_TABS)[number];
@@ -104,7 +93,7 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
     hsaMonthlyWithdrawal,
     investmentsMonthlyWithdrawal,
     retirement401kMonthlyWithdrawal,
-    sourceLines: (entry.sourceLines?.length ? entry.sourceLines : careerToSourceLines(entry)).map((line) => ({
+    sourceLines: (entry.sourceLines?.length ? entry.sourceLines : []).map((line) => ({
       ...line,
       maxBalance: Math.max(0, toNumberOrFallback(line.maxBalance, 0)),
       overflowFallbackAccountId:
@@ -124,7 +113,9 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
           lastEditedField:
             (ti as Record<string, unknown>).lastEditedField === 'leftoverIncome' || (ti as Record<string, unknown>).lastEditedField === 'taxRate'
               ? (ti as Record<string, unknown>).lastEditedField as 'leftoverIncome' | 'taxRate'
-              : null
+              : null,
+          otherExpenses: Math.max(0, toNumberOrFallback((ti as Record<string, unknown>).otherExpenses, 0)),
+          taxRateLocked: (ti as Record<string, unknown>).taxRateLocked === true
         };
       }
       const thp = (entry as unknown as Record<string, unknown>).takeHomePay;
@@ -132,9 +123,9 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
         const amount = Math.max(0, toNumberOrFallback((thp as Record<string, unknown>).amount, 0));
         const period = (thp as Record<string, unknown>).period;
         const yearlyAmount = period === 'yearly' ? amount : amount * 12;
-        return { untaxedBenefits: 0, leftoverIncome: yearlyAmount, taxRate: 0, lastEditedField: null };
+        return { untaxedBenefits: 0, leftoverIncome: yearlyAmount, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false };
       }
-      return { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null };
+      return { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false };
     })()
   };
 };
@@ -290,12 +281,18 @@ export const loadAppState = (): PersistedAppState => {
                   color:
                     typeof pool.color === 'string' && pool.color.trim().length > 0
                       ? pool.color.trim()
-                      : DEFAULT_POOL_COLORS[index % DEFAULT_POOL_COLORS.length],
-                  annualReturnRate:
-                    typeof pool.annualReturnRate === 'number'
-                      ? pool.annualReturnRate
-                      : firstAccount
-                        ? toNumberOrFallback(firstAccount.annualReturnRate, 0)
+                      : (['#4b87d9', '#32a884', '#f0a235', '#ca5d7b', '#7a75d8', '#3e9ab1', '#d0735a', '#6e9c4e'])[index % 8],
+                  preRetirementReturnRate:
+                    typeof pool.preRetirementReturnRate === 'number'
+                      ? pool.preRetirementReturnRate
+                      : typeof (pool as unknown as Record<string, unknown>).annualReturnRate === 'number'
+                        ? (pool as unknown as Record<string, unknown>).annualReturnRate as number
+                        : 0,
+                  postRetirementReturnRate:
+                    typeof pool.postRetirementReturnRate === 'number'
+                      ? pool.postRetirementReturnRate
+                      : typeof (pool as unknown as Record<string, unknown>).annualReturnRate === 'number'
+                        ? (pool as unknown as Record<string, unknown>).annualReturnRate as number
                         : 0,
                   taxRate:
                     typeof pool.taxRate === 'number'
@@ -323,7 +320,7 @@ export const loadAppState = (): PersistedAppState => {
               });
             }
 
-            return seedDefaultPools();
+            return [];
           })(),
           bankAccounts:
             scenario.netWorth?.bankAccounts?.length
@@ -347,10 +344,7 @@ export const loadAppState = (): PersistedAppState => {
                       : 'taxable',
                   balance: Math.max(0, toNumberOrFallback(account.balance, 0))
                 }))
-              : seedDefaultBankAccounts({
-                  ...defaultScenario.netWorth.accountBalances,
-                  ...scenario.netWorth?.accountBalances
-                }),
+              : [],
           customAccounts: (scenario.netWorth?.customAccounts ?? defaultScenario.netWorth.customAccounts ?? []).map((account, index) => ({
             id: typeof account.id === 'string' && account.id.trim().length > 0 ? account.id : `custom-account-${index + 1}`,
             label: typeof account.label === 'string' && account.label.trim().length > 0 ? account.label : `Account ${index + 1}`,
@@ -424,43 +418,6 @@ export const loadAppState = (): PersistedAppState => {
         },
         withdrawal: (() => {
           const savedWithdrawal = scenario.withdrawal ?? defaultScenario.withdrawal;
-          const fallbackSpecified = Math.max(0, toNumberOrFallback(savedWithdrawal.firstYearAmount, 0));
-
-          const rawSaved = savedWithdrawal as unknown as Record<string, unknown>;
-          const legacyWithdrawals = rawSaved.firstYearAccountWithdrawals as Record<string, number> | undefined;
-          const legacyFourPercent = rawSaved.firstYearAccountUseFourPercent as Record<string, boolean> | undefined;
-          const hasSavedLines = Array.isArray(savedWithdrawal.sourceLines) && savedWithdrawal.sourceLines.length > 0;
-
-          const migratedSourceLines: SourceLine[] = hasSavedLines
-            ? savedWithdrawal.sourceLines!
-            : (() => {
-                const configuredTotal = Object.values(legacyWithdrawals ?? {}).reduce((s, v) => s + Math.max(0, v ?? 0), 0);
-                const normalizedConfigured = configuredTotal > 0
-                  ? legacyWithdrawals
-                  : { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: fallbackSpecified };
-                const effectiveFlags: Record<string, boolean> = {
-                  emergencyFund: savedWithdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.emergencyFund),
-                  hsa: savedWithdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.hsa),
-                  investments: savedWithdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.investments),
-                  retirement401k: savedWithdrawal.mode === 'four_percent' || Boolean(legacyFourPercent?.retirement401k)
-                };
-                return legacySavingsToSourceLines(normalizedConfigured as Record<string, number>, effectiveFlags, 'withdrawal-source');
-              })();
-
-          const legacyStartAges = Object.fromEntries(
-            migratedSourceLines
-              .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
-              .map((line) => [line.sourceId, typeof line.startAge === 'number' ? line.startAge : undefined])
-          );
-          const legacySyncFlags = Object.fromEntries(
-            migratedSourceLines
-              .filter((line) => line.sourceType === 'pool' && isLegacyPoolId(line.sourceId))
-              .map((line) => [line.sourceId, line.syncWithRetirementAge ?? true])
-          );
-          const savedLines = Array.isArray(savedWithdrawal.sourceLines) ? savedWithdrawal.sourceLines : [];
-          const customLines = savedLines.filter(
-            (line) => line.sourceType === 'pool' && !isLegacyPoolId(line.sourceId) && line.enabled && (line.mode === 'four_percent' || line.amount > 0)
-          );
 
           return {
             ...defaultScenario.withdrawal,
@@ -474,17 +431,20 @@ export const loadAppState = (): PersistedAppState => {
               savedWithdrawal.useRetirementAgeAsWithdrawalStartAge !== undefined
                 ? Boolean(savedWithdrawal.useRetirementAgeAsWithdrawalStartAge)
                 : true,
-            sourceLines: [
-              ...migratedSourceLines.map((line) =>
-                line.sourceType === 'pool' && isLegacyPoolId(line.sourceId)
-                  ? { ...line, startAge: legacyStartAges[line.sourceId] ?? line.startAge, syncWithRetirementAge: legacySyncFlags[line.sourceId] ?? true }
-                  : line
-              ),
-              ...customLines
-            ]
+            sourceLines: (savedWithdrawal.sourceLines ?? []).map((line) => ({
+              ...line,
+              startAge: typeof line.startAge === 'number' ? line.startAge : undefined,
+              syncWithRetirementAge: line.syncWithRetirementAge !== false
+            }))
           };
         })(),
-        manualReturns: { ...defaultScenario.manualReturns, ...scenario.manualReturns },
+        manualReturns: (() => {
+          const mr = (scenario.manualReturns ?? {}) as Record<string, unknown>;
+          return {
+            inflationEnabled: mr.inflationEnabled !== false,
+            inflationRate: toNumberOrFallback(mr.inflationRate, defaultScenario.manualReturns.inflationRate)
+          };
+        })(),
         largePurchases: (scenario.largePurchases ?? defaultScenario.largePurchases).map((purchase, pIdx) => {
           const rawSaved = purchase as unknown as Record<string, unknown>;
           const savedLines = Array.isArray(rawSaved.sourceLines) ? rawSaved.sourceLines as SourceLine[] : [];
@@ -508,16 +468,10 @@ export const loadAppState = (): PersistedAppState => {
               scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
             ),
             amount: Math.max(0, toNumberOrFallback(purchase.amount, 0)),
-            fundingSource: typeof rawSaved.fundingSource === 'string' ? rawSaved.fundingSource as LargePurchase['fundingSource'] : undefined,
+            fundingSource: (typeof rawSaved.fundingSource === 'string' && rawSaved.fundingSource) ? rawSaved.fundingSource as LargePurchase['fundingSource'] : 'income',
             sourceLines: savedLines.length > 0
               ? savedLines
-              : hasLegacyAmounts
-                ? legacySavingsToSourceLines(
-                    legacySourceAmounts as Record<string, number>,
-                    undefined,
-                    `${purchase.id ?? `purchase-${pIdx}`}-source`
-                  )
-                : []
+              : []
           };
         }),
         longTermPurchases: (scenario.longTermPurchases ?? defaultScenario.longTermPurchases ?? []).map((purchase, index) => {
@@ -550,15 +504,10 @@ export const loadAppState = (): PersistedAppState => {
             durationMonths,
             endYearMonth,
             monthlyAmount: Math.max(0, toNumberOrFallback(purchase.monthlyAmount, 0)),
+            fundingSource: (typeof rawSaved.fundingSource === 'string' && rawSaved.fundingSource) ? rawSaved.fundingSource as LongTermPurchase['fundingSource'] : 'income',
             sourceLines: savedLines.length > 0
               ? savedLines
-              : legacySourceAmounts
-                ? legacySavingsToSourceLines(
-                    legacySourceAmounts as Record<string, number>,
-                    undefined,
-                    `${purchase.id ?? `lt-purchase-${index}`}-source`
-                  )
-                : []
+              : []
           };
         }),
         loans: (scenario.loans ?? defaultScenario.loans ?? []).map((loan, index) => ({
@@ -588,15 +537,47 @@ export const loadAppState = (): PersistedAppState => {
             loan.paymentSourceAccount === 'income'
               ? loan.paymentSourceAccount
               : 'investments',
-          paymentSource: normalizeLoanPaymentSource(
-            loan,
-            scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? []
-          ),
-          downPaymentSource: normalizeLoanDownPaymentSource(
-            loan,
-            scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? []
-          )
+          paymentSource: loan.paymentSource ?? 'income',
+          downPaymentSource: loan.downPaymentSource
         })),
+        housing: ((scenario as Record<string, unknown>).housing as unknown[] ?? []).map((h: unknown, index: number) => {
+          const entry = (h ?? {}) as Record<string, unknown>;
+          return {
+            id: typeof entry.id === 'string' && entry.id.trim().length > 0 ? entry.id : `housing-${index + 1}`,
+            label: typeof entry.label === 'string' && entry.label.trim().length > 0 ? entry.label : `Home ${index + 1}`,
+            enabled: entry.enabled !== false,
+            showOnGraph: entry.showOnGraph !== false,
+            flagColor: typeof entry.flagColor === 'string' && entry.flagColor.trim().length > 0 ? entry.flagColor : undefined,
+            housingType: entry.housingType === 'rental' ? 'rental' : 'mortgage',
+            startYearMonth:
+              normalizeYearMonth(entry.startYearMonth as string | undefined) ||
+              formatYearMonthFromAge(
+                scenario.profile?.currentAge ?? defaultScenario.profile.currentAge,
+                scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
+                scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
+              ),
+            purchasePrice: Math.max(0, toNumberOrFallback(entry.purchasePrice, 0)),
+            downPayment: Math.max(0, toNumberOrFallback(entry.downPayment, 0)),
+            downPaymentSource: typeof entry.downPaymentSource === 'string' ? entry.downPaymentSource as LoanPaymentSource : undefined,
+            annualInterestRate: toNumberOrFallback(entry.annualInterestRate, 0),
+            loanTermYears: Math.max(1, toNumberOrFallback(entry.loanTermYears, 30)),
+            extraMonthlyPayment: Math.max(0, toNumberOrFallback(entry.extraMonthlyPayment, 0)),
+            monthlyRent: Math.max(0, toNumberOrFallback(entry.monthlyRent, 0)),
+            endYearMonth: normalizeYearMonth(entry.endYearMonth as string | undefined) || '',
+            propertyTaxYearly: Math.max(0, toNumberOrFallback(entry.propertyTaxYearly, 0)),
+            homeInsuranceYearly: Math.max(0, toNumberOrFallback(entry.homeInsuranceYearly, 0)),
+            hoaMonthly: Math.max(0, toNumberOrFallback(entry.hoaMonthly, 0)),
+            maintenanceMonthly: Math.max(0, toNumberOrFallback(entry.maintenanceMonthly, 0)),
+            pmiMonthly: Math.max(0, toNumberOrFallback(entry.pmiMonthly, 0)),
+            rentalIncomeMonthly: Math.max(0, toNumberOrFallback(entry.rentalIncomeMonthly, 0)),
+            rentalIncomeAccountId: typeof entry.rentalIncomeAccountId === 'string' ? entry.rentalIncomeAccountId : undefined,
+            sellYearMonth: normalizeYearMonth(entry.sellYearMonth as string | undefined) || '',
+            appreciationRate: toNumberOrFallback(entry.appreciationRate, 0),
+            sellingCostsRate: Math.max(0, toNumberOrFallback(entry.sellingCostsRate, 0)),
+            saleProceedsAccountId: typeof entry.saleProceedsAccountId === 'string' ? entry.saleProceedsAccountId : undefined,
+            paymentSource: typeof entry.paymentSource === 'string' ? entry.paymentSource as LoanPaymentSource : 'income'
+          };
+        }),
         expenses: {
           entries: (scenario.expenses?.entries ?? defaultScenario.expenses.entries).map((entry, index) => ({
             id: typeof entry.id === 'string' && entry.id.trim().length > 0 ? entry.id : `expense-${index + 1}`,

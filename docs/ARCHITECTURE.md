@@ -16,10 +16,10 @@
 
 - `src/App.tsx`: Composition root and orchestration.
 - `src/engine/projection.ts`: Core financial simulation.
-- `src/financeModel.ts`: Pool/account/source-line compatibility helpers.
+- `src/financeModel.ts`: Small helper set (~35 lines, `normalizePurchaseFundingSource` + `getDefaultBankAccountIdForPool`).
 - `src/components/*`: Editing and visualization UI.
 - `src/components/ExpensesPlanner.tsx`: Expense planning/tracking workspace.
-- `src/storage.ts`: Persistence + backward compatibility normalization.
+- `src/storage.ts`: Persistence + normalization (no legacy migration — this version breaks backward compat).
 - `src/defaultScenario.ts`: Default scenario object and default creators.
 - `src/types.ts`: Shared domain contracts.
 

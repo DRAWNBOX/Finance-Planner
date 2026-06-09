@@ -99,3 +99,15 @@ loans table should only check if income is valid for events that have
 Create a Debugger. When debug mode is enabled, any value can be right clicked and inspected. The inspection displays  table showing the sequence of math and order of operations interest, teaxes etc that were used in the calculation of the value. This can also be used to see what a value is used for.
 
 Add Tax bracket configuration.
+An Option to Lock Career Values, and lock entire careers in place. Prevent automatic or calculated changes
+
+Create a Living Situations Tab
+You should be able to define a mortgage or rental or any other living situation, allow for things like yearly price increases/decreases. Down payments etc. It should be formatted similar to the careers tab. I intend for this to replace the housing costs option.
+
+Add variables to make rapid changes quicker, ie you want to change an account apr across many careers all at once but you have 50 careers defined. you can use a variable to change that. Variables will be defined in options and will be global. Variables can be invoked by typing '=variable' in a text input. Variables should have type checking ie. you can enter a apr variable or a balance, or any other type and the inpt box can reject invalid variables. I would also like the box to suport math ie. you can type =4*12 and it will display 48 and do the calculation.
+
+An Option to configure display of what is is dispalyed in the career tab. You can configure all options that currently exist, however you can check a box for each option to display them as a visible parameter.
+
+Add CAtergory and pool limit
+
+I want the retirement tax rate to be decoupled from purchases and expenses. I would like to configure tax on purchases in 

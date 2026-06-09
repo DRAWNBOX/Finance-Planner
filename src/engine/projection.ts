@@ -1,16 +1,8 @@
-import { getHistoricalWindow } from '../data/historicalReturns';
-import {
-  ensureSourceLinesForPurchase,
-  ensureSourceLinesForWithdrawal,
-  normalizeLoanDownPaymentSource,
-  normalizeLoanPaymentSource,
-} from '../financeModel';
 import type {
   BankAccountDefinition,
   CareerEntry,
   CareerSourceLine,
   CashflowItem,
-  HistoricalYear,
   LifeEvent,
   PoolDefinition,
   ProjectionResult,
@@ -92,7 +84,7 @@ const getCashflowAmountForAge = (item: CashflowItem, age: number, inflationRate:
   }
 
   const yearsFromStart = Math.max(0, age - item.startAge);
-  const adjustedAmount = item.inflationAdjusted ? item.amount * Math.pow(1 + inflationRate, yearsFromStart) : item.amount;
+  const adjustedAmount = item.amount * Math.pow(1 + inflationRate, yearsFromStart);
 
   return item.direction === 'inflow' ? adjustedAmount : -adjustedAmount;
 };
@@ -111,34 +103,28 @@ const getLifeEventCashflowForAge = (event: LifeEvent, age: number, inflationRate
   }
 
   const yearsFromStart = Math.max(0, age - event.startAge);
-  const adjustedAmount = event.inflationAdjusted ? event.amount * Math.pow(1 + inflationRate, yearsFromStart) : event.amount;
+  const adjustedAmount = event.amount * Math.pow(1 + inflationRate, yearsFromStart);
 
   return event.direction === 'inflow' ? adjustedAmount : -adjustedAmount;
 };
 
-const getManualRates = (scenario: Scenario, age: number) => {
-  const equityRate =
-    age < scenario.profile.retirementAge
-      ? toRate(scenario.manualReturns.preRetirementEquityReturn)
-      : toRate(scenario.manualReturns.postRetirementEquityReturn);
-  const fixedRate = toRate(scenario.manualReturns.fixedIncomeReturn);
+const getManualRates = (scenario: Scenario, age: number, accounts: LedgerAccount[], pools: PoolDefinition[]) => {
+  let totalBalance = 0;
+  let weightedRate = 0;
+  pools.forEach((pool) => {
+    const poolBalance = getPoolAccounts(pool.id, accounts).reduce((sum, a) => sum + Math.max(0, a.balance), 0);
+    if (poolBalance > 0) {
+      const rate = age < scenario.profile.retirementAge
+        ? toRate(pool.preRetirementReturnRate)
+        : toRate(pool.postRetirementReturnRate);
+      weightedRate += poolBalance * rate;
+      totalBalance += poolBalance;
+    }
+  });
+  const annualReturnRate = totalBalance > 0 ? weightedRate / totalBalance : 0;
   const inflationRate = toRate(scenario.manualReturns.inflationRate);
-  const annualReturnRate =
-    equityRate * (scenario.portfolio.equityAllocation / 100) +
-    fixedRate * (scenario.portfolio.fixedIncomeAllocation / 100);
 
   return { annualReturnRate, inflationRate };
-};
-
-const getHistoricalRates = (entry: HistoricalYear, scenario: Scenario) => {
-  const annualReturnRate =
-    entry.equityReturn * (scenario.portfolio.equityAllocation / 100) +
-    entry.fixedIncomeReturn * (scenario.portfolio.fixedIncomeAllocation / 100);
-
-  return {
-    annualReturnRate,
-    inflationRate: entry.inflationRate
-  };
 };
 
 const getCareerContribution = (salary: number, careerSource: CareerEntry | undefined) => {
@@ -166,6 +152,14 @@ const parseYearMonthToSerial = (value: string) => {
   }
 
   return year * 12 + (month - 1);
+};
+
+const applyAccountDeposit = (accountId: string, amount: number, accounts: LedgerAccount[]) => {
+  if (amount <= 0) return;
+  const account = accounts.find((a) => a.id === accountId);
+  if (account) {
+    account.balance += amount;
+  }
 };
 
 interface LedgerAccount extends BankAccountDefinition {
@@ -219,14 +213,17 @@ const buildPoolBalances = (pools: PoolDefinition[], accounts: LedgerAccount[]) =
   return balances;
 };
 
-const applyMonthlyGrowth = (accounts: LedgerAccount[], pools: PoolDefinition[]) => {
+const applyMonthlyGrowth = (accounts: LedgerAccount[], pools: PoolDefinition[], age: number, retirementAge: number) => {
   accounts.forEach((account) => {
     if (account.virtual) {
       return;
     }
 
     const pool = pools.find((p) => p.id === account.poolId);
-    const monthlyRate = toRate(pool?.annualReturnRate ?? 0) / 12;
+    const rate = age < retirementAge
+      ? toRate(pool?.preRetirementReturnRate ?? 0)
+      : toRate(pool?.postRetirementReturnRate ?? 0);
+    const monthlyRate = rate / 12;
     account.balance = Math.max(0, account.balance * (1 + monthlyRate));
   });
 };
@@ -306,6 +303,8 @@ interface WithdrawalResult {
   netCash: number;
   grossOut: number;
   byLegacyPool: Record<string, number>;
+  taxesPaid: number;
+  penaltiesPaid: number;
 }
 
 const emptySavings = (): Record<string, number> => ({ emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 });
@@ -322,7 +321,9 @@ const applyNetTargetWithdrawal = (
   const result: WithdrawalResult = {
     netCash: 0,
     grossOut: 0,
-    byLegacyPool: emptySavings()
+    byLegacyPool: emptySavings(),
+    taxesPaid: 0,
+    penaltiesPaid: 0
   };
 
   const drawAccounts: LedgerAccount[] =
@@ -360,6 +361,13 @@ const applyNetTargetWithdrawal = (
     result.netCash += netTaken;
     result.grossOut += grossTaken;
     netRemaining -= netTaken;
+
+    const totalWithheld = grossTaken - netTaken;
+    const combinedRate = rule.taxRate + rule.penaltyRate;
+    if (combinedRate > 0 && totalWithheld > 0) {
+      result.taxesPaid += totalWithheld * (rule.taxRate / combinedRate);
+      result.penaltiesPaid += totalWithheld * (rule.penaltyRate / combinedRate);
+    }
 
     const poolId = account.poolId;
     if (poolId === 'emergencyFund' || poolId === 'hsa' || poolId === 'investments' || poolId === 'retirement401k') {
@@ -414,8 +422,6 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
   const retirementYears = Math.floor(clamp(scenario.profile.retirementYears, 1, 60));
   const endAge = retirementAge + retirementYears;
   const totalYears = Math.max(0, endAge - currentAge);
-  const historicalWindow =
-    scenario.returnMode === 'historical' ? getHistoricalWindow(totalYears, scenario.portfolio.fixedIncomeDuration) : [];
   const years: ProjectionYear[] = [];
   const firstPeriodMonths = getMonthsUntilNextBirthday(scenario.options.dateOfBirth);
   const projectionStartSerial = new Date().getFullYear() * 12 + new Date().getMonth();
@@ -449,6 +455,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
     contribution: 0,
     careerLabel: 'Now',
     withdrawal: 0,
+    taxesPaid: 0,
+    penaltiesPaid: 0,
     extraCashflow: 0,
     lifeEventCashflow: 0,
     annualReturnRate: 0,
@@ -470,6 +478,12 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
   const incomeUsageByMonth: Record<string, { availableIncome: number; items: { id: string; label: string; amount: number }[] }> = {};
   const loanBalances: Record<string, number> = Object.fromEntries((scenario.loans ?? []).map((loan) => [loan.id, Math.max(0, loan.currentBalance)]));
   const loanDownPaymentApplied: Record<string, boolean> = {};
+  const housingLoanBalances: Record<string, number> = {};
+  const housingDownPaymentApplied: Record<string, boolean> = {};
+  const housingPayoffMonths: Record<string, number | null> = {};
+  const housingTotalMonthlyCosts: Record<string, number> = {};
+  const housingFundingShortfalls: Record<string, number> = {};
+  const housingPMIDropMonth: Record<string, number | null> = {};
   let previousPlannedRetirementLines: Array<{ source: SourceLine; amount: number }> = [];
   let firstRetirementYearPlannedAccountWithdrawals = emptySavings();
   let previousRequiredRetirementMinimum = 0;
@@ -502,18 +516,27 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
     warn: string[],
     ageVal: number,
     retireAge: number
-  ): { status: 'covered' | 'fallback' | 'shortfall'; covered: number; fallbackDetails: { accountId: string; amount: number }[] } => {
+  ): { status: 'covered' | 'fallback' | 'shortfall'; covered: number; fallbackDetails: { accountId: string; amount: number }[]; taxesPaid: number; penaltiesPaid: number } => {
     let remaining = needed;
     const fallbackDetails: { accountId: string; amount: number }[] = [];
+    let taxesPaid = 0;
+    let penaltiesPaid = 0;
 
     if (availIncome.value >= remaining) {
       availIncome.value -= remaining;
-      return { status: 'covered', covered: needed, fallbackDetails };
+      return { status: 'covered', covered: needed, fallbackDetails, taxesPaid, penaltiesPaid };
     }
 
     remaining -= availIncome.value;
     availIncome.value = 0;
     let status: 'covered' | 'fallback' | 'shortfall' = 'fallback';
+
+    if (remaining > 0.001 && !fb1 && !fb2) {
+      const msg = `Spending exceeds available income for "${itemId}" but no income fallback accounts are configured.`;
+      if (!warn.includes(msg)) {
+        warn.push(msg);
+      }
+    }
 
     if (remaining > 0.001 && fb1) {
       const source: SourceLine = { id: `${itemId}-fb1`, enabled: true, sourceType: 'account', sourceId: fb1, mode: 'amount', amount: remaining };
@@ -521,6 +544,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
       if (outcome.netCash > 0.001) {
         fallbackDetails.push({ accountId: fb1, amount: outcome.netCash });
       }
+      taxesPaid += outcome.taxesPaid;
+      penaltiesPaid += outcome.penaltiesPaid;
       remaining -= outcome.netCash;
     }
 
@@ -530,6 +555,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
       if (outcome.netCash > 0.001) {
         fallbackDetails.push({ accountId: fb2, amount: outcome.netCash });
       }
+      taxesPaid += outcome.taxesPaid;
+      penaltiesPaid += outcome.penaltiesPaid;
       remaining -= outcome.netCash;
     }
 
@@ -537,7 +564,7 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
       status = 'shortfall';
     }
 
-    return { status, covered: needed - remaining, fallbackDetails };
+    return { status, covered: needed - remaining, fallbackDetails, taxesPaid, penaltiesPaid };
   };
 
   for (let offset = 0; offset < totalYears; offset += 1) {
@@ -547,9 +574,7 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
     const periodStartSerial = projectionStartSerial + monthsElapsed;
     const periodEndSerial = periodStartSerial + periodMonths;
     const periodFactor = periodMonths / 12;
-    const historicalEntry = historicalWindow[offset];
-    const rates =
-      scenario.returnMode === 'historical' && historicalEntry ? getHistoricalRates(historicalEntry, scenario) : getManualRates(scenario, age);
+    const rates = getManualRates(scenario, age, ledgerAccounts, pools);
     if (rates.annualReturnRate > 0.25) {
       warnings.push(`Age ${age}: annual return rate of ${(rates.annualReturnRate * 100).toFixed(1)}% exceeds 25%. Check your manual return settings or historical data.`);
     }
@@ -569,8 +594,20 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
 
     const careerContribution = age < retirementAge && !careerBreakActive ? getCareerContribution(salary, careerEntry ?? undefined) * periodFactor : 0;
     const careerSourceLines = (careerEntry?.sourceLines ?? []).filter((line) => line.enabled);
+    let yearTaxesPaid = 0;
+    let yearPenaltiesPaid = 0;
+    let purchaseCashflow = 0;
+
+    const monthlyTakeHome = careerEntry?.taxInfo
+      ? Math.max(0, (careerEntry.taxInfo.leftoverIncome / 12) - (careerEntry.taxInfo.otherExpenses ?? 0))
+      : 0;
+    const monthlyIncomePurchases = new Set<string>();
 
     for (let month = 0; month < periodMonths; month += 1) {
+      const currentMonthSerial = periodStartSerial + month;
+      const currentMonthKey = serialToYearMonth(currentMonthSerial);
+      const monthAvailableIncome = { value: monthlyTakeHome };
+
       applySourceContributions(careerSourceLines, salary / 12, ledgerAccounts, pools, 1);
 
       careerSourceLines.forEach((line) => {
@@ -586,19 +623,73 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           mode: 'amount',
           amount: line.monthlyWithdrawal
         };
-        applyNetTargetWithdrawal(withdrawalSource, line.monthlyWithdrawal, ledgerAccounts, pools, warnings, {
+        const mwOutcome = applyNetTargetWithdrawal(withdrawalSource, line.monthlyWithdrawal, ledgerAccounts, pools, warnings, {
           age,
           retirementAge
         });
+        yearTaxesPaid += mwOutcome.taxesPaid;
+        yearPenaltiesPaid += mwOutcome.penaltiesPaid;
       });
 
       applyCareerAccountCaps(ledgerAccounts, careerSourceLines, warnings);
-      applyMonthlyGrowth(ledgerAccounts, pools);
+      applyMonthlyGrowth(ledgerAccounts, pools, age, retirementAge);
+
+      // Process income-funded large purchases for this month
+      scenario.largePurchases
+        .filter((p) => p.enabled && (p.fundingSource ?? 'income') === 'income')
+        .forEach((purchase) => {
+          const purchaseSerial = parseYearMonthToSerial(purchase.yearMonth);
+          if (purchaseSerial === null || purchaseSerial !== currentMonthSerial) return;
+
+          const needed = Math.max(0, purchase.amount);
+          const incomeBefore = monthAvailableIncome.value;
+          const result = processIncomeWaterfall(
+            purchase.id, needed, monthAvailableIncome,
+            scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+            ledgerAccounts, pools, warnings, age, retirementAge
+          );
+          incomeFundedItemStatuses[purchase.id] = { status: result.status, shortfallAmount: needed - result.covered, fallbackDetails: result.fallbackDetails, firstFallbackYearMonth: result.status !== 'covered' ? currentMonthKey : undefined };
+          recordIncomeUsage(currentMonthKey, monthlyTakeHome, purchase.id, purchase.label, incomeBefore - monthAvailableIncome.value);
+          purchaseCashflow -= result.covered;
+          yearTaxesPaid += result.taxesPaid;
+          yearPenaltiesPaid += result.penaltiesPaid;
+          purchasePostPurchaseDisplayBalances[purchase.id] = toAccountBalancesById(ledgerAccounts);
+          monthlyIncomePurchases.add(purchase.id);
+          purchaseFirstAffordableAge[purchase.id] = age;
+        });
+
+      // Process income-funded long-term purchases for this month
+      (scenario.longTermPurchases ?? [])
+        .filter((p) => p.enabled && (p.fundingSource ?? 'income') === 'income')
+        .forEach((purchase) => {
+          const startSerial = parseYearMonthToSerial(purchase.startYearMonth);
+          if (startSerial === null) return;
+          const endExclusiveSerial =
+            purchase.endMode === 'endDate'
+              ? (() => {
+                  const parsedEndSerial = parseYearMonthToSerial(purchase.endYearMonth);
+                  return parsedEndSerial === null ? null : parsedEndSerial + 1;
+                })()
+              : startSerial + Math.max(1, Math.floor(purchase.durationMonths));
+          if (endExclusiveSerial === null || endExclusiveSerial <= startSerial) return;
+          if (currentMonthSerial < startSerial || currentMonthSerial >= endExclusiveSerial) return;
+
+          const needed = Math.max(0, purchase.monthlyAmount);
+          const incomeBefore = monthAvailableIncome.value;
+          const result = processIncomeWaterfall(
+            purchase.id, needed, monthAvailableIncome,
+            scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+            ledgerAccounts, pools, warnings, age, retirementAge
+          );
+          incomeFundedItemStatuses[purchase.id] = { status: result.status, shortfallAmount: needed - result.covered, fallbackDetails: result.fallbackDetails, firstFallbackYearMonth: result.status !== 'covered' ? currentMonthKey : undefined };
+          recordIncomeUsage(currentMonthKey, monthlyTakeHome, purchase.id, purchase.label, incomeBefore - monthAvailableIncome.value);
+          purchaseCashflow -= result.covered;
+          yearTaxesPaid += result.taxesPaid;
+          yearPenaltiesPaid += result.penaltiesPaid;
+          monthlyIncomePurchases.add(purchase.id);
+        });
     }
 
-    const monthlyTakeHome = careerEntry?.taxInfo?.leftoverIncome
-      ? careerEntry.taxInfo.leftoverIncome / 12
-      : 0;
     const availableIncome = { value: monthlyTakeHome * periodMonths };
 
     const poolBalancesAfterCareer = buildPoolBalances(pools, ledgerAccounts);
@@ -609,12 +700,12 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
         return;
       }
 
-      if (purchase.fundingSource === 'income') {
+      if ((purchase.fundingSource ?? 'income') === 'income') {
         purchaseFirstAffordableAge[purchase.id] = age;
         return;
       }
 
-      const sources = ensureSourceLinesForPurchase(purchase).filter((line) => line.enabled);
+      const sources = (purchase.sourceLines ?? []).filter((line) => line.enabled);
       const requested = sources.reduce((sum, line) => sum + Math.max(0, line.amount), 0);
       const available = sources.reduce((sum, line) => {
         if (line.sourceType === 'account') {
@@ -631,7 +722,215 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
     });
 
     const purchasesAtAge = scenario.largePurchases.filter((purchase) => purchase.enabled && purchase.age === age);
-    let purchaseCashflow = 0;
+
+    const activeHousing = (scenario.housing ?? []).filter((h) => h.enabled);
+    activeHousing.forEach((housing) => {
+      const startSerial = parseYearMonthToSerial(housing.startYearMonth);
+      if (startSerial === null) return;
+
+      const sellSerial = housing.sellYearMonth ? parseYearMonthToSerial(housing.sellYearMonth) : null;
+
+      const loanAmount = Math.max(0, housing.purchasePrice - housing.downPayment);
+      const totalTermMonths = Math.max(1, housing.loanTermYears * 12);
+      const monthlyRate = housing.annualInterestRate / 100 / 12;
+      const monthlyPI = loanAmount > 0 ? (monthlyRate > 0
+        ? loanAmount * (monthlyRate * Math.pow(1 + monthlyRate, totalTermMonths)) / (Math.pow(1 + monthlyRate, totalTermMonths) - 1)
+        : loanAmount / totalTermMonths) : 0;
+
+      if (!(housing.id in housingLoanBalances)) {
+        housingLoanBalances[housing.id] = loanAmount;
+      }
+      if (housingPayoffMonths[housing.id] === undefined) {
+        housingPayoffMonths[housing.id] = null;
+      }
+
+      const downPayment = Math.max(0, housing.downPayment);
+      const startsThisPeriod = startSerial >= periodStartSerial && startSerial < periodEndSerial;
+      if (!housingDownPaymentApplied[housing.id] && downPayment > 0 && startsThisPeriod) {
+        const dpSource = housing.downPaymentSource ?? housing.paymentSource ?? 'income';
+        if (dpSource !== 'income') {
+          const [kind, id] = dpSource.split(':', 2);
+          const downPaymentSrc: SourceLine = {
+            id: `${housing.id}-dp`,
+            enabled: true,
+            sourceType: kind === 'account' ? 'account' : 'pool',
+            sourceId: id,
+            mode: 'amount',
+            amount: downPayment
+          };
+          const outcome = applyNetTargetWithdrawal(downPaymentSrc, downPayment, ledgerAccounts, pools, warnings, { age, retirementAge });
+          housingFundingShortfalls[housing.id] = (housingFundingShortfalls[housing.id] ?? 0) + Math.max(0, downPayment - outcome.netCash);
+          purchaseCashflow -= outcome.netCash;
+          yearTaxesPaid += outcome.taxesPaid;
+          yearPenaltiesPaid += outcome.penaltiesPaid;
+        } else {
+          const incomeBefore = availableIncome.value;
+          const dpResult = processIncomeWaterfall(
+            `${housing.id}-dp`, downPayment, availableIncome,
+            scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+            ledgerAccounts, pools, warnings, age, retirementAge
+          );
+          purchaseCashflow -= dpResult.covered;
+          yearTaxesPaid += dpResult.taxesPaid;
+          yearPenaltiesPaid += dpResult.penaltiesPaid;
+          recordIncomeUsage(serialToYearMonth(startSerial), monthlyTakeHome, housing.id, housing.label, incomeBefore - availableIncome.value);
+          incomeFundedItemStatuses[housing.id] = {
+            status: dpResult.status,
+            shortfallAmount: downPayment - dpResult.covered,
+            fallbackDetails: dpResult.fallbackDetails,
+            firstFallbackYearMonth: dpResult.status !== 'covered' ? serialToYearMonth(startSerial) : undefined
+          };
+        }
+        housingDownPaymentApplied[housing.id] = true;
+      }
+
+      const activeStart = Math.max(periodStartSerial, startSerial);
+      const endSerial = sellSerial ?? (housing.endYearMonth ? parseYearMonthToSerial(housing.endYearMonth) : null);
+      const activeEnd = endSerial ? Math.min(periodEndSerial, endSerial + 1) : periodEndSerial;
+      const activeMonths = Math.max(0, activeEnd - activeStart);
+      if (activeMonths === 0) return;
+
+      let balanceLeft = housingLoanBalances[housing.id] ?? 0;
+      const paymentSource = housing.paymentSource ?? 'income';
+      const monthlyExtraCosts = housing.propertyTaxYearly / 12 + housing.homeInsuranceYearly / 12 + housing.hoaMonthly + housing.maintenanceMonthly;
+
+      let monthlyTotal = 0;
+      for (let month = 0; month < activeMonths; month += 1) {
+        const monthsSinceStart = activeStart + month - startSerial;
+        const homeValue = housing.purchasePrice > 0 ? housing.purchasePrice * Math.pow(1 + (housing.appreciationRate / 100) / 12, monthsSinceStart) : 0;
+
+        let pmi = 0;
+        if (housing.pmiMonthly > 0 && homeValue > 0 && balanceLeft > 0.01) {
+          const ltv = balanceLeft / homeValue;
+          if (ltv > 0.80) {
+            pmi = housing.pmiMonthly;
+          } else if (housingPMIDropMonth[housing.id] === null) {
+            housingPMIDropMonth[housing.id] = monthsSinceStart;
+          }
+        }
+
+        const monthExtraCosts = monthlyExtraCosts + pmi;
+
+        if (housing.housingType === 'mortgage' && balanceLeft > 0.01) {
+          const withInterest = Math.max(0, balanceLeft * (1 + monthlyRate));
+          const principalPayment = Math.min(monthlyPI + housing.extraMonthlyPayment, withInterest);
+          const totalTarget = principalPayment + monthExtraCosts;
+
+          if (paymentSource === 'income') {
+            const incomeBefore = availableIncome.value;
+            const payResult = processIncomeWaterfall(
+              housing.id, totalTarget, availableIncome,
+              scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+              ledgerAccounts, pools, warnings, age, retirementAge
+            );
+            purchaseCashflow -= payResult.covered;
+            yearTaxesPaid += payResult.taxesPaid;
+            yearPenaltiesPaid += payResult.penaltiesPaid;
+            const existingStatus = incomeFundedItemStatuses[housing.id];
+            if (!existingStatus || payResult.status === 'shortfall' || (payResult.status === 'fallback' && existingStatus.status !== 'shortfall')) {
+              const wasCovered = !existingStatus || existingStatus.status === 'covered';
+              incomeFundedItemStatuses[housing.id] = {
+                status: payResult.status,
+                shortfallAmount: totalTarget - payResult.covered,
+                fallbackDetails: payResult.fallbackDetails,
+                firstFallbackYearMonth: wasCovered && payResult.status !== 'covered'
+                  ? serialToYearMonth(activeStart + month)
+                  : existingStatus?.firstFallbackYearMonth
+              };
+            }
+            recordIncomeUsage(serialToYearMonth(activeStart + month), monthlyTakeHome, housing.id, housing.label, incomeBefore - availableIncome.value);
+            monthlyTotal = totalTarget;
+          } else {
+            const [kind, id] = paymentSource.split(':', 2);
+            const withdrawalSrc: SourceLine = {
+              id: `${housing.id}-${month}`,
+              enabled: true,
+              sourceType: kind === 'account' ? 'account' : 'pool',
+              sourceId: id,
+              mode: 'amount',
+              amount: totalTarget
+            };
+            const outcome = applyNetTargetWithdrawal(withdrawalSrc, totalTarget, ledgerAccounts, pools, warnings, { age, retirementAge });
+            const paid = Math.min(totalTarget, outcome.netCash);
+            housingFundingShortfalls[housing.id] = (housingFundingShortfalls[housing.id] ?? 0) + Math.max(0, totalTarget - paid);
+            purchaseCashflow -= paid;
+            yearTaxesPaid += outcome.taxesPaid;
+            yearPenaltiesPaid += outcome.penaltiesPaid;
+            monthlyTotal = totalTarget;
+          }
+
+          balanceLeft = Math.max(0, withInterest - principalPayment);
+        } else if (housing.housingType === 'rental') {
+          const rentTarget = housing.monthlyRent + monthExtraCosts;
+          if (rentTarget > 0) {
+            if (paymentSource === 'income') {
+              const incomeBefore = availableIncome.value;
+              const rentResult = processIncomeWaterfall(
+                housing.id, rentTarget, availableIncome,
+                scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
+                ledgerAccounts, pools, warnings, age, retirementAge
+              );
+              purchaseCashflow -= rentResult.covered;
+              yearTaxesPaid += rentResult.taxesPaid;
+              yearPenaltiesPaid += rentResult.penaltiesPaid;
+              const existingStatus = incomeFundedItemStatuses[housing.id];
+              if (!existingStatus || rentResult.status === 'shortfall' || (rentResult.status === 'fallback' && existingStatus.status !== 'shortfall')) {
+                const wasCovered = !existingStatus || existingStatus.status === 'covered';
+                incomeFundedItemStatuses[housing.id] = {
+                  status: rentResult.status,
+                  shortfallAmount: rentTarget - rentResult.covered,
+                  fallbackDetails: rentResult.fallbackDetails,
+                  firstFallbackYearMonth: wasCovered && rentResult.status !== 'covered'
+                    ? serialToYearMonth(activeStart + month)
+                    : existingStatus?.firstFallbackYearMonth
+                };
+              }
+              recordIncomeUsage(serialToYearMonth(activeStart + month), monthlyTakeHome, housing.id, housing.label, incomeBefore - availableIncome.value);
+              monthlyTotal = rentTarget;
+            } else {
+              const [kind, id] = paymentSource.split(':', 2);
+              const rentSrc: SourceLine = {
+                id: `${housing.id}-rent-${month}`,
+                enabled: true,
+                sourceType: kind === 'account' ? 'account' : 'pool',
+                sourceId: id,
+                mode: 'amount',
+                amount: rentTarget
+              };
+              const outcome = applyNetTargetWithdrawal(rentSrc, rentTarget, ledgerAccounts, pools, warnings, { age, retirementAge });
+              const paid = Math.min(rentTarget, outcome.netCash);
+              housingFundingShortfalls[housing.id] = (housingFundingShortfalls[housing.id] ?? 0) + Math.max(0, rentTarget - paid);
+              purchaseCashflow -= paid;
+              yearTaxesPaid += outcome.taxesPaid;
+              yearPenaltiesPaid += outcome.penaltiesPaid;
+              monthlyTotal = rentTarget;
+            }
+          }
+        }
+
+        if (housing.rentalIncomeMonthly > 0 && housing.rentalIncomeAccountId) {
+          applyAccountDeposit(housing.rentalIncomeAccountId, housing.rentalIncomeMonthly, ledgerAccounts);
+        }
+
+        if (housingPayoffMonths[housing.id] === null && housing.housingType === 'mortgage' && balanceLeft <= 0.01) {
+          housingPayoffMonths[housing.id] = monthsSinceStart + 1;
+        }
+
+        if (sellSerial !== null && activeStart + month === sellSerial) {
+          const yearsHeld = monthsSinceStart / 12;
+          const salePrice = housing.purchasePrice * Math.pow(1 + housing.appreciationRate / 100, yearsHeld);
+          const sellingCosts = salePrice * (housing.sellingCostsRate / 100);
+          const netProceeds = Math.max(0, salePrice - sellingCosts - balanceLeft);
+          if (housing.saleProceedsAccountId && netProceeds > 0) {
+            applyAccountDeposit(housing.saleProceedsAccountId, netProceeds, ledgerAccounts);
+          }
+          balanceLeft = 0;
+        }
+      }
+
+      housingLoanBalances[housing.id] = balanceLeft;
+      housingTotalMonthlyCosts[housing.id] = monthlyTotal;
+    });
 
     const activeLoans = (scenario.loans ?? []).filter((loan) => loan.enabled);
     activeLoans.forEach((loan) => {
@@ -641,8 +940,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
       }
 
       const downPayment = Math.max(0, loan.downPayment ?? 0);
-      const paymentSource = normalizeLoanPaymentSource(loan) ?? 'income';
-      const downPaymentSrc = normalizeLoanDownPaymentSource(loan) ?? paymentSource;
+      const paymentSource = loan.paymentSource ?? 'income';
+      const downPaymentSrc = loan.downPaymentSource ?? paymentSource;
       const startsThisPeriod = startSerial >= periodStartSerial && startSerial < periodEndSerial;
       if (!loanDownPaymentApplied[loan.id] && downPayment > 0 && startsThisPeriod) {
         if (downPaymentSrc !== 'income') {
@@ -665,6 +964,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           );
           loanFundingShortfalls[loan.id] = (loanFundingShortfalls[loan.id] ?? 0) + Math.max(0, downPayment - outcome.netCash);
           purchaseCashflow -= outcome.netCash;
+          yearTaxesPaid += outcome.taxesPaid;
+          yearPenaltiesPaid += outcome.penaltiesPaid;
         } else {
           const incomeBefore = availableIncome.value;
           const dpResult = processIncomeWaterfall(
@@ -676,6 +977,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
             incomeFundedItemStatuses[loan.id] = { status: dpResult.status, shortfallAmount: downPayment - dpResult.covered, fallbackDetails: dpResult.fallbackDetails, firstFallbackYearMonth: serialToYearMonth(startSerial) };
           }
           purchaseCashflow -= dpResult.covered;
+          yearTaxesPaid += dpResult.taxesPaid;
+          yearPenaltiesPaid += dpResult.penaltiesPaid;
           recordIncomeUsage(serialToYearMonth(startSerial), monthlyTakeHome, loan.id, loan.label, incomeBefore - availableIncome.value);
         }
 
@@ -729,6 +1032,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           balanceLeft = Math.max(0, withInterest - paymentTarget);
           totalPaid += paymentTarget;
           purchaseCashflow -= loanResult.covered;
+          yearTaxesPaid += loanResult.taxesPaid;
+          yearPenaltiesPaid += loanResult.penaltiesPaid;
           recordIncomeUsage(serialToYearMonth(activeStart + month), monthlyTakeHome, loan.id, loan.label, incomeBefore - availableIncome.value);
           continue;
         }
@@ -752,6 +1057,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
         );
         const paymentMade = Math.min(withInterest, outcome.netCash);
         loanFundingShortfalls[loan.id] = (loanFundingShortfalls[loan.id] ?? 0) + Math.max(0, paymentTarget - paymentMade);
+        yearTaxesPaid += outcome.taxesPaid;
+        yearPenaltiesPaid += outcome.penaltiesPaid;
         balanceLeft = Math.max(0, withInterest - paymentMade);
         totalPaid += paymentMade;
         purchaseCashflow -= paymentMade;
@@ -761,7 +1068,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
     });
 
     purchasesAtAge.forEach((purchase) => {
-      if (purchase.fundingSource === 'income') {
+      if (monthlyIncomePurchases.has(purchase.id)) return;
+      if ((purchase.fundingSource ?? 'income') === 'income') {
         const needed = Math.max(0, purchase.amount);
         const incomeBefore = availableIncome.value;
         const result = processIncomeWaterfall(
@@ -769,15 +1077,17 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
           ledgerAccounts, pools, warnings, age, retirementAge
         );
-        incomeFundedItemStatuses[purchase.id] = { status: result.status, shortfallAmount: needed - result.covered, fallbackDetails: result.fallbackDetails, firstFallbackYearMonth: result.status !== 'covered' ? serialToYearMonth(periodStartSerial) : undefined };
-        recordIncomeUsage(serialToYearMonth(periodStartSerial), monthlyTakeHome, purchase.id, purchase.label, incomeBefore - availableIncome.value);
+        incomeFundedItemStatuses[purchase.id] = { status: result.status, shortfallAmount: needed - result.covered, fallbackDetails: result.fallbackDetails, firstFallbackYearMonth: result.status !== 'covered' ? (purchase.yearMonth || serialToYearMonth(periodStartSerial)) : undefined };
+        recordIncomeUsage(purchase.yearMonth || serialToYearMonth(periodStartSerial), monthlyTakeHome, purchase.id, purchase.label, incomeBefore - availableIncome.value);
         purchaseCashflow -= result.covered;
+        yearTaxesPaid += result.taxesPaid;
+        yearPenaltiesPaid += result.penaltiesPaid;
         purchasePostPurchaseDisplayBalances[purchase.id] = toAccountBalancesById(ledgerAccounts);
         return;
       }
 
       const beforeAccountBalances = toAccountBalancesById(ledgerAccounts);
-      const requestedSources = ensureSourceLinesForPurchase(purchase).filter((line) => line.enabled);
+      const requestedSources = (purchase.sourceLines ?? []).filter((line) => line.enabled);
       let remainingNet = Math.max(0, purchase.amount);
       let actualNet = 0;
       let availableNet = 0;
@@ -790,11 +1100,13 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           Math.min(remainingNet, target),
           ledgerAccounts,
           pools,
-                    warnings,
+          warnings,
           { age, retirementAge }
         );
         actualNet += outcome.netCash;
         remainingNet -= outcome.netCash;
+        yearTaxesPaid += outcome.taxesPaid;
+        yearPenaltiesPaid += outcome.penaltiesPaid;
       });
 
       if (remainingNet > 0) {
@@ -809,6 +1121,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           });
           actualNet += outcome.netCash;
           remainingNet -= outcome.netCash;
+          yearTaxesPaid += outcome.taxesPaid;
+          yearPenaltiesPaid += outcome.penaltiesPaid;
         });
       }
 
@@ -826,7 +1140,7 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
       purchaseCashflow -= actualNet;
     });
 
-    const activeLongTermPurchases = scenario.longTermPurchases.filter((purchase) => purchase.enabled);
+    const activeLongTermPurchases = scenario.longTermPurchases.filter((purchase) => purchase.enabled && !monthlyIncomePurchases.has(purchase.id));
     activeLongTermPurchases.forEach((purchase) => {
       const startSerial = parseYearMonthToSerial(purchase.startYearMonth);
       if (startSerial === null) {
@@ -854,20 +1168,22 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
 
       const targetAmount = Math.max(0, purchase.monthlyAmount) * activeMonths;
 
-      if (purchase.fundingSource === 'income') {
+      if ((purchase.fundingSource ?? 'income') === 'income') {
         const incomeBefore = availableIncome.value;
         const result = processIncomeWaterfall(
           purchase.id, targetAmount, availableIncome,
           scenario.incomeFallbackAccountId, scenario.incomeFallbackAccountId2,
           ledgerAccounts, pools, warnings, age, retirementAge
         );
-        incomeFundedItemStatuses[purchase.id] = { status: result.status, shortfallAmount: targetAmount - result.covered, fallbackDetails: result.fallbackDetails, firstFallbackYearMonth: result.status !== 'covered' ? serialToYearMonth(periodStartSerial) : undefined };
+        incomeFundedItemStatuses[purchase.id] = { status: result.status, shortfallAmount: targetAmount - result.covered, fallbackDetails: result.fallbackDetails, firstFallbackYearMonth: result.status !== 'covered' ? (purchase.startYearMonth || serialToYearMonth(periodStartSerial)) : undefined };
         purchaseCashflow -= result.covered;
-        recordIncomeUsage(serialToYearMonth(periodStartSerial), monthlyTakeHome, purchase.id, purchase.label, incomeBefore - availableIncome.value);
+        yearTaxesPaid += result.taxesPaid;
+        yearPenaltiesPaid += result.penaltiesPaid;
+        recordIncomeUsage(purchase.startYearMonth || serialToYearMonth(periodStartSerial), monthlyTakeHome, purchase.id, purchase.label, incomeBefore - availableIncome.value);
         return;
       }
 
-      const sourceLines = ensureSourceLinesForPurchase(purchase).filter((line) => line.enabled);
+      const sourceLines = (purchase.sourceLines ?? []).filter((line) => line.enabled);
       let remaining = targetAmount;
       let actualNet = 0;
 
@@ -887,6 +1203,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
         );
         actualNet += outcome.netCash;
         remaining -= outcome.netCash;
+        yearTaxesPaid += outcome.taxesPaid;
+        yearPenaltiesPaid += outcome.penaltiesPaid;
       });
 
       if (remaining > 0) {
@@ -901,6 +1219,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           });
           actualNet += outcome.netCash;
           remaining -= outcome.netCash;
+          yearTaxesPaid += outcome.taxesPaid;
+          yearPenaltiesPaid += outcome.penaltiesPaid;
         });
       }
 
@@ -939,7 +1259,7 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
         requiredMinimumWithdrawalForPeriod = baseMinimumYearlyWithdrawal * periodFactor;
       } else {
         requiredMinimumWithdrawalForPeriod =
-          inflationEnabled && scenario.withdrawal.inflationAdjusted
+          inflationEnabled
             ? previousRequiredRetirementMinimum * Math.pow(1 + effectiveInflationRate, periodFactor)
             : previousRequiredRetirementMinimum;
       }
@@ -949,12 +1269,12 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
         requiredMaximumWithdrawalForPeriod = baseMaximumYearlyWithdrawal * periodFactor;
       } else {
         requiredMaximumWithdrawalForPeriod =
-          inflationEnabled && scenario.withdrawal.inflationAdjusted
+          inflationEnabled
             ? previousRequiredRetirementMaximum * Math.pow(1 + effectiveInflationRate, periodFactor)
             : previousRequiredRetirementMaximum;
       }
 
-      const retirementSourceLines = ensureSourceLinesForWithdrawal(scenario.withdrawal).filter((line) => line.enabled);
+      const retirementSourceLines = (scenario.withdrawal.sourceLines ?? []).filter((line) => line.enabled);
       const uncappedPlannedLines =
         previousPlannedRetirementLines.length > 0
           ? previousPlannedRetirementLines.map((line) => ({
@@ -966,7 +1286,7 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
                     candidate.sourceType === line.source.sourceType && candidate.sourceId === line.source.sourceId
                 )?.startAge,
               amount:
-                scenario.withdrawal.inflationAdjusted
+                inflationEnabled
                   ? line.amount * Math.pow(1 + effectiveInflationRate, periodFactor)
                   : line.amount
             }))
@@ -1002,6 +1322,38 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           { age, retirementAge }
         );
         withdrawal += outcome.netCash;
+        yearTaxesPaid += outcome.taxesPaid;
+        yearPenaltiesPaid += outcome.penaltiesPaid;
+
+        let remaining = planned.amount - outcome.netCash;
+        if (remaining > 0.001 && planned.source.sourceType === 'pool') {
+          const exhaustedPoolId = planned.source.sourceId;
+          const orderedPools = [...pools].sort((a, b) => a.priority - b.priority);
+          for (const fbPool of orderedPools) {
+            if (fbPool.id === exhaustedPoolId) continue;
+            const fbSource: SourceLine = {
+              id: `${planned.source.id}-fb-${fbPool.id}`,
+              enabled: true,
+              sourceType: 'pool',
+              sourceId: fbPool.id,
+              mode: 'amount',
+              amount: remaining
+            };
+            const fbOutcome = applyNetTargetWithdrawal(fbSource, remaining, ledgerAccounts, pools, warnings, { age, retirementAge });
+            withdrawal += fbOutcome.netCash;
+            yearTaxesPaid += fbOutcome.taxesPaid;
+            yearPenaltiesPaid += fbOutcome.penaltiesPaid;
+            firstYearByLegacy = {
+              emergencyFund: firstYearByLegacy.emergencyFund + fbOutcome.byLegacyPool.emergencyFund,
+              hsa: firstYearByLegacy.hsa + fbOutcome.byLegacyPool.hsa,
+              investments: firstYearByLegacy.investments + fbOutcome.byLegacyPool.investments,
+              retirement401k: firstYearByLegacy.retirement401k + fbOutcome.byLegacyPool.retirement401k
+            };
+            remaining -= fbOutcome.netCash;
+            if (remaining <= 0.001) break;
+          }
+        }
+
         firstYearByLegacy = {
           emergencyFund: firstYearByLegacy.emergencyFund + outcome.byLegacyPool.emergencyFund,
           hsa: firstYearByLegacy.hsa + outcome.byLegacyPool.hsa,
@@ -1047,7 +1399,7 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
 
     years.push({
       age: displayAge,
-      calendarYear: historicalEntry?.year ?? new Date().getFullYear() + offset,
+      calendarYear: new Date().getFullYear() + offset,
       isBaselineNow: false,
       periodMonths,
       startBalance: previousLedgerSum,
@@ -1056,6 +1408,8 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
       contribution: totalContribution,
       careerLabel: jobChange?.label ?? careerEntry?.label ?? 'No Career',
       withdrawal,
+      taxesPaid: yearTaxesPaid,
+      penaltiesPaid: yearPenaltiesPaid,
       extraCashflow,
       lifeEventCashflow,
       annualReturnRate: rates.annualReturnRate,
@@ -1107,10 +1461,9 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
     warnings,
     incomeFundedItemStatuses,
     incomeUsageByMonth,
-    historicalWindowLabel:
-      scenario.returnMode === 'historical' && historicalWindow.length > 0
-        ? `${historicalWindow[0].year}-${historicalWindow[historicalWindow.length - 1].year}`
-        : undefined
+    housingPayoffMonths,
+    housingTotalMonthlyCosts,
+    housingFundingShortfalls
   };
 };
 

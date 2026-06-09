@@ -438,7 +438,8 @@ describe('App', () => {
     expect(accountCellText).toMatch(/^-?\$[0-9,]+$/);
 
     fireEvent.change(fundingSource, { target: { value: 'income' } });
-    expect(within(row).getAllByRole('cell')[6]).toHaveTextContent('Shortfall');
+    const incomeCellText = within(row).getAllByRole('cell')[6].textContent ?? '';
+    expect(incomeCellText).toMatch(/^\$/);
   });
 
   it('supports long-term monthly purchases with start date and duration/end-date scheduling', () => {
@@ -628,7 +629,8 @@ describe('App', () => {
     });
 
     fireEvent.change(fundingSource, { target: { value: 'income' } });
-    expect(within(purchaseRow).getAllByRole('cell')[6]).toHaveTextContent('Shortfall');
+    const incomeCellText2 = within(purchaseRow).getAllByRole('cell')[6].textContent ?? '';
+    expect(incomeCellText2).toMatch(/^\$/);
   });
 
   it('maps saved future retirement tab state into Careers', () => {

@@ -5,9 +5,9 @@
 Finance Planner/
   AGENTS.md
   CODEMAP.md
+  gitchanges.md
   README.md
   todo.txt
-  todoexpenses.txt
   docs/
     ARCHITECTURE.md
     CALC_ENGINE.md
@@ -69,8 +69,8 @@ flowchart LR
 
 ## Component Roles
 - `src/App.tsx`: Composition root, tab routing, state updates, source-line editing.
-- `src/storage.ts`: Persistence and migration normalizers.
-- `src/financeModel.ts`: Pool/account/source-line conversions and compatibility helpers.
+- `src/storage.ts`: Persistence and normalization.
+- `src/financeModel.ts`: Small helpers (~35 lines, `normalizePurchaseFundingSource` + `getDefaultBankAccountIdForPool`).
 - `src/engine/projection.ts`: Deterministic projection simulation (careers, retirement, purchases, loans).
 - `src/components/CareerPlanEditor.tsx`: Career timeline and per-account contribution/withdrawal editing.
 - `src/components/ExpensesPlanner.tsx`: Expense planning/tracking workspace and import audit UI.
@@ -83,6 +83,7 @@ flowchart LR
 ## Fast Path
 - Projection logic: `src/engine/projection.ts`
 - Scenario model/schema: `src/types.ts`, `src/defaultScenario.ts`, `src/storage.ts`
-- Pool/account behavior: `src/financeModel.ts`, `src/App.tsx`
+- Pool/account behavior: `src/App.tsx`
 - Purchases/loans UI behavior: `src/App.tsx`
 - Expenses behavior: `src/components/ExpensesPlanner.tsx`, `src/importers/expenseImport.ts`
+- Session changelog: `gitchanges.md`

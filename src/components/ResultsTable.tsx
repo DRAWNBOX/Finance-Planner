@@ -20,7 +20,8 @@ export const ResultsTable = ({ years, accountColumns }: ResultsTableProps) => (
             <th key={`results-account-header-${account.id}`}>{account.label}</th>
           ))}
           <th>Withdrawal</th>
-          <th>Extra Cashflow</th>
+          <th>Taxes</th>
+          <th>Penalties</th>
           <th>Return %</th>
           <th>End</th>
         </tr>
@@ -38,8 +39,9 @@ export const ResultsTable = ({ years, accountColumns }: ResultsTableProps) => (
                 {formatCurrency(Math.max(0, year.accountBalancesById[account.id] ?? 0))}
               </td>
             ))}
-            <td>{formatCurrency(year.withdrawal)}</td>
-            <td>{formatCurrency(year.extraCashflow)}</td>
+            <td>{formatCurrency(year.withdrawal + year.extraCashflow)}</td>
+            <td>{formatCurrency(year.taxesPaid)}</td>
+            <td>{formatCurrency(year.penaltiesPaid)}</td>
             <td>{formatPercent(year.annualReturnRate)}</td>
             <td>{formatCurrency(year.endBalance)}</td>
           </tr>

@@ -8,8 +8,8 @@ This repository supports AI-assisted development. Use this as a fast, practical 
 2. Read runtime entry points:
    - `src/App.tsx` (composition root + tab orchestration)
    - `src/engine/projection.ts` (core deterministic simulation)
-   - `src/financeModel.ts` (pool/account/source-line compatibility helpers)
-   - `src/storage.ts` (localStorage load/save + migrations/normalizers)
+   - `src/financeModel.ts` (small helper set: ~35 lines, `normalizePurchaseFundingSource` + `getDefaultBankAccountIdForPool`)
+   - `src/storage.ts` (localStorage load/save + normalizers)
 3. Confirm current schema defaults and normalization:
    - `src/types.ts`
    - `src/defaultScenario.ts`
@@ -41,9 +41,10 @@ This repository supports AI-assisted development. Use this as a fast, practical 
 ## Core Invariants
 
 - Keep projection/account math deterministic and side-effect free.
-- Runtime source of truth for account-led math is `accountBalancesById` (not legacy pool-only fields).
-- Preserve backward compatibility by normalizing saved state in `storage.ts`.
-- Treat migrations as pure transforms; avoid implicit behavior tied to render timing.
+- Runtime source of truth for account-led math is `accountBalancesById`.
+- `TaxInfo` on `CareerEntry` drives `monthlyTakeHome` for income-funded purchases/loans:
+  `monthlyTakeHome = max(0, leftoverIncome / 12 - otherExpenses)`
+- `financeModel.ts` contains only active business logic (no migration helpers). All migration code has been removed — this version breaks backward compatibility with pre-2026-05 saved data.
 
 ## Schema Change Playbook
 
@@ -51,7 +52,7 @@ For any persisted field addition or shape change:
 
 1. Add/adjust types in `src/types.ts`.
 2. Add defaults in `src/defaultScenario.ts`.
-3. Add load-time normalization/migration in `src/storage.ts`.
+3. Add load-time normalization in `src/storage.ts`.
 4. Ensure runtime usage in `src/App.tsx` and/or `src/engine/projection.ts`.
 5. Add or update tests for both engine and UI flow when behavior changes.
 
@@ -61,7 +62,7 @@ For any persisted field addition or shape change:
 - Monthly vs yearly contribution/withdrawal conversion.
 - Career timeline/source-line normalization and graph source switching.
 - Loan and purchase funding shortfall math.
-- Local storage migration paths (legacy tabs/legacy fields/new dynamic accounts).
+- Income waterfall (`processIncomeWaterfall`) — loan payments consume availableIncome before purchases.
 
 ## Test Focus Map
 
@@ -75,6 +76,7 @@ When changing account math, funding, careers, or retirement logic, run at least 
 
 - `docs/` is the primary onboarding source, but verify file references against `src/components` before editing.
 - Some docs may reference older component names; treat runtime files as source of truth.
+- `gitchanges.md` at the project root tracks all session changes chronologically.
 
 ## Change Checklist
 

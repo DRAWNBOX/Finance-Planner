@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { seedDefaultBankAccounts } from '../financeModel';
+import type { BankAccountDefinition } from '../types';
+
+const seedDefaultBankAccounts = (balances: { emergencyFund: number; hsa: number; investments: number; retirement401k: number }): BankAccountDefinition[] => [
+  { id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: Math.max(0, balances.emergencyFund) },
+  { id: 'hsa-account-default', label: 'HSA', poolId: 'hsa', priority: 0, accountType: 'hsa', balance: Math.max(0, balances.hsa) },
+  { id: 'investments-account-default', label: 'Investments', poolId: 'investments', priority: 0, accountType: 'taxable', balance: Math.max(0, balances.investments) },
+  { id: 'retirement401k-account-default', label: '401K', poolId: 'retirement401k', priority: 0, accountType: 'retirement401k', balance: Math.max(0, balances.retirement401k) }
+];
 import { defaultScenario } from '../defaultScenario';
 import { projectScenario } from './projection';
 
@@ -33,11 +40,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 1000,
@@ -58,8 +61,7 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 0,
-        inflationAdjusted: false
-      }
+        }
     };
 
     const result = projectScenario(scenario);
@@ -85,11 +87,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -110,8 +108,7 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 0,
-        inflationAdjusted: false
-      }
+        }
     };
 
     const result = projectScenario(scenario);
@@ -137,14 +134,6 @@ describe('projectScenario', () => {
         yearlyContribution: 0,
         yearlyIncreaseRate: 0
       },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -159,7 +148,7 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 100000
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
@@ -203,14 +192,6 @@ describe('projectScenario', () => {
         yearlyContribution: 0,
         yearlyIncreaseRate: 0
       },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -243,8 +224,7 @@ describe('projectScenario', () => {
             startAge: 67
           }
         ],
-        inflationAdjusted: false
-      }
+        }
     };
 
     const result = projectScenario(scenario);
@@ -272,7 +252,6 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 10000,
-        inflationAdjusted: true,
         sourceLines: [
           {
             id: 'withdrawal-source-1',
@@ -284,14 +263,6 @@ describe('projectScenario', () => {
             syncWithRetirementAge: true
           }
         ]
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
       },
       netWorth: {
         accountBalances: {
@@ -339,14 +310,6 @@ describe('projectScenario', () => {
       contribution: {
         yearlyContribution: 0,
         yearlyIncreaseRate: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
       },
       netWorth: {
         accountBalances: {
@@ -406,7 +369,6 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         mode: 'specified' as const,
         firstYearAmount: 10000,
-        inflationAdjusted: true,
         sourceLines: [
           {
             id: 'withdrawal-source-1',
@@ -418,14 +380,6 @@ describe('projectScenario', () => {
             syncWithRetirementAge: true
           }
         ]
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
       },
       netWorth: {
         accountBalances: {
@@ -471,14 +425,6 @@ describe('projectScenario', () => {
         retirementAge: 65,
         retirementYears: 1
       },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -501,8 +447,7 @@ describe('projectScenario', () => {
         minimumYearlyWithdrawal: 0,
         maximumYearlyWithdrawal: 8000,
         firstYearAmount: 15000,
-        inflationAdjusted: false
-      }
+        }
     };
 
     const result = projectScenario(scenario);
@@ -538,8 +483,7 @@ describe('projectScenario', () => {
           amount: 10000,
           startAge: 50,
           endAge: 51,
-          inflationAdjusted: true
-        }
+          }
       ],
       lifeEvents: [
         {
@@ -554,8 +498,7 @@ describe('projectScenario', () => {
           endAge: 51,
           newSalary: 0,
           annualSalaryGrowthOverride: 0,
-          inflationAdjusted: true
-        }
+          }
       ],
       manualReturns: {
         ...defaultScenario.manualReturns,
@@ -600,8 +543,7 @@ describe('projectScenario', () => {
           amount: 10000,
           startAge: 41,
           endAge: 42,
-          inflationAdjusted: true
-        }
+          }
       ],
       manualReturns: {
         ...defaultScenario.manualReturns,
@@ -637,8 +579,7 @@ describe('projectScenario', () => {
           amount: 50000,
           startAge: 50,
           endAge: 50,
-          inflationAdjusted: false
-        },
+          },
         {
           id: 'tuition',
           category: 'college_child_1' as const,
@@ -649,8 +590,7 @@ describe('projectScenario', () => {
           amount: 10000,
           startAge: 48,
           endAge: 49,
-          inflationAdjusted: false
-        }
+          }
       ]
     };
 
@@ -826,8 +766,7 @@ describe('projectScenario', () => {
           amount: 0,
           newSalary: 150000,
           annualSalaryGrowthOverride: 0,
-          inflationAdjusted: false
-        },
+          },
         {
           id: 'break',
           type: 'career_break' as const,
@@ -840,8 +779,7 @@ describe('projectScenario', () => {
           amount: 0,
           newSalary: 0,
           annualSalaryGrowthOverride: 0,
-          inflationAdjusted: false
-        },
+          },
         {
           id: 'house-purchase',
           type: 'house_purchase' as const,
@@ -854,8 +792,7 @@ describe('projectScenario', () => {
           amount: 30000,
           newSalary: 0,
           annualSalaryGrowthOverride: 0,
-          inflationAdjusted: false
-        }
+          }
       ]
     };
 
@@ -867,16 +804,6 @@ describe('projectScenario', () => {
     expect(age42.extraCashflow).toBe(-30000);
     expect(age43.salary).toBe(150000);
     expect(age44.salary).toBe(0);
-  });
-
-  it('runs deterministic historical mode using the bundled local series', () => {
-    const result = projectScenario({
-      ...defaultScenario,
-      returnMode: 'historical'
-    });
-
-    expect(result.historicalWindowLabel).toMatch(/^\d{4}-\d{4}$/);
-    expect(result.years[0].annualReturnRate).not.toBe(defaultScenario.manualReturns.preRetirementEquityReturn / 100);
   });
 
   it('marks the projection as depleted when withdrawals are unsustainable', () => {
@@ -901,8 +828,7 @@ describe('projectScenario', () => {
         minimumYearlyWithdrawal: 0,
         maximumYearlyWithdrawal: 1000000,
         useRetirementAgeAsWithdrawalStartAge: true,
-        inflationAdjusted: false
-      }
+        }
     });
 
     expect(result.survivesToEnd).toBe(false);
@@ -947,8 +873,7 @@ describe('projectScenario', () => {
         minimumYearlyWithdrawal: 0,
         maximumYearlyWithdrawal: 1000000,
         useRetirementAgeAsWithdrawalStartAge: true,
-        inflationAdjusted: false
-      }
+        }
     });
 
     expect(result.survivesToEnd).toBe(true);
@@ -973,11 +898,7 @@ describe('projectScenario', () => {
       },
       manualReturns: {
         ...defaultScenario.manualReturns,
-        inflationEnabled: false,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
+        inflationEnabled: false,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 150000,
@@ -998,8 +919,7 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         firstYearAmount: 0,
         minimumYearlyWithdrawal: 10000,
-        inflationAdjusted: false
-      }
+        }
     });
 
     expect(result.survivesToEnd).toBe(false);
@@ -1024,11 +944,7 @@ describe('projectScenario', () => {
       },
       manualReturns: {
         ...defaultScenario.manualReturns,
-        inflationEnabled: false,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
+        inflationEnabled: false,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 200000,
@@ -1049,7 +965,6 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         firstYearAmount: 10000,
         minimumYearlyWithdrawal: 10000,
-        inflationAdjusted: false,
         sourceLines: [
           {
             id: 'withdrawal-source-1',
@@ -1091,11 +1006,7 @@ describe('projectScenario', () => {
       manualReturns: {
         ...defaultScenario.manualReturns,
         inflationEnabled: true,
-        inflationRate: 3,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
+        inflationRate: 3,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -1110,13 +1021,12 @@ describe('projectScenario', () => {
           investments: 100000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
         firstYearAmount: 20000,
         minimumYearlyWithdrawal: 10000,
-        inflationAdjusted: true,
         sourceLines: [
           {
             id: 'withdrawal-source-1',
@@ -1163,19 +1073,7 @@ describe('projectScenario', () => {
       },
       manualReturns: {
         ...defaultScenario.manualReturns,
-        inflationEnabled: false,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
+        inflationEnabled: false,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -1200,7 +1098,6 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         firstYearAmount: 0,
         minimumYearlyWithdrawal: 0,
-        inflationAdjusted: false,
         sourceLines: [
           {
             id: 'withdrawal-source-1',
@@ -1223,7 +1120,6 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         firstYearAmount: 12001,
         minimumYearlyWithdrawal: 12000,
-        inflationAdjusted: false,
         sourceLines: [
           {
             id: 'withdrawal-source-1',
@@ -1244,7 +1140,6 @@ describe('projectScenario', () => {
         ...defaultScenario.withdrawal,
         firstYearAmount: 11999,
         minimumYearlyWithdrawal: 12000,
-        inflationAdjusted: false,
         sourceLines: [
           {
             id: 'withdrawal-source-1',
@@ -1277,14 +1172,6 @@ describe('projectScenario', () => {
         currentAge: 40,
         retirementAge: 43,
         retirementYears: 1
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
       },
       netWorth: {
         ...defaultScenario.netWorth,
@@ -1394,19 +1281,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -1515,19 +1390,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 2000,
@@ -1542,7 +1405,7 @@ describe('projectScenario', () => {
           investments: 5000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
       },
       careerPlan: {
         enabled: false,
@@ -1593,19 +1456,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 1000,
@@ -1620,7 +1471,7 @@ describe('projectScenario', () => {
           investments: 2000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
       },
       careerPlan: {
         enabled: false,
@@ -1671,19 +1522,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -1749,19 +1588,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -1831,19 +1658,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -1904,19 +1719,7 @@ describe('projectScenario', () => {
         yearlyIncreaseRate: 0
       },
       manualReturns: {
-        ...defaultScenario.manualReturns,
-        preRetirementEquityReturn: 0,
-        postRetirementEquityReturn: 0,
-        fixedIncomeReturn: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
+        ...defaultScenario.manualReturns,      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -2056,14 +1859,6 @@ describe('projectScenario', () => {
         retirementAge: 65,
         retirementYears: 1
       },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
       netWorth: {
         accountBalances: {
           emergencyFund: 14900,
@@ -2078,7 +1873,7 @@ describe('projectScenario', () => {
           investments: 1000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
       },
       careerPlan: {
         enabled: true,
@@ -2137,14 +1932,6 @@ describe('projectScenario', () => {
         retirementAge: 65,
         retirementYears: 1
       },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
       netWorth: {
         accountBalances: {
           emergencyFund: 15000,
@@ -2159,7 +1946,7 @@ describe('projectScenario', () => {
           investments: 1000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
       },
       careerPlan: {
         enabled: true,
@@ -2250,14 +2037,6 @@ describe('projectScenario', () => {
         retirementAge: 65,
         retirementYears: 1
       },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
       netWorth: {
         accountBalances: {
           emergencyFund: 14900,
@@ -2334,14 +2113,6 @@ describe('projectScenario', () => {
         yearlyContribution: 0,
         yearlyIncreaseRate: 0
       },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 0,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
-      },
       netWorth: {
         accountBalances: {
           emergencyFund: 1000,
@@ -2356,7 +2127,7 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: 0 }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
       },
       careerPlan: {
         enabled: true,
@@ -2431,14 +2202,6 @@ describe('projectScenario', () => {
       contribution: {
         yearlyContribution: 0,
         yearlyIncreaseRate: 0
-      },
-      savingsTracker: {
-        annualInterestRates: {
-          emergencyFund: 12,
-          hsa: 0,
-          investments: 0,
-          retirement401k: 0
-        }
       },
       netWorth: {
         accountBalances: {
@@ -2564,14 +2327,13 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       careerPlan: {
         enabled: true,
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       largePurchases: [{
@@ -2599,8 +2361,7 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       netWorth: {
         ...defaultScenario.netWorth,
         accountBalances: { emergencyFund: 50000, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2613,7 +2374,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 12000, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 12000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       incomeFallbackAccountId: accountId,
@@ -2634,6 +2395,13 @@ describe('projectScenario', () => {
     const result = projectScenario(scenario);
     expect(result.incomeFundedItemStatuses['income-purchase-fallback']).toBeDefined();
     expect(result.incomeFundedItemStatuses['income-purchase-fallback']!.status).toBe('fallback');
+    // Fallback account should have been debited: 12000 income + 50000 balance covers 20000 purchase
+    // fallbackDetails should show ~8000 drawn from the account
+    const status = result.incomeFundedItemStatuses['income-purchase-fallback']!;
+    expect(status.fallbackDetails!.length).toBe(1);
+    expect(status.fallbackDetails![0].amount).toBeGreaterThan(0);
+    const age41 = findProjectedYear(result, 41);
+    expect(age41.accountBalancesById[accountId]).toBeLessThan(50000);
   });
 
   it('marks purchase as shortfall when income and fallback accounts are exhausted', () => {
@@ -2642,14 +2410,13 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       careerPlan: {
         enabled: true,
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 1200, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 1200, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       incomeFallbackAccountId: null,
@@ -2678,14 +2445,13 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       careerPlan: {
         enabled: true,
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       largePurchases: [{
@@ -2712,8 +2478,7 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       netWorth: {
         ...defaultScenario.netWorth,
         accountBalances: { emergencyFund: 5000, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2739,6 +2504,8 @@ describe('projectScenario', () => {
 
     const result = projectScenario(scenario);
     expect(result.incomeFundedItemStatuses['income-no-career']!.status).toBe('fallback');
+    const age41 = findProjectedYear(result, 41);
+    expect(age41.accountBalancesById[accountId]).toBeLessThan(5000);
   });
 
   it('records fallback account details when income waterfall uses fallback', () => {
@@ -2748,8 +2515,7 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       netWorth: {
         ...defaultScenario.netWorth,
         accountBalances: { emergencyFund: 10000, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2762,7 +2528,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 1000, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 1000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       incomeFallbackAccountId: accountId,
@@ -2795,14 +2561,13 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       careerPlan: {
         enabled: true,
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 3600, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 3600, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       incomeFallbackAccountId: null,
@@ -2836,14 +2601,13 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       careerPlan: {
         enabled: true,
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       loans: [{
@@ -2892,14 +2656,13 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       careerPlan: {
         enabled: true,
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       incomeFallbackAccountId: null,
@@ -2933,8 +2696,7 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       netWorth: {
         ...defaultScenario.netWorth,
         accountBalances: { emergencyFund: 10000, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2947,7 +2709,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null },
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false },
           sourceLines: (defaultScenario.careerPlan.entries[0].sourceLines ?? []).map((sl) => ({ ...sl, contributionRate: 0 }))
         }]
       },
@@ -2984,14 +2746,13 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       careerPlan: {
         enabled: true,
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 6000, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 6000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       incomeFallbackAccountId: null,
@@ -3038,14 +2799,13 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       careerPlan: {
         enabled: true,
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 4800, taxRate: 0, lastEditedField: null }
+          taxInfo: { untaxedBenefits: 0, leftoverIncome: 4800, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
         }]
       },
       incomeFallbackAccountId: null,
@@ -3082,8 +2842,7 @@ describe('projectScenario', () => {
       options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
       contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-      manualReturns: { ...defaultScenario.manualReturns, preRetirementEquityReturn: 0, postRetirementEquityReturn: 0, fixedIncomeReturn: 0 },
-      savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
+      manualReturns: { ...defaultScenario.manualReturns },
       netWorth: {
         ...defaultScenario.netWorth,
         accountBalances: { emergencyFund: 500, hsa: 5000, investments: 0, retirement401k: 0 },
@@ -3130,11 +2889,7 @@ describe('projectScenario', () => {
           currentAge: 40, retirementAge: 65, retirementYears: 30
         },
         contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-        manualReturns: {
-          preRetirementEquityReturn: 6,
-          postRetirementEquityReturn: 6,
-          fixedIncomeReturn: 6,
-          inflationRate: 2.5,
+        manualReturns: {          inflationRate: 2.5,
           inflationEnabled: true
         },
         portfolio: {
@@ -3147,11 +2902,10 @@ describe('projectScenario', () => {
           ...defaultScenario.netWorth,
           accountBalances: { emergencyFund: 0, hsa: 0, investments: 100000, retirement401k: 0 },
           pools: defaultScenario.netWorth.pools?.map((p) => ({
-            ...p, annualReturnRate: 6
+            ...p
           })),
           bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 100000, retirement401k: 0 })
         },
-        savingsTracker: { annualInterestRates: { emergencyFund: 6, hsa: 6, investments: 6, retirement401k: 6 } },
         careerPlan: { enabled: false, entries: [] },
         withdrawal: {
           mode: 'specified' as const,
@@ -3159,7 +2913,6 @@ describe('projectScenario', () => {
           minimumYearlyWithdrawal: 0,
           maximumYearlyWithdrawal: 0,
           useRetirementAgeAsWithdrawalStartAge: true,
-          inflationAdjusted: false,
           sourceLines: []
         }
       };
@@ -3183,11 +2936,7 @@ describe('projectScenario', () => {
           currentAge: 40, retirementAge: 50, retirementYears: 10
         },
         contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-        manualReturns: {
-          preRetirementEquityReturn: 0,
-          postRetirementEquityReturn: 0,
-          fixedIncomeReturn: 0,
-          inflationRate: 0,
+        manualReturns: {          inflationRate: 0,
           inflationEnabled: true
         },
         portfolio: {
@@ -3200,13 +2949,12 @@ describe('projectScenario', () => {
           ...defaultScenario.netWorth,
           accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
           pools: defaultScenario.netWorth.pools?.map((p) => ({
-            ...p, annualReturnRate: 0
+            ...p
           })),
           bankAccounts: (defaultScenario.netWorth.bankAccounts ?? []).map((a) => ({
             ...a, balance: 0
           }))
         },
-        savingsTracker: { annualInterestRates: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 } },
         lifeEvents: [],
         cashflowItems: [],
         largePurchases: [],
@@ -3279,11 +3027,7 @@ describe('projectScenario', () => {
           currentAge: 40, retirementAge: 40, retirementYears: 20
         },
         contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-        manualReturns: {
-          preRetirementEquityReturn: 2,
-          postRetirementEquityReturn: 2,
-          fixedIncomeReturn: 2,
-          inflationRate: 0,
+        manualReturns: {          inflationRate: 0,
           inflationEnabled: true
         },
         portfolio: {
@@ -3295,11 +3039,10 @@ describe('projectScenario', () => {
         netWorth: {
           ...defaultScenario.netWorth,
           pools: defaultScenario.netWorth.pools?.map((p) => ({
-            ...p, annualReturnRate: 2
+            ...p
           })),
           bankAccounts: (defaultScenario.netWorth.bankAccounts ?? [])
         },
-        savingsTracker: { annualInterestRates: { emergencyFund: 2, hsa: 2, investments: 2, retirement401k: 2 } },
         careerPlan: { enabled: false, entries: [] },
         lifeEvents: [],
         cashflowItems: [],
@@ -3312,7 +3055,6 @@ describe('projectScenario', () => {
           minimumYearlyWithdrawal: 15000,
           maximumYearlyWithdrawal: 15000,
           useRetirementAgeAsWithdrawalStartAge: true,
-          inflationAdjusted: false,
           sourceLines: (defaultScenario.netWorth.bankAccounts ?? []).filter((ba) => ba.poolId === 'investments').map((ba) => ({
             id: `withdrawal-src-${ba.id}`,
             enabled: true,

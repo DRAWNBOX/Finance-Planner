@@ -33,6 +33,7 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+gitchanges.md
 
 # Screenshots
 Screenshot*.png
