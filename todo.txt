@@ -111,3 +111,5 @@ An Option to configure display of what is is dispalyed in the career tab. You ca
 Add CAtergory and pool limit
 
 I want the retirement tax rate to be decoupled from purchases and expenses. I would like to configure tax on purchases in 
+
+Add purchase comparison. When you have to plans ie buy a focus or buy a miata you can input dates and money for both and compare outcomes. Add grouping for purchases, and the ability to hide and show them.

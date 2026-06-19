@@ -612,6 +612,7 @@ const App = () => {
   const [expandedNetWorthImportIds, setExpandedNetWorthImportIds] = useState<string[]>([]);
   const [checkedNetWorthImportIds, setCheckedNetWorthImportIds] = useState<string[]>([]);
   const [showExpenseTrackerAccountConfig, setShowExpenseTrackerAccountConfig] = useState(false);
+  const [purchaseSort, setPurchaseSort] = useState<{ column: 'yearMonth' | 'amount' | 'fundingSource' | null; direction: 'asc' | 'desc' }>({ column: null, direction: 'asc' });
   const filesInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const scenario = appState.scenario;
@@ -2529,6 +2530,38 @@ const App = () => {
     return parts.join('\n');
   };
 
+  const togglePurchaseSort = (column: 'yearMonth' | 'amount' | 'fundingSource') => {
+    setPurchaseSort((prev) => {
+      if (prev.column === column) {
+        if (prev.direction === 'asc') return { column, direction: 'desc' };
+        return { column: null, direction: 'asc' };
+      }
+      return { column, direction: 'asc' };
+    });
+  };
+
+  const sortedLargePurchases = useMemo(() => {
+    if (!purchaseSort.column) return scenario.largePurchases;
+    const { column, direction } = purchaseSort;
+    const fundingLabel = (fs: string | undefined) => {
+      if (!fs || fs === 'income') return 'Income';
+      const accountId = fs.startsWith('account:') ? fs.split(':', 2)[1] : null;
+      const account = accountId ? bankAccounts.find((a) => a.id === accountId) : null;
+      return account ? account.label : fs;
+    };
+    return [...scenario.largePurchases].sort((a, b) => {
+      let cmp = 0;
+      if (column === 'yearMonth') {
+        cmp = a.yearMonth.localeCompare(b.yearMonth);
+      } else if (column === 'amount') {
+        cmp = a.amount - b.amount;
+      } else if (column === 'fundingSource') {
+        cmp = fundingLabel(a.fundingSource).localeCompare(fundingLabel(b.fundingSource));
+      }
+      return direction === 'desc' ? -cmp : cmp;
+    });
+  }, [scenario.largePurchases, purchaseSort, bankAccounts]);
+
   const renderPurchasesTab = () => (
     <>
       <Panel title="Large Purchases Table" className="panel-wide">
@@ -2547,15 +2580,33 @@ const App = () => {
                   <th title="Enabled">Enabled</th>
                   <th title="Show flag on graph">Flag</th>
                   <th>Name</th>
-                  <th title="Year-Month">Year-Month</th>
-                  <th title="Amount">Amount</th>
-                  <th title="Pay From">Pay From</th>
+                  <th title="Year-Month" className="sortable-th" onClick={() => togglePurchaseSort('yearMonth')}>
+                    <span>Year-Month</span>
+                    <span className="sort-arrows" aria-hidden="true">
+                      <span className={purchaseSort.column === 'yearMonth' && purchaseSort.direction === 'asc' ? 'active' : ''}>▲</span>
+                      <span className={purchaseSort.column === 'yearMonth' && purchaseSort.direction === 'desc' ? 'active' : ''}>▼</span>
+                    </span>
+                  </th>
+                  <th title="Amount" className="sortable-th" onClick={() => togglePurchaseSort('amount')}>
+                    <span>Amount</span>
+                    <span className="sort-arrows" aria-hidden="true">
+                      <span className={purchaseSort.column === 'amount' && purchaseSort.direction === 'asc' ? 'active' : ''}>▲</span>
+                      <span className={purchaseSort.column === 'amount' && purchaseSort.direction === 'desc' ? 'active' : ''}>▼</span>
+                    </span>
+                  </th>
+                  <th title="Pay From" className="sortable-th" onClick={() => togglePurchaseSort('fundingSource')}>
+                    <span>Pay From</span>
+                    <span className="sort-arrows" aria-hidden="true">
+                      <span className={purchaseSort.column === 'fundingSource' && purchaseSort.direction === 'asc' ? 'active' : ''}>▲</span>
+                      <span className={purchaseSort.column === 'fundingSource' && purchaseSort.direction === 'desc' ? 'active' : ''}>▼</span>
+                    </span>
+                  </th>
                   <th title="Account Balance After Purchase">Account Balance After Purchase</th>
                   <th title="Remove">Remove</th>
                 </tr>
               </thead>
               <tbody>
-                {scenario.largePurchases.map((purchase) => {
+                {sortedLargePurchases.map((purchase) => {
                   const fundingSourceValue = purchase.fundingSource ?? 'income';
                   const selectedAccountId = fundingSourceValue.startsWith('account:')
                     ? fundingSourceValue.split(':', 2)[1] ?? null

@@ -700,6 +700,28 @@ td:first-child {
   box-sizing: border-box;
 }
 
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable-th > span:first-child {
+  margin-right: 0.25rem;
+}
+
+.sort-arrows {
+  display: inline-flex;
+  flex-direction: column;
+  font-size: 0.55rem;
+  line-height: 0.6rem;
+  vertical-align: middle;
+  color: #ccc;
+}
+
+.sort-arrows .active {
+  color: #2563eb;
+}
+
 .purchases-legend {
   text-align: center;
   white-space: normal;

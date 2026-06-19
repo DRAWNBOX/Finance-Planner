@@ -688,6 +688,59 @@ export const projectScenario = (scenario: Scenario): ProjectionResult => {
           yearPenaltiesPaid += result.penaltiesPaid;
           monthlyIncomePurchases.add(purchase.id);
         });
+
+      // Process account-funded large purchases for this month
+      scenario.largePurchases
+        .filter((p) => p.enabled && (p.fundingSource ?? 'income') !== 'income')
+        .forEach((purchase) => {
+          const purchaseSerial = parseYearMonthToSerial(purchase.yearMonth);
+          if (purchaseSerial === null || purchaseSerial !== currentMonthSerial) return;
+
+          const beforeAccountBalances = toAccountBalancesById(ledgerAccounts);
+          const requestedSources = (purchase.sourceLines ?? []).filter((line) => line.enabled);
+          let remainingNet = Math.max(0, purchase.amount);
+          let actualNet = 0;
+
+          requestedSources.forEach((source) => {
+            const target = Math.max(0, source.amount);
+            const outcome = applyNetTargetWithdrawal(
+              source,
+              Math.min(remainingNet, target),
+              ledgerAccounts,
+              pools,
+              warnings,
+              { age, retirementAge }
+            );
+            actualNet += outcome.netCash;
+            remainingNet -= outcome.netCash;
+            yearTaxesPaid += outcome.taxesPaid;
+            yearPenaltiesPaid += outcome.penaltiesPaid;
+          });
+
+          if (remainingNet > 0) {
+            requestedSources.forEach((source) => {
+              if (remainingNet <= 0) return;
+              const outcome = applyNetTargetWithdrawal(source, remainingNet, ledgerAccounts, pools, warnings, { age, retirementAge });
+              actualNet += outcome.netCash;
+              remainingNet -= outcome.netCash;
+              yearTaxesPaid += outcome.taxesPaid;
+              yearPenaltiesPaid += outcome.penaltiesPaid;
+            });
+          }
+
+          const postPurchaseAccountBalances = toAccountBalancesById(ledgerAccounts);
+          if (purchase.fundingSource?.startsWith('account:')) {
+            const [, accountId] = purchase.fundingSource.split(':', 2);
+            if (accountId) {
+              postPurchaseAccountBalances[accountId] = (beforeAccountBalances[accountId] ?? 0) - Math.max(0, purchase.amount);
+            }
+          }
+          purchasePostPurchaseDisplayBalances[purchase.id] = postPurchaseAccountBalances;
+          purchaseFundingShortfalls[purchase.id] = (purchaseFundingShortfalls[purchase.id] ?? 0) + Math.max(0, purchase.amount - actualNet);
+          purchaseCashflow -= actualNet;
+          monthlyIncomePurchases.add(purchase.id);
+          purchaseFirstAffordableAge[purchase.id] = age;
+        });
     }
 
     const availableIncome = { value: monthlyTakeHome * periodMonths };
