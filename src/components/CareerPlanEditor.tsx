@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { BufferedNumberInput } from './BufferedNumberInput';
 import { YearMonthInput } from './YearMonthInput';
-import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, PoolDefinition, ProjectionYear } from '../types';
+import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, PaycheckInfo, PoolDefinition, ProjectionYear } from '../types';
 import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
+import { useRenderCount } from '../utils/perfTools';
 
 interface CareerPlanEditorProps {
   value: CareerPlan;
@@ -62,7 +63,7 @@ const resolveCareerLineForAccount = (
   };
 };
 
-export const CareerPlanEditor = ({
+export const CareerPlanEditor = memo(({
   value,
   selectedCareerId,
   onSelectCareer,
@@ -82,6 +83,7 @@ export const CareerPlanEditor = ({
   onChangeIncomeFallbackAccount1,
   onChangeIncomeFallbackAccount2
 }: CareerPlanEditorProps) => {
+  useRenderCount('CareerPlanEditor');
   const selectedCareer = value.entries.find((career) => career.id === selectedCareerId) ?? value.entries[0];
   const [dragCareerId, setDragCareerId] = useState<string | null>(null);
   const selectedCareerIndex = selectedCareer ? value.entries.findIndex((career) => career.id === selectedCareer.id) : -1;
@@ -104,7 +106,40 @@ export const CareerPlanEditor = ({
       onRemoveCareer(careerId);
     }
   };
-  const previewSalary = selectedCareer.startingSalary;
+
+  const handleCopyFromPrevious = () => {
+    if (!previousCareer || !selectedCareer) return;
+    if (!window.confirm(`Copy pay settings from "${previousCareer.label}"? This will overwrite current pay settings.`)) return;
+    const prev = previousCareer.paycheckInfo as Partial<PaycheckInfo> | undefined;
+    if (!prev) return;
+    const partialPaycheck: Partial<PaycheckInfo> = {
+      grossSalary: prev.grossSalary,
+      healthBenefits: prev.healthBenefits,
+      taxes: prev.taxes,
+      otherBenefits: prev.otherBenefits,
+      retirement: prev.retirement,
+      retirementMode: prev.retirementMode,
+      retirementMatch: prev.retirementMatch,
+      retirementMatchMode: prev.retirementMatchMode,
+      employerMaxMatchPercent: prev.employerMaxMatchPercent,
+      retirementAccountId: prev.retirementAccountId,
+      hsaContribution: prev.hsaContribution,
+      hsaContributionMode: prev.hsaContributionMode,
+      hsaEmployerMatch: prev.hsaEmployerMatch,
+      hsaEmployerMatchMode: prev.hsaEmployerMatchMode,
+      employerHsaDeposit: prev.employerHsaDeposit,
+      employerHsaDepositMode: prev.employerHsaDepositMode,
+      hsaAccountId: prev.hsaAccountId,
+      livingExpenses: prev.livingExpenses,
+      period: prev.period
+    };
+    onChangeCareer({
+      ...selectedCareer,
+      annualRaiseRate: previousCareer.annualRaiseRate,
+      paycheckInfo: { ...(selectedCareer.paycheckInfo ?? {} as PaycheckInfo), ...partialPaycheck } as PaycheckInfo
+    });
+  };
+  const previewSalary = selectedCareer.paycheckInfo?.grossSalary ?? 0;
   const activeStartAge = selectedStartAge ?? selectedCareer.startAge;
   const periodYears = Math.max(0, selectedCareer.endAge - activeStartAge + 1);
   const periodMonths = periodYears * 12;
@@ -187,7 +222,7 @@ export const CareerPlanEditor = ({
     for (let index = 0; index <= targetIndex; index += 1) {
       const career = value.entries[index];
       const months = Math.max(0, career.endAge - career.startAge + 1) * 12;
-      const salary = career.startingSalary;
+      const salary = career.paycheckInfo?.grossSalary ?? 0;
       const nextBalances: Record<string, number> = { ...balances };
 
       orderedBankAccounts.forEach((account) => {
@@ -413,16 +448,6 @@ export const CareerPlanEditor = ({
               <span>Use previous career end age as this start age</span>
             </label>
             <label>
-              <span>Starting Salary</span>
-              <BufferedNumberInput
-                value={selectedCareer.startingSalary}
-                min={0}
-                max={2000000}
-                step={1000}
-                onCommit={(next) => onChangeCareer({ ...selectedCareer, startingSalary: next })}
-              />
-            </label>
-            <label>
               <span>Annual Raise %</span>
               <BufferedNumberInput
                 value={selectedCareer.annualRaiseRate}
@@ -436,157 +461,133 @@ export const CareerPlanEditor = ({
               <span>Total Savings Rate %</span>
               <BufferedNumberInput value={calculatedTotalSavingsRate} min={0} max={100} step={0.1} disabled onCommit={() => {}} />
             </label>
-            <label>
-              <span>Employer Match %</span>
-              <BufferedNumberInput
-                value={selectedCareer.employerMatchRate}
-                min={0}
-                max={20}
-                step={0.1}
-                onCommit={(next) => onChangeCareer({ ...selectedCareer, employerMatchRate: next })}
-              />
-            </label>
-            <label>
-              <span>Bonus %</span>
-              <BufferedNumberInput
-                value={selectedCareer.bonusRate}
-                min={0}
-                max={50}
-                step={0.1}
-                onCommit={(next) => onChangeCareer({ ...selectedCareer, bonusRate: next })}
-              />
-            </label>
-            <label>
-              <span>Bonus Saved %</span>
-              <BufferedNumberInput
-                value={selectedCareer.bonusSavingsRate}
-                min={0}
-                max={100}
-                step={1}
-                onCommit={(next) => onChangeCareer({ ...selectedCareer, bonusSavingsRate: next })}
-              />
-            </label>
           </div>
 
           <div className="career-grid">
             <label className="full-span">
-              <span>Tax Info (Yearly)</span>
+              <span>Income &amp; Deductions</span>
             </label>
+            {previousCareer && (
+              <label className="full-span">
+                <button type="button" className="secondary-button" onClick={handleCopyFromPrevious}>
+                  Copy Pay from Previous
+                </button>
+              </label>
+            )}
             {(() => {
-              const ti = selectedCareer.taxInfo ?? { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null as 'leftoverIncome' | 'taxRate' | null, otherExpenses: 0, taxRateLocked: false };
-              const taxableIncome = Math.max(0, selectedCareer.startingSalary - ti.untaxedBenefits);
-              const annualEmployeeSavings = Math.round(selectedCareer.startingSalary * (calculatedTotalSavingsRate / 100));
-              const taxes = ti.lastEditedField === 'leftoverIncome'
-                ? Math.max(0, taxableIncome - ti.leftoverIncome - annualEmployeeSavings)
-                : ti.lastEditedField === 'taxRate'
-                  ? Math.round(taxableIncome * (ti.taxRate / 100) * 100) / 100
-                  : 0;
-              const postTaxSalary = Math.max(0, taxableIncome - taxes);
-              const monthlyTaxes = taxes / 12;
-              const yearlyLeftover = Math.max(0, postTaxSalary - annualEmployeeSavings);
-              const monthlyExpenses = (ti.otherExpenses ?? 0);
-              const availableMonthly = Math.max(0, (yearlyLeftover / 12) - monthlyExpenses);
+              const pi = selectedCareer.paycheckInfo ?? { grossSalary: 0, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 };
+              const periodDefaults: Record<string, 'monthly' | 'yearly'> = { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'yearly' };
+              const getPeriod = (field: string) => pi.period?.[field] ?? periodDefaults[field] ?? 'yearly';
+              const isMonthly = (field: string) => getPeriod(field) === 'monthly';
+              const displayVal = (field: string, val: number) => isMonthly(field) ? val / 12 : val;
+              const commitVal = (field: string, input: number) => isMonthly(field) ? input * 12 : input;
+              const annualEmployeeSavings = Math.round(pi.grossSalary * (calculatedTotalSavingsRate / 100));
+              const monthlyGross = pi.grossSalary / 12;
+              const monthlyTaxes = pi.taxes / 12;
+              const monthlyHealth = pi.healthBenefits / 12;
+              const monthlyOther = pi.otherBenefits / 12;
+              const effRetirement = pi.retirementMode === 'percentOfSalary' ? pi.grossSalary * (pi.retirement ?? 0) / 100 : (pi.retirement ?? 0);
+              const effRetirementMatch = pi.retirementMatchMode === 'percentOfRetirement' ? effRetirement * (pi.retirementMatch ?? 0) / 100 : (pi.retirementMatch ?? 0);
+              const effHsa = pi.hsaContributionMode === 'percentOfSalary' ? pi.grossSalary * (pi.hsaContribution ?? 0) / 100 : (pi.hsaContribution ?? 0);
+              const effHsaMatch = pi.hsaEmployerMatchMode === 'percentOfHsaContribution' ? effHsa * (pi.hsaEmployerMatch ?? 0) / 100 : (pi.hsaEmployerMatch ?? 0);
+              const takeHome = Math.max(0, monthlyGross - monthlyTaxes - monthlyHealth - monthlyOther - (pi.livingExpenses ?? 0) / 12 - effRetirement / 12 - effHsa / 12);
 
-               const updateTaxInfo = (partial: Partial<typeof ti>) => {
-                 const merged = { ...ti, ...partial };
-                 const newTaxable = Math.max(0, selectedCareer.startingSalary - merged.untaxedBenefits);
-                 const newSavings = Math.round(selectedCareer.startingSalary * (calculatedTotalSavingsRate / 100));
+              const updatePaycheck = (partial: Partial<typeof pi>) => {
+                onChangeCareer({
+                  ...selectedCareer,
+                  paycheckInfo: { ...pi, ...partial }
+                });
+              };
 
-                 let { leftoverIncome, taxRate } = merged;
+              const renderField = (field: string, label: string, min: number, max: number, step: number, tooltip?: string) => {
+                const val = (pi as unknown as Record<string, number>)[field] ?? 0;
+                const period = getPeriod(field);
+                return (
+                  <label>
+                    <span title={tooltip}>{label} ({period === 'monthly' ? 'Monthly' : 'Yearly'})</span>
+                    <div className="tax-rate-row">
+                      <BufferedNumberInput value={displayVal(field, val)} min={min} max={max} step={step} commitOnChange
+                        onCommit={(next) => updatePaycheck({ [field]: commitVal(field, next) } as Partial<typeof pi>)} />
+                      <button type="button" className={`lock-btn${period === 'monthly' ? ' locked' : ''}`}
+                        onClick={() => updatePaycheck({ period: { ...pi.period, [field]: period === 'monthly' ? 'yearly' : 'monthly' } } as Partial<typeof pi>)}
+                        title={`Display as ${period === 'monthly' ? 'Yearly' : 'Monthly'}`}
+                      >
+                        {period === 'monthly' ? 'M' : 'Y'}
+                      </button>
+                    </div>
+                  </label>
+                );
+              };
 
-                 if (merged.taxRateLocked && partial.lastEditedField === 'leftoverIncome') {
-                 } else if (merged.taxRateLocked && partial.lastEditedField !== 'taxRate') {
-                   const t = Math.round(newTaxable * (taxRate / 100) * 100) / 100;
-                   leftoverIncome = Math.max(0, newTaxable - t - newSavings);
-                 } else {
-                   const field = merged.lastEditedField || (taxRate > 0 ? 'taxRate' : leftoverIncome > 0 ? 'leftoverIncome' : null);
-                   if (field === 'taxRate') {
-                     const t = Math.round(newTaxable * (taxRate / 100) * 100) / 100;
-                     leftoverIncome = Math.max(0, newTaxable - t - newSavings);
-                   } else if (field === 'leftoverIncome') {
-                     const t = Math.max(0, newTaxable - leftoverIncome - newSavings);
-                     taxRate = newTaxable > 0 ? Math.round((t / newTaxable) * 10000) / 100 : 0;
-                   }
-                 }
-
-                 onChangeCareer({
-                   ...selectedCareer,
-                   taxInfo: {
-                     untaxedBenefits: merged.untaxedBenefits,
-                     leftoverIncome,
-                     taxRate,
-                     lastEditedField: merged.lastEditedField,
-                     otherExpenses: Math.max(0, merged.otherExpenses ?? 0),
-                     taxRateLocked: merged.taxRateLocked ?? false
-                   }
-                 });
-               };
+              const renderModeField = (field: string, modeField: string, label: string, min: number, max: number, step: number, tooltip?: string, modeTooltip?: string) => {
+                const val = (pi as unknown as Record<string, number>)[field] ?? 0;
+                const mode = ((pi as unknown as Record<string, string>)[modeField]) || 'amount';
+                const period = getPeriod(field);
+                const isPercent = mode !== 'amount';
+                return (
+                  <label>
+                    <span title={tooltip}>{label} ({isPercent ? '%' : period === 'monthly' ? 'Monthly' : 'Yearly'})</span>
+                    <div className="tax-rate-row">
+                      <BufferedNumberInput
+                        value={isPercent ? val : displayVal(field, val)}
+                        min={min} max={isPercent ? 100 : max} step={isPercent ? 0.1 : step} commitOnChange
+                        onCommit={(next) => updatePaycheck({ [field]: isPercent ? next : commitVal(field, next) } as Partial<typeof pi>)}
+                      />
+                      <button type="button" className={`lock-btn${isPercent ? ' locked' : ''}`}
+                        onClick={() => updatePaycheck({ [modeField]: isPercent ? 'amount' : (modeField.startsWith('retirement') && modeField.includes('Match') ? 'percentOfRetirement' : modeField.startsWith('hsa') && modeField.includes('Match') ? 'percentOfHsaContribution' : 'percentOfSalary') } as unknown as Partial<typeof pi>)}
+                        title={modeTooltip ?? (isPercent ? 'Switch to dollar amount' : 'Switch to percentage')}
+                      >
+                        {isPercent ? '%' : '$'}
+                      </button>
+                      {!isPercent && (
+                        <button type="button" className={`lock-btn${period === 'monthly' ? ' locked' : ''}`}
+                          onClick={() => updatePaycheck({ period: { ...pi.period, [field]: period === 'monthly' ? 'yearly' : 'monthly' } } as Partial<typeof pi>)}
+                          title={`Display as ${period === 'monthly' ? 'Yearly' : 'Monthly'}`}
+                        >
+                          {period === 'monthly' ? 'M' : 'Y'}
+                        </button>
+                      )}
+                    </div>
+                  </label>
+                );
+              };
 
               return (
                 <>
+            {renderField('grossSalary', 'Gross Salary', 0, 10000000, 1000)}
+            {renderField('healthBenefits', 'Health Benefits', 0, 10000000, 100)}
+            {renderField('taxes', 'Taxes', 0, 10000000, 100)}
+            {renderField('otherBenefits', 'Other Benefits', 0, 10000000, 100)}
+            {renderModeField('retirement', 'retirementMode', 'Retirement', 0, 10000000, 100, 'Monthly retirement deposit from income. Match added separately.')}
+            {renderModeField('retirementMatch', 'retirementMatchMode', 'Retirement Match', 0, 10000000, 100, 'Employer contribution to retirement. Added on top of employee contribution.')}
+            {renderField('employerMaxMatchPercent', 'Employer Max Match %', 0, 100, 0.5, 'Maximum % of gross salary your employer will match. Caps the Retirement Match amount.')}
             <label>
-              <span>Untaxed Benefits</span>
-              <BufferedNumberInput
-                value={ti.untaxedBenefits}
-                min={0}
-                max={2000000}
-                step={100}
-                commitOnChange
-                onCommit={(next) => updateTaxInfo({ untaxedBenefits: next })}
-              />
+              <span>Retirement Account</span>
+              <select
+                value={pi.retirementAccountId ?? ''}
+                onChange={(e) => updatePaycheck({ retirementAccountId: e.target.value || undefined })}
+              >
+                <option value="">-</option>
+                {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+              </select>
             </label>
+            {renderModeField('hsaContribution', 'hsaContributionMode', 'HSA', 0, 10000000, 100, 'Monthly HSA deposit from income. Match added separately.')}
+            {renderModeField('hsaEmployerMatch', 'hsaEmployerMatchMode', 'HSA Match', 0, 10000000, 100, 'Employer contribution to HSA. Added on top of employee contribution.')}
+            {renderModeField('employerHsaDeposit', 'employerHsaDepositMode', 'Employer HSA Deposit', 0, 10000000, 100, 'Flat yearly employer contribution to HSA. Not tied to employee contribution or match.')}
             <label>
-              <span>Taxable Income</span>
-              <BufferedNumberInput value={taxableIncome} min={0} max={2000000} step={100} disabled onCommit={() => {}} />
+              <span>HSA Account</span>
+              <select
+                value={pi.hsaAccountId ?? ''}
+                onChange={(e) => updatePaycheck({ hsaAccountId: e.target.value || undefined })}
+              >
+                <option value="">-</option>
+                {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+              </select>
             </label>
+            {renderField('livingExpenses', 'Living Expenses', 0, 2000000, 100)}
             <label>
-              <span>Tax Rate %</span>
-              <div className="tax-rate-row">
-                <BufferedNumberInput
-                  value={ti.taxRate}
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  commitOnChange
-                  disabled={ti.taxRateLocked}
-                  onCommit={(next) => updateTaxInfo({ taxRate: next, lastEditedField: 'taxRate' })}
-                />
-                <button
-                  type="button"
-                  className={`lock-btn${ti.taxRateLocked ? ' locked' : ''}`}
-                  onClick={() => updateTaxInfo({ taxRateLocked: !(ti.taxRateLocked ?? false) })}
-                  title={ti.taxRateLocked ? 'Unlock tax rate' : 'Lock tax rate'}
-                >
-                  {ti.taxRateLocked ? '\u{1F512}' : '\u{1F513}'}
-                </button>
-              </div>
-            </label>
-            <label>
-              <span>Taxes</span>
-              <BufferedNumberInput value={taxes} min={0} max={2000000} step={100} disabled onCommit={() => {}} />
-            </label>
-            <label>
-              <span>Post Tax Salary</span>
-              <BufferedNumberInput value={postTaxSalary} min={0} max={2000000} step={100} disabled onCommit={() => {}} />
-            </label>
-            <label>
-              <span>Monthly Taxes</span>
-              <BufferedNumberInput value={monthlyTaxes} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
-            </label>
-            <label>
-              <span>Other Expenses (monthly)</span>
-              <BufferedNumberInput
-                value={ti.otherExpenses ?? 0}
-                min={0}
-                max={2000000}
-                step={100}
-                commitOnChange
-                onCommit={(next) => updateTaxInfo({ otherExpenses: next })}
-              />
-            </label>
-            <label>
-              <span>Available Monthly</span>
-              <BufferedNumberInput value={availableMonthly} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
+              <span>Take Home Pay (monthly)</span>
+              <BufferedNumberInput value={takeHome} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
             </label>
             <label>
               <span>Monthly Savings</span>
@@ -744,7 +745,7 @@ export const CareerPlanEditor = ({
               Selected timeline: <strong>{selectedStartAge ?? selectedCareer.startAge}</strong> to <strong>{selectedCareer.endAge}</strong>
             </p>
             <p>
-              Starting salary: <strong>{formatCurrency(selectedCareer.startingSalary)}</strong>
+              Starting salary: <strong>{formatCurrency(selectedCareer.paycheckInfo?.grossSalary ?? 0)}</strong>
             </p>
             <p>
               Preview salary: <strong>{previewYear ? formatCurrency(previewYear.salary) : '$0'}</strong>
@@ -766,4 +767,4 @@ export const CareerPlanEditor = ({
       ) : null}
     </div>
   );
-};
+});

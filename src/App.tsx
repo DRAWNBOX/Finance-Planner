@@ -1,4 +1,5 @@
-import { type ChangeEvent, type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useRenderCount, useTimedMemo } from './utils/perfTools';
 import { ChartPanel } from './components/ChartPanel';
 import { CashflowItemEditor } from './components/CashflowItemEditor';
 import { CareerPlanEditor } from './components/CareerPlanEditor';
@@ -12,6 +13,7 @@ import { ColorPickerField } from './components/ColorPickerField';
 import {
   createDefaultCashflowItem,
   createDefaultCareerEntry,
+  createDefaultCreditCard,
   createDefaultHousingEntry,
   createDefaultLargePurchase,
   createDefaultLoan,
@@ -30,6 +32,7 @@ import type {
   AccountTypePreset,
   BankAccountDefinition,
   CashflowCategory,
+  CreditCard,
   PoolDefinition,
   NetWorthCustomAccount,
   NetWorthHistoryEntry,
@@ -39,6 +42,7 @@ import type {
   NetWorthImportSourceAccount,
   ProjectionResult,
   ProjectionYear,
+  PurchaseCategory,
   PurchaseFlag,
   Scenario,
   SourceLine
@@ -64,7 +68,8 @@ const FINANCE_PREDICTION_SUB_TABS: Array<{ id: FinancePredictionSubTab; label: s
 ];
 const EXPENSES_SUB_TABS: Array<{ id: ExpensesTab; label: string }> = [
   { id: 'planning', label: 'Expense Planning' },
-  { id: 'tracking', label: 'Expense Tracking' }
+  { id: 'tracking', label: 'Expense Tracking' },
+  { id: 'creditCards', label: 'Credit Cards' }
 ];
 
 const ADD_OPTIONS: Array<{ category: CashflowCategory; label: string }> = [
@@ -600,11 +605,15 @@ const isLegacyPoolKey = (value: string) =>
   value === 'emergencyFund' || value === 'hsa' || value === 'investments' || value === 'retirement401k';
 
 const App = () => {
+  useRenderCount('App');
   const [appState, setAppState] = useState(() => loadAppState());
   const [graphMode, setGraphMode] = useState<'portfolio' | 'savings'>('portfolio');
   const [showRealDollars, setShowRealDollars] = useState(false);
   const [showPurchaseFlags, setShowPurchaseFlags] = useState(true);
   const [showHousingFlags, setShowHousingFlags] = useState(true);
+  const [showMonths, setShowMonths] = useState(false);
+  const [graphAgeMin, setGraphAgeMin] = useState(0);
+  const [graphAgeMax, setGraphAgeMax] = useState(999);
   const [isImportingNetWorthFiles, setIsImportingNetWorthFiles] = useState(false);
   const [netWorthHistoryRange, setNetWorthHistoryRange] = useState<NetWorthHistoryRange>('all');
   const [showNetWorthImportsModal, setShowNetWorthImportsModal] = useState(false);
@@ -613,6 +622,13 @@ const App = () => {
   const [checkedNetWorthImportIds, setCheckedNetWorthImportIds] = useState<string[]>([]);
   const [showExpenseTrackerAccountConfig, setShowExpenseTrackerAccountConfig] = useState(false);
   const [purchaseSort, setPurchaseSort] = useState<{ column: 'yearMonth' | 'amount' | 'fundingSource' | null; direction: 'asc' | 'desc' }>({ column: null, direction: 'asc' });
+  const [showPurchaseCategoryManager, setShowPurchaseCategoryManager] = useState(false);
+  const [showTimelineManager, setShowTimelineManager] = useState(false);
+  const [purchaseCategoryFilter, setPurchaseCategoryFilter] = useState<Set<string | null>>(new Set());
+  const [newPurchaseCategoryLabel, setNewPurchaseCategoryLabel] = useState('');
+  const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
+  const [editingCreditCardId, setEditingCreditCardId] = useState<string | null>(null);
+  const [editingHousingId, setEditingHousingId] = useState<string | null>(null);
   const filesInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const scenario = appState.scenario;
@@ -666,31 +682,63 @@ const App = () => {
   const activeTab = appState.ui.activeTab;
   const careersSubTab = appState.ui.careersSubTab;
   const expensesSubTab = appState.ui.expensesSubTab;
-  const selectedCareerId = appState.ui.selectedCareerId || scenario.careerPlan.entries[0]?.id || '';
   const currentAge = resolveCurrentAge(scenario);
   const birthdayBasedCareerStartAge = resolveBirthdayBasedCareerStartAge(scenario);
-  const retirementScenario: Scenario = {
+  const activeTimelineData = useMemo(() => {
+    const activeTimelineId = scenario.activeTimelineId ?? null;
+    const timeline = activeTimelineId
+      ? ((scenario.timelines ?? []).find((t) => t.id === activeTimelineId) ?? null)
+      : null;
+    return {
+      timeline,
+      largePurchases: timeline ? timeline.purchases : scenario.largePurchases,
+      longTermPurchases: timeline ? timeline.longTermPurchases : (scenario.longTermPurchases ?? []),
+      loans: timeline ? timeline.loans : (scenario.loans ?? []),
+      creditCards: timeline ? timeline.creditCards : (scenario.creditCards ?? []),
+      careerPlan: timeline ? timeline.careerPlan : scenario.careerPlan,
+      housing: timeline ? timeline.housing : (scenario.housing ?? [])
+    };
+  }, [scenario]);
+  const activeLargePurchases = activeTimelineData.largePurchases;
+  const activeLongTermPurchases = activeTimelineData.longTermPurchases;
+  const activeLoans = activeTimelineData.loans;
+  const activeCreditCards = activeTimelineData.creditCards;
+  const activeCareerPlan = activeTimelineData.careerPlan;
+  const activeHousing = activeTimelineData.housing;
+  const selectedCareerId = appState.ui.selectedCareerId || activeCareerPlan.entries[0]?.id || '';
+  const retirementScenario = useMemo((): Scenario => ({
     ...scenario,
+    largePurchases: activeLargePurchases,
+    longTermPurchases: activeLongTermPurchases,
+    loans: activeLoans,
+    creditCards: activeCreditCards,
+    housing: activeHousing,
     careerPlan: {
-      ...scenario.careerPlan,
+      ...activeCareerPlan,
       enabled: false,
-      entries: scenario.careerPlan.entries.map((entry) => ({ ...entry, enabled: false }))
+      entries: activeCareerPlan.entries.map((entry) => ({ ...entry, enabled: false }))
     },
     lifeEvents: scenario.lifeEvents.filter((event) => event.type !== 'job_change' && event.type !== 'career_break')
-  };
-  const retirementProjection = projectScenario(retirementScenario);
-  const futureScenario: Scenario = {
+  }), [scenario, activeTimelineData]);
+  const retirementProjection = useTimedMemo('retirementProjection', () => projectScenario(retirementScenario), [retirementScenario]);
+  const futureScenario = useMemo((): Scenario => ({
     ...scenario,
+    largePurchases: activeLargePurchases,
+    longTermPurchases: activeLongTermPurchases,
+    loans: activeLoans,
+    creditCards: activeCreditCards,
+    housing: activeHousing,
+    careerPlan: activeCareerPlan,
     profile: {
       ...scenario.profile,
       currentAge,
       retirementAge: scenario.futureRetirement.useCareerEndAge
-        ? getCareerDerivedRetirementAge(scenario)
+        ? getCareerDerivedRetirementAge({ ...scenario, careerPlan: activeCareerPlan })
         : scenario.futureRetirement.retirementAge,
       retirementYears: scenario.futureRetirement.retirementYears
     }
-  };
-  const futureProjection = projectScenario(futureScenario);
+  }), [scenario, currentAge, activeTimelineData]);
+  const futureProjection = useTimedMemo('futureProjection', () => projectScenario(futureScenario), [futureScenario]);
   const hasEnabledCareers = futureScenario.careerPlan.entries.some((entry) => entry.enabled);
   const usesFinancePredictionResults = activeTab === 'careers' || activeTab === 'options';
   const projection = usesFinancePredictionResults ? futureProjection : retirementProjection;
@@ -699,6 +747,23 @@ const App = () => {
   const hideResultsPanel = hideResultsForExpenses;
   const displayedGraphYears = usesFinancePredictionResults && !hasEnabledCareers ? [] : graphProjection.years;
   const displayedPortfolioGraphYears = displayedGraphYears;
+  const filteredGraphYears = useMemo(() => {
+    if (displayedGraphYears.length === 0) return displayedGraphYears;
+    const minAge = displayedGraphYears[0].age;
+    const maxAge = displayedGraphYears[displayedGraphYears.length - 1].age;
+    const effectiveMin = graphAgeMin > minAge ? graphAgeMin : minAge;
+    const effectiveMax = graphAgeMax < maxAge ? graphAgeMax : maxAge;
+    if (effectiveMin <= minAge && effectiveMax >= maxAge) return displayedGraphYears;
+    return displayedGraphYears.filter((y) => y.age >= effectiveMin && y.age <= effectiveMax);
+  }, [displayedGraphYears, graphAgeMin, graphAgeMax]);
+
+  useEffect(() => {
+    if (displayedGraphYears.length > 0) {
+      setGraphAgeMin(displayedGraphYears[0].age);
+      const maxAge = Math.min(displayedGraphYears[displayedGraphYears.length - 1].age, futureScenario.profile.retirementAge + futureScenario.profile.retirementYears);
+      setGraphAgeMax(maxAge);
+    }
+  }, [displayedGraphYears.length > 0 ? displayedGraphYears[0]?.age : 0, displayedGraphYears.length > 0 ? displayedGraphYears[displayedGraphYears.length - 1]?.age : 0]);
   const displayedTableYears =
     usesFinancePredictionResults && !hasEnabledCareers ? [] : projection.years;
   const adjustedTableYears = useMemo(() => {
@@ -726,12 +791,12 @@ const App = () => {
       };
     });
   }, [showRealDollars, displayedTableYears]);
-  const graphYearsForMode = graphMode === 'portfolio' ? displayedPortfolioGraphYears : displayedGraphYears;
-  const displayedGraphEndingBalance = graphYearsForMode.length > 0 ? graphYearsForMode[graphYearsForMode.length - 1].endBalance : 0;
+  const graphYearsForMode = graphMode === 'portfolio' ? filteredGraphYears : filteredGraphYears;
+  const displayedGraphEndingBalance = displayedGraphYears.length > 0 ? displayedGraphYears[displayedGraphYears.length - 1].endBalance : 0;
   const displayedGraphBalanceForSummary = displayedGraphEndingBalance;
-  const displayedGraphEndAge = graphYearsForMode.length > 0 ? graphYearsForMode[graphYearsForMode.length - 1].age : currentAge;
-  const displayedGraphDepleted = graphYearsForMode.some((year) => year.depleted);
-  const displayedGraphDepletedAge = graphYearsForMode.find((year) => year.depleted)?.age ?? null;
+  const displayedGraphEndAge = displayedGraphYears.length > 0 ? displayedGraphYears[displayedGraphYears.length - 1].age : currentAge;
+  const displayedGraphDepleted = displayedGraphYears.some((year) => year.depleted);
+  const displayedGraphDepletedAge = displayedGraphYears.find((year) => year.depleted)?.age ?? null;
   const displayedGraphSummary =
     usesFinancePredictionResults && !hasEnabledCareers
       ? 'No careers are selected for estimation. Enable at least one career to display projections.'
@@ -747,7 +812,8 @@ const App = () => {
   const futureRetirementAge = futureScenario.profile.retirementAge;
   const futureEndAge = futureRetirementAge + futureScenario.profile.retirementYears;
   const futureCareerAge = getCareerDerivedRetirementAge(scenario);
-  const retirementAssetsFromCareers = scenario.careerPlan.entries.reduce((sum, entry) => {
+  const retirementAssetsFromCareers = useMemo(() =>
+    activeCareerPlan.entries.reduce((sum, entry) => {
     const careerBalances = futureProjection.careerEndSavingsBalances[entry.id];
 
     if (!careerBalances) {
@@ -755,12 +821,12 @@ const App = () => {
     }
 
     return sum + sumSavingsBalances(careerBalances);
-  }, 0);
+  }, 0), [activeCareerPlan.entries, futureProjection.careerEndSavingsBalances]);
 
-  const purchaseFlags: PurchaseFlag[] = (() => {
+  const purchaseFlags: PurchaseFlag[] = useMemo(() => {
     const raw: PurchaseFlag[] = [
-      ...scenario.largePurchases
-        .filter((p) => p.enabled && p.showOnGraph)
+      ...activeLargePurchases
+        .filter((p) => p.enabled && p.showOnGraph && (purchaseCategoryFilter.size === 0 || purchaseCategoryFilter.has(p.categoryId ?? null)))
         .map((p) => ({
           id: p.id,
           label: p.label,
@@ -769,7 +835,7 @@ const App = () => {
           type: 'large_purchase' as const,
           color: p.flagColor ?? ''
         })),
-      ...(scenario.longTermPurchases ?? [])
+      ...activeLongTermPurchases
         .filter((p) => p.enabled && p.showOnGraph)
         .map((p) => {
           const startAge = ageFromYearMonth(p.startYearMonth, scenario.options.dateOfBirth, currentAge, currentAge, 110);
@@ -782,7 +848,7 @@ const App = () => {
             color: p.flagColor ?? ''
           };
         }),
-      ...(scenario.loans ?? [])
+      ...activeLoans
         .filter((l) => l.enabled && l.showOnGraph)
         .map((l) => {
           const startAge = ageFromYearMonth(l.startYearMonth, scenario.options.dateOfBirth, currentAge, currentAge, 110);
@@ -795,7 +861,7 @@ const App = () => {
             color: l.flagColor ?? ''
           };
         }),
-      ...(scenario.housing ?? [])
+      ...activeHousing
         .filter((h) => h.enabled && h.showOnGraph)
         .map((h) => {
           const startAge = ageFromYearMonth(h.startYearMonth, scenario.options.dateOfBirth, currentAge, currentAge, 110);
@@ -823,12 +889,12 @@ const App = () => {
       }
     });
     return raw;
-  })();
+  }, [activeLargePurchases, activeLongTermPurchases, activeLoans, activeHousing, scenario.options.dateOfBirth, currentAge, purchaseCategoryFilter]);
 
-  const visibleFlags = purchaseFlags.filter((flag) => {
+  const visibleFlags = useMemo(() => purchaseFlags.filter((flag) => {
     if (flag.type === 'housing') return showHousingFlags;
     return showPurchaseFlags;
-  });
+  }), [purchaseFlags, showHousingFlags, showPurchaseFlags]);
 
   useEffect(() => {
     saveAppState({
@@ -838,10 +904,10 @@ const App = () => {
         selectedCareerId
       }
     });
-  }, [appState.ui, scenario, selectedCareerId]);
+  }, [appState.ui.activeTab, appState.ui.careersSubTab, appState.ui.expensesSubTab, scenario, selectedCareerId]);
 
   useEffect(() => {
-    if (selectedCareerId || scenario.careerPlan.entries.length === 0) {
+    if (selectedCareerId || activeCareerPlan.entries.length === 0) {
       return;
     }
 
@@ -849,10 +915,10 @@ const App = () => {
       ...currentState,
       ui: {
         ...currentState.ui,
-        selectedCareerId: scenario.careerPlan.entries[0].id
+        selectedCareerId: activeCareerPlan.entries[0].id
       }
     }));
-  }, [scenario.careerPlan.entries, selectedCareerId]);
+  }, [activeCareerPlan.entries, selectedCareerId]);
 
   useEffect(() => {
     if (availableNetWorthHistoryRanges.some((range) => range.id === netWorthHistoryRange)) {
@@ -1014,33 +1080,33 @@ const App = () => {
         ? { ...line, startAge: nextFutureRetirementAge }
         : line
     );
-    const normalizedLargePurchases = (nextScenario.largePurchases ?? []).map((purchase) => {
+    const normalizeLargePurchase = (purchase: Scenario['largePurchases'][number]) => {
       const sourceLines = normalizePurchaseSourceLinesToAccounts(purchase, normalizedNetWorth.bankAccounts ?? []);
       return {
         ...purchase,
-      enabled: Boolean(purchase.enabled),
-      yearMonth:
-        normalizeYearMonth(purchase.yearMonth) ||
-        formatYearMonthFromAge(toNumberOrFallback(purchase.age, resolvedAge), nextScenario.options.dateOfBirth, resolvedAge),
-      age: (() => {
-        const normalizedYearMonth =
+        enabled: Boolean(purchase.enabled),
+        yearMonth:
           normalizeYearMonth(purchase.yearMonth) ||
-          formatYearMonthFromAge(toNumberOrFallback(purchase.age, resolvedAge), nextScenario.options.dateOfBirth, resolvedAge);
-        const derivedAge = ageFromYearMonth(
-          normalizedYearMonth,
-          nextScenario.options.dateOfBirth,
-          resolvedAge,
-          resolvedAge,
-          110
-        );
+          formatYearMonthFromAge(toNumberOrFallback(purchase.age, resolvedAge), nextScenario.options.dateOfBirth, resolvedAge),
+        age: (() => {
+          const normalizedYearMonth =
+            normalizeYearMonth(purchase.yearMonth) ||
+            formatYearMonthFromAge(toNumberOrFallback(purchase.age, resolvedAge), nextScenario.options.dateOfBirth, resolvedAge);
+          const derivedAge = ageFromYearMonth(
+            normalizedYearMonth,
+            nextScenario.options.dateOfBirth,
+            resolvedAge,
+            resolvedAge,
+            110
+          );
 
-        return Math.floor(derivedAge ?? Math.max(resolvedAge, toNumberOrFallback(purchase.age, resolvedAge)));
-      })(),
-      amount: Math.max(0, toNumberOrFallback(purchase.amount, 0)),
-      sourceLines
+          return Math.floor(derivedAge ?? Math.max(resolvedAge, toNumberOrFallback(purchase.age, resolvedAge)));
+        })(),
+        amount: Math.max(0, toNumberOrFallback(purchase.amount, 0)),
+        sourceLines
+      };
     };
-    });
-    const normalizedLongTermPurchases = (nextScenario.longTermPurchases ?? []).map((purchase, index) => {
+    const normalizeLongTermPurchase = (purchase: Scenario['longTermPurchases'][number], index: number) => {
       const fallbackStartYearMonth = formatYearMonthFromAge(resolvedAge + 1, nextScenario.options.dateOfBirth, resolvedAge);
       const startYearMonth = normalizeYearMonth(purchase.startYearMonth) || fallbackStartYearMonth;
       const fallbackEndYearMonth = formatYearMonthFromAge(resolvedAge + 2, nextScenario.options.dateOfBirth, resolvedAge);
@@ -1066,8 +1132,8 @@ const App = () => {
         monthlyAmount: Math.max(0, toNumberOrFallback(purchase.monthlyAmount, 0)),
         sourceLines
       };
-    });
-    const normalizedLoans = (nextScenario.loans ?? []).map((loan, index) => ({
+    };
+    const normalizeLoan = (loan: Scenario['loans'][number], index: number) => ({
       id: typeof loan.id === 'string' && loan.id.trim().length > 0 ? loan.id : `loan-${index + 1}`,
       label: typeof loan.label === 'string' && loan.label.trim().length > 0 ? loan.label : `Loan ${index + 1}`,
       enabled: Boolean(loan.enabled),
@@ -1092,10 +1158,26 @@ const App = () => {
           : 'investments',
       paymentSource: (loan.paymentSource ?? 'income') as Scenario['loans'][number]['paymentSource'],
       downPaymentSource: loan.downPaymentSource as Scenario['loans'][number]['downPaymentSource']
-    }));
-    const normalizedCareerEntriesWithBankTargets = normalizedCareerEntries.map((entry) => ({
+    });
+    const normalizeCareerWithBankTargets = (entry: Scenario['careerPlan']['entries'][number]) => ({
       ...entry,
       sourceLines: normalizeCareerSourceLinesForBankAccounts(entry, normalizedNetWorth.bankAccounts ?? [])
+    });
+    const normalizedLargePurchases = (nextScenario.largePurchases ?? []).map(normalizeLargePurchase);
+    const normalizedLongTermPurchases = (nextScenario.longTermPurchases ?? []).map(normalizeLongTermPurchase);
+    const normalizedLoans = (nextScenario.loans ?? []).map(normalizeLoan);
+    const normalizedCareerEntriesWithBankTargets = normalizedCareerEntries.map(normalizeCareerWithBankTargets);
+    const normalizedTimelines = (nextScenario.timelines ?? []).map((timeline) => ({
+      ...timeline,
+      purchases: (timeline.purchases ?? []).map(normalizeLargePurchase),
+      longTermPurchases: (timeline.longTermPurchases ?? []).map(normalizeLongTermPurchase),
+      loans: (timeline.loans ?? []).map(normalizeLoan),
+      creditCards: timeline.creditCards ?? [],
+      careerPlan: {
+        enabled: timeline.careerPlan.enabled,
+        entries: (timeline.careerPlan.entries ?? []).map(normalizeCareerWithBankTargets)
+      },
+      housing: timeline.housing ?? []
     }));
 
     setAppState((currentState) => ({
@@ -1128,6 +1210,7 @@ const App = () => {
           sourceLines: effectiveWithdrawalSourceLines
         },
         largePurchases: normalizedLargePurchases,
+        timelines: normalizedTimelines,
         longTermPurchases: normalizedLongTermPurchases,
         loans: normalizedLoans,
         portfolio: { ...nextScenario.portfolio }
@@ -1135,7 +1218,7 @@ const App = () => {
     }));
   };
 
-  const updateSidebarTab = (nextTab: AppTab) => {
+  const updateSidebarTab = useCallback((nextTab: AppTab) => {
     setAppState((currentState) => ({
       ...currentState,
       ui: {
@@ -1144,9 +1227,9 @@ const App = () => {
         careersSubTab: nextTab === 'careers' && currentState.ui.activeTab !== 'careers' ? 'careers' : currentState.ui.careersSubTab
       }
     }));
-  };
+  }, []);
 
-  const updateCareersSubTab = (nextSubTab: FinancePredictionSubTab) => {
+  const updateCareersSubTab = useCallback((nextSubTab: FinancePredictionSubTab) => {
     setAppState((currentState) => ({
       ...currentState,
       ui: {
@@ -1154,9 +1237,9 @@ const App = () => {
         careersSubTab: nextSubTab
       }
     }));
-  };
+  }, []);
 
-  const resetScenario = () => {
+  const resetScenario = useCallback(() => {
     if (!window.confirm('Reset the scenario to default values? This will clear your current plan settings.')) {
       return;
     }
@@ -1170,9 +1253,9 @@ const App = () => {
         expensesSubTab: 'planning'
       }
     });
-  };
+  }, []);
 
-  const updateSelectedCareerId = (careerId: string) => {
+  const updateSelectedCareerId = useCallback((careerId: string) => {
     setAppState((currentState) => ({
       ...currentState,
       ui: {
@@ -1180,42 +1263,42 @@ const App = () => {
         selectedCareerId: careerId
       }
     }));
-  };
+  }, []);
 
   const updateCareer = (nextCareer: Scenario['careerPlan']['entries'][number]) => {
-    updateScenario({
-      ...scenario,
+    updateScenario(applyToActiveTimeline(({ careerPlan, ...rest }) => ({
+      ...rest,
       careerPlan: {
-        ...scenario.careerPlan,
-        entries: scenario.careerPlan.entries.map((career) => (career.id === nextCareer.id ? nextCareer : career))
+        ...careerPlan,
+        entries: careerPlan.entries.map((career) => (career.id === nextCareer.id ? nextCareer : career))
       }
-    });
+    })));
   };
 
   const addCareer = () => {
-    const nextIndex = scenario.careerPlan.entries.length;
+    const nextIndex = activeCareerPlan.entries.length;
     const entry = createDefaultCareerEntry(nextIndex, currentAge, scenario.profile.retirementAge);
 
-    updateScenario({
-      ...scenario,
+    updateScenario(applyToActiveTimeline(({ careerPlan, ...rest }) => ({
+      ...rest,
       careerPlan: {
-        ...scenario.careerPlan,
-        entries: [...scenario.careerPlan.entries, entry]
+        ...careerPlan,
+        entries: [...careerPlan.entries, entry]
       }
-    });
+    })));
     updateSelectedCareerId(entry.id);
   };
 
   const removeCareer = (careerId: string) => {
-    const remaining = scenario.careerPlan.entries.filter((career) => career.id !== careerId);
+    const remaining = activeCareerPlan.entries.filter((career) => career.id !== careerId);
 
-    updateScenario({
-      ...scenario,
+    updateScenario(applyToActiveTimeline(({ careerPlan, ...rest }) => ({
+      ...rest,
       careerPlan: {
-        ...scenario.careerPlan,
+        ...careerPlan,
         entries: remaining
       }
-    });
+    })));
 
     if (selectedCareerId === careerId) {
       updateSelectedCareerId(remaining[0]?.id ?? '');
@@ -1223,29 +1306,29 @@ const App = () => {
   };
 
   const duplicateCareer = (careerId: string) => {
-    const sourceIndex = scenario.careerPlan.entries.findIndex((career) => career.id === careerId);
+    const sourceIndex = activeCareerPlan.entries.findIndex((career) => career.id === careerId);
 
     if (sourceIndex < 0) {
       return;
     }
 
-    const source = scenario.careerPlan.entries[sourceIndex];
+    const source = activeCareerPlan.entries[sourceIndex];
     const duplicate = {
       ...source,
       id: makeCareerId(),
       label: `${source.label} Copy`
     };
-    const nextEntries = [...scenario.careerPlan.entries];
+    const nextEntries = [...activeCareerPlan.entries];
 
     nextEntries.splice(sourceIndex + 1, 0, duplicate);
 
-    updateScenario({
-      ...scenario,
+    updateScenario(applyToActiveTimeline(({ careerPlan, ...rest }) => ({
+      ...rest,
       careerPlan: {
-        ...scenario.careerPlan,
+        ...careerPlan,
         entries: nextEntries
       }
-    });
+    })));
     updateSelectedCareerId(duplicate.id);
   };
 
@@ -1254,25 +1337,25 @@ const App = () => {
       return;
     }
 
-    const fromIndex = scenario.careerPlan.entries.findIndex((career) => career.id === fromCareerId);
-    const toIndex = scenario.careerPlan.entries.findIndex((career) => career.id === toCareerId);
+    const fromIndex = activeCareerPlan.entries.findIndex((career) => career.id === fromCareerId);
+    const toIndex = activeCareerPlan.entries.findIndex((career) => career.id === toCareerId);
 
     if (fromIndex < 0 || toIndex < 0) {
       return;
     }
 
-    const nextEntries = [...scenario.careerPlan.entries];
+    const nextEntries = [...activeCareerPlan.entries];
     const [movingCareer] = nextEntries.splice(fromIndex, 1);
 
     nextEntries.splice(toIndex, 0, movingCareer);
 
-    updateScenario({
-      ...scenario,
+    updateScenario(applyToActiveTimeline(({ careerPlan, ...rest }) => ({
+      ...rest,
       careerPlan: {
-        ...scenario.careerPlan,
+        ...careerPlan,
         entries: nextEntries
       }
-    });
+    })));
   };
 
   const toggleAddOption = (category: CashflowCategory, checked: boolean) => {
@@ -1298,11 +1381,124 @@ const App = () => {
   };
 
   const addLargePurchase = () => {
-    const entry = createDefaultLargePurchase(currentAge, scenario.options.dateOfBirth);
+    setShowAddPurchaseModal(true);
+  };
 
+  type TimelineDomainData = {
+    purchases: Scenario['largePurchases'][number][];
+    longTermPurchases: Scenario['longTermPurchases'][number][];
+    loans: Scenario['loans'][number][];
+    creditCards: CreditCard[];
+    careerPlan: Scenario['careerPlan'];
+    housing: Scenario['housing'][number][];
+  };
+
+  const applyToActiveTimeline = (
+    transform: (data: TimelineDomainData) => TimelineDomainData
+  ): Scenario => {
+    const activeTimelineId = scenario.activeTimelineId ?? null;
+    const data: TimelineDomainData = {
+      purchases: activeLargePurchases,
+      longTermPurchases: activeLongTermPurchases,
+      loans: activeLoans,
+      creditCards: activeCreditCards,
+      careerPlan: activeCareerPlan,
+      housing: activeHousing
+    };
+    const next = transform(data);
+    if (!activeTimelineId) {
+      return {
+        ...scenario,
+        largePurchases: next.purchases,
+        longTermPurchases: next.longTermPurchases,
+        loans: next.loans,
+        creditCards: next.creditCards,
+        careerPlan: next.careerPlan,
+        housing: next.housing
+      };
+    }
+    return {
+      ...scenario,
+      timelines: (scenario.timelines ?? []).map((timeline) =>
+        timeline.id === activeTimelineId
+          ? {
+              ...timeline,
+              purchases: next.purchases,
+              longTermPurchases: next.longTermPurchases,
+              loans: next.loans,
+              creditCards: next.creditCards,
+              careerPlan: next.careerPlan,
+              housing: next.housing
+            }
+          : timeline
+      )
+    };
+  };
+
+  const confirmAddPurchase = (categoryId: string | null) => {
+    const entry = createDefaultLargePurchase(currentAge, scenario.options.dateOfBirth);
+    entry.categoryId = categoryId;
+
+    updateScenario(applyToActiveTimeline(({ purchases, ...rest }) => ({ ...rest, purchases: [...purchases, entry] })));
+
+    setShowAddPurchaseModal(false);
+  };
+
+  const cloneCareer = (career: Scenario['careerPlan']['entries'][number]) => ({
+    ...career,
+    sourceLines: career.sourceLines ? career.sourceLines.map((line) => ({ ...line })) : undefined,
+    paycheckInfo: career.paycheckInfo
+      ? { ...career.paycheckInfo, period: career.paycheckInfo.period ? { ...career.paycheckInfo.period } : undefined }
+      : undefined
+  });
+
+  const addTimeline = () => {
+    const label = `Timeline ${(scenario.timelines ?? []).length + 1}`;
+    const id = `timeline-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+    const timeline = {
+      id,
+      label,
+      purchases: activeLargePurchases.map((purchase) => ({
+        ...purchase,
+        sourceLines: purchase.sourceLines ? purchase.sourceLines.map((line) => ({ ...line })) : undefined
+      })),
+      longTermPurchases: activeLongTermPurchases.map((purchase) => ({
+        ...purchase,
+        sourceLines: purchase.sourceLines ? purchase.sourceLines.map((line) => ({ ...line })) : undefined
+      })),
+      loans: activeLoans.map((loan) => ({ ...loan })),
+      creditCards: activeCreditCards.map((cc) => ({ ...cc })),
+      careerPlan: { ...activeCareerPlan, entries: activeCareerPlan.entries.map(cloneCareer) },
+      housing: activeHousing.map((h) => ({ ...h }))
+    };
     updateScenario({
       ...scenario,
-      largePurchases: [...scenario.largePurchases, entry]
+      timelines: [...(scenario.timelines ?? []), timeline],
+      activeTimelineId: id
+    });
+  };
+
+  const switchTimeline = (timelineId: string | null) => {
+    updateScenario({
+      ...scenario,
+      activeTimelineId: timelineId
+    });
+  };
+
+  const renameTimeline = (timelineId: string, label: string) => {
+    updateScenario({
+      ...scenario,
+      timelines: (scenario.timelines ?? []).map((timeline) =>
+        timeline.id === timelineId ? { ...timeline, label } : timeline
+      )
+    });
+  };
+
+  const deleteTimeline = (timelineId: string) => {
+    updateScenario({
+      ...scenario,
+      timelines: (scenario.timelines ?? []).filter((timeline) => timeline.id !== timelineId),
+      activeTimelineId: scenario.activeTimelineId === timelineId ? null : scenario.activeTimelineId
     });
   };
 
@@ -1342,45 +1538,86 @@ const App = () => {
   };
 
   const updateLargePurchase = (purchaseId: string, nextPurchase: Scenario['largePurchases'][number]) => {
-    updateScenario({
-      ...scenario,
-      largePurchases: scenario.largePurchases.map((purchase) => (purchase.id === purchaseId ? nextPurchase : purchase))
-    });
+    updateScenario(applyToActiveTimeline(({ purchases, ...rest }) => ({
+      ...rest,
+      purchases: purchases.map((purchase) => (purchase.id === purchaseId ? nextPurchase : purchase))
+    })));
   };
 
   const removeLargePurchase = (purchaseId: string) => {
+    updateScenario(applyToActiveTimeline(({ purchases, ...rest }) => ({
+      ...rest,
+      purchases: purchases.filter((purchase) => purchase.id !== purchaseId)
+    })));
+  };
+
+  const addPurchaseCategory = () => {
+    const label = newPurchaseCategoryLabel.trim();
+    if (label.length === 0) return;
+    const id = `purchase-category-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
     updateScenario({
       ...scenario,
-      largePurchases: scenario.largePurchases.filter((purchase) => purchase.id !== purchaseId)
+      purchaseCategories: [...scenario.purchaseCategories, { id, label }]
+    });
+    setNewPurchaseCategoryLabel('');
+  };
+
+  const renamePurchaseCategory = (categoryId: string, label: string) => {
+    updateScenario({
+      ...scenario,
+      purchaseCategories: scenario.purchaseCategories.map((cat) =>
+        cat.id === categoryId ? { ...cat, label } : cat
+      )
+    });
+  };
+
+  const removePurchaseCategory = (categoryId: string) => {
+    updateScenario({
+      ...scenario,
+      purchaseCategories: scenario.purchaseCategories.filter((cat) => cat.id !== categoryId),
+      largePurchases: scenario.largePurchases.map((purchase) =>
+        purchase.categoryId === categoryId ? { ...purchase, categoryId: null } : purchase
+      ),
+      timelines: (scenario.timelines ?? []).map((timeline) => ({
+        ...timeline,
+        purchases: (timeline.purchases ?? []).map((purchase) =>
+          purchase.categoryId === categoryId ? { ...purchase, categoryId: null } : purchase
+        )
+      }))
+    });
+    setPurchaseCategoryFilter((prev) => {
+      const next = new Set(prev);
+      next.delete(categoryId);
+      return next;
     });
   };
 
   const addLongTermPurchase = () => {
     const entry = createDefaultLongTermPurchase(currentAge, scenario.options.dateOfBirth);
 
-    updateScenario({
-      ...scenario,
-      longTermPurchases: [...(scenario.longTermPurchases ?? []), entry]
-    });
+    updateScenario(applyToActiveTimeline(({ longTermPurchases, ...rest }) => ({
+      ...rest,
+      longTermPurchases: [...longTermPurchases, entry]
+    })));
   };
 
   const updateLongTermPurchase = (
     purchaseId: string,
     nextPurchase: Scenario['longTermPurchases'][number]
   ) => {
-    updateScenario({
-      ...scenario,
-      longTermPurchases: (scenario.longTermPurchases ?? []).map((purchase) =>
+    updateScenario(applyToActiveTimeline(({ longTermPurchases, ...rest }) => ({
+      ...rest,
+      longTermPurchases: longTermPurchases.map((purchase) =>
         purchase.id === purchaseId ? nextPurchase : purchase
       )
-    });
+    })));
   };
 
   const removeLongTermPurchase = (purchaseId: string) => {
-    updateScenario({
-      ...scenario,
-      longTermPurchases: (scenario.longTermPurchases ?? []).filter((purchase) => purchase.id !== purchaseId)
-    });
+    updateScenario(applyToActiveTimeline(({ longTermPurchases, ...rest }) => ({
+      ...rest,
+      longTermPurchases: longTermPurchases.filter((purchase) => purchase.id !== purchaseId)
+    })));
   };
 
   const applyPurchaseFundingSource = <T extends Scenario['largePurchases'][number] | Scenario['longTermPurchases'][number]>(
@@ -1403,67 +1640,88 @@ const App = () => {
   const addLoan = () => {
     const entry = createDefaultLoan(currentAge, scenario.options.dateOfBirth);
 
-    updateScenario({
-      ...scenario,
-      loans: [...(scenario.loans ?? []), entry]
-    });
+    updateScenario(applyToActiveTimeline(({ loans, ...rest }) => ({
+      ...rest,
+      loans: [...loans, entry]
+    })));
   };
 
   const updateLoan = (loanId: string, nextLoan: Scenario['loans'][number]) => {
-    updateScenario({
-      ...scenario,
-      loans: (scenario.loans ?? []).map((loan) => (loan.id === loanId ? nextLoan : loan))
-    });
+    updateScenario(applyToActiveTimeline(({ loans, ...rest }) => ({
+      ...rest,
+      loans: loans.map((loan) => (loan.id === loanId ? nextLoan : loan))
+    })));
   };
 
   const removeLoan = (loanId: string) => {
-    updateScenario({
-      ...scenario,
-      loans: (scenario.loans ?? []).filter((loan) => loan.id !== loanId)
-    });
+    updateScenario(applyToActiveTimeline(({ loans, ...rest }) => ({
+      ...rest,
+      loans: loans.filter((loan) => loan.id !== loanId)
+    })));
+  };
+
+  const addCreditCard = () => {
+    updateScenario(applyToActiveTimeline(({ creditCards, ...rest }) => ({
+      ...rest,
+      creditCards: [...creditCards, createDefaultCreditCard()]
+    })));
+  };
+
+  const updateCreditCard = (cardId: string, nextCard: CreditCard) => {
+    updateScenario(applyToActiveTimeline(({ creditCards, ...rest }) => ({
+      ...rest,
+      creditCards: creditCards.map((cc) => (cc.id === cardId ? nextCard : cc))
+    })));
+  };
+
+  const removeCreditCard = (cardId: string) => {
+    updateScenario(applyToActiveTimeline(({ creditCards, ...rest }) => ({
+      ...rest,
+      creditCards: creditCards.filter((cc) => cc.id !== cardId)
+    })));
   };
 
   const addHousing = (type: 'mortgage' | 'rental') => {
     const entry = type === 'mortgage'
       ? createDefaultHousingEntry(currentAge, scenario.options.dateOfBirth)
       : createDefaultRentalEntry(currentAge, scenario.options.dateOfBirth);
-    updateScenario({
-      ...scenario,
-      housing: [...(scenario.housing ?? []), entry]
-    });
+    updateScenario(applyToActiveTimeline(({ housing, ...rest }) => ({
+      ...rest,
+      housing: [...housing, entry]
+    })));
   };
 
   const updateHousing = (housingId: string, nextHousing: Scenario['housing'][number]) => {
-    updateScenario({
-      ...scenario,
-      housing: (scenario.housing ?? []).map((h) => (h.id === housingId ? nextHousing : h))
-    });
+    updateScenario(applyToActiveTimeline(({ housing, ...rest }) => ({
+      ...rest,
+      housing: housing.map((h) => (h.id === housingId ? nextHousing : h))
+    })));
   };
 
   const removeHousing = (housingId: string) => {
-    updateScenario({
-      ...scenario,
-      housing: (scenario.housing ?? []).filter((h) => h.id !== housingId)
-    });
+    updateScenario(applyToActiveTimeline(({ housing, ...rest }) => ({
+      ...rest,
+      housing: housing.filter((h) => h.id !== housingId)
+    })));
   };
 
   const handleFlagColorChange = (flagId: string, color: string) => {
-    const matchLarge = scenario.largePurchases.find((p) => p.id === flagId);
+    const matchLarge = activeLargePurchases.find((p) => p.id === flagId);
     if (matchLarge) {
       updateLargePurchase(flagId, { ...matchLarge, flagColor: color });
       return;
     }
-    const matchLongTerm = (scenario.longTermPurchases ?? []).find((p) => p.id === flagId);
+    const matchLongTerm = activeLongTermPurchases.find((p) => p.id === flagId);
     if (matchLongTerm) {
       updateLongTermPurchase(flagId, { ...matchLongTerm, flagColor: color });
       return;
     }
-    const matchLoan = (scenario.loans ?? []).find((l) => l.id === flagId);
+    const matchLoan = activeLoans.find((l) => l.id === flagId);
     if (matchLoan) {
       updateLoan(flagId, { ...matchLoan, flagColor: color });
       return;
     }
-    const matchHousing = (scenario.housing ?? []).find((h) => h.id === flagId);
+    const matchHousing = activeHousing.find((h) => h.id === flagId);
     if (matchHousing) {
       updateHousing(flagId, { ...matchHousing, flagColor: color });
     }
@@ -2425,7 +2683,7 @@ const App = () => {
     <>
       <Panel title="Career Timeline" className="panel-wide">
         <CareerPlanEditor
-          value={scenario.careerPlan}
+          value={activeCareerPlan}
           selectedCareerId={selectedCareerId}
           onSelectCareer={updateSelectedCareerId}
         onChangeCareer={updateCareer}
@@ -2541,7 +2799,11 @@ const App = () => {
   };
 
   const sortedLargePurchases = useMemo(() => {
-    if (!purchaseSort.column) return scenario.largePurchases;
+    let items = activeLargePurchases;
+    if (purchaseCategoryFilter.size > 0) {
+      items = items.filter((p) => purchaseCategoryFilter.has(p.categoryId ?? null));
+    }
+    if (!purchaseSort.column) return items;
     const { column, direction } = purchaseSort;
     const fundingLabel = (fs: string | undefined) => {
       if (!fs || fs === 'income') return 'Income';
@@ -2549,7 +2811,7 @@ const App = () => {
       const account = accountId ? bankAccounts.find((a) => a.id === accountId) : null;
       return account ? account.label : fs;
     };
-    return [...scenario.largePurchases].sort((a, b) => {
+    return [...items].sort((a, b) => {
       let cmp = 0;
       if (column === 'yearMonth') {
         cmp = a.yearMonth.localeCompare(b.yearMonth);
@@ -2560,7 +2822,7 @@ const App = () => {
       }
       return direction === 'desc' ? -cmp : cmp;
     });
-  }, [scenario.largePurchases, purchaseSort, bankAccounts]);
+  }, [activeLargePurchases, purchaseSort, purchaseCategoryFilter, bankAccounts]);
 
   const renderPurchasesTab = () => (
     <>
@@ -2569,8 +2831,50 @@ const App = () => {
           <button type="button" className="secondary-button" onClick={addLargePurchase}>
             + Purchase
           </button>
+          <button type="button" className="secondary-button" onClick={() => setShowPurchaseCategoryManager(true)}>
+            Categories
+          </button>
         </div>
-        {scenario.largePurchases.length === 0 ? (
+        {scenario.purchaseCategories.length > 0 && (
+          <div className="purchase-category-chips">
+            <span className="chip-group-label">Categories:</span>
+            <button
+              type="button"
+              className={`purchase-category-chip${purchaseCategoryFilter.has(null) ? ' active' : ''}`}
+              onClick={() => setPurchaseCategoryFilter((prev) => {
+                const next = new Set(prev);
+                if (next.has(null)) next.delete(null); else next.add(null);
+                return next;
+              })}
+            >
+              Uncategorized
+            </button>
+            {scenario.purchaseCategories.map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                className={`purchase-category-chip${purchaseCategoryFilter.has(cat.id) ? ' active' : ''}`}
+                onClick={() => setPurchaseCategoryFilter((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(cat.id)) next.delete(cat.id); else next.add(cat.id);
+                  return next;
+                })}
+              >
+                {cat.label}
+              </button>
+            ))}
+            {purchaseCategoryFilter.size > 0 && (
+              <button
+                type="button"
+                className="purchase-category-chip clear"
+                onClick={() => setPurchaseCategoryFilter(new Set())}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
+        {activeLargePurchases.length === 0 ? (
           <p className="subtle">Add a purchase with year-month, value, and source amounts per account.</p>
         ) : (
           <div className="table-wrap">
@@ -2580,6 +2884,7 @@ const App = () => {
                   <th title="Enabled">Enabled</th>
                   <th title="Show flag on graph">Flag</th>
                   <th>Name</th>
+                  <th>Category</th>
                   <th title="Year-Month" className="sortable-th" onClick={() => togglePurchaseSort('yearMonth')}>
                     <span>Year-Month</span>
                     <span className="sort-arrows" aria-hidden="true">
@@ -2684,6 +2989,18 @@ const App = () => {
                         />
                       </td>
                       <td>
+                        <select
+                          aria-label="Purchase Category"
+                          value={purchase.categoryId ?? ''}
+                          onChange={(event) => updateLargePurchase(purchase.id, { ...purchase, categoryId: event.target.value || null })}
+                        >
+                          <option value="">-</option>
+                          {scenario.purchaseCategories.map((cat) => (
+                            <option key={cat.id} value={cat.id}>{cat.label}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
                         <YearMonthInput
                           label="Purchase"
                           value={purchase.yearMonth}
@@ -2754,7 +3071,7 @@ const App = () => {
             + Long-Term Purchase
           </button>
         </div>
-        {(scenario.longTermPurchases ?? []).length === 0 ? (
+        {activeLongTermPurchases.length === 0 ? (
           <p className="subtle">Add long-term purchases with monthly spending from selected accounts.</p>
         ) : (
           <div className="table-wrap">
@@ -2769,11 +3086,12 @@ const App = () => {
                   <th>End Date</th>
                   <th>Monthly Amount</th>
                   <th>Pay From</th>
+                  <th>Account Balance</th>
                   <th>Remove</th>
                 </tr>
               </thead>
               <tbody>
-                {(scenario.longTermPurchases ?? []).map((purchase) => {
+                {activeLongTermPurchases.map((purchase) => {
                   const fundingShortfall = futureProjection.longTermPurchaseFundingShortfalls[purchase.id] ?? 0;
                   const hasFundingShortfall = fundingShortfall > 0.01;
                   const incomeStatus = futureProjection.incomeFundedItemStatuses[purchase.id];
@@ -2903,7 +3221,31 @@ const App = () => {
                               {option.label}
                             </option>
                           ))}
-                        </select>
+                          </select>
+                      </td>
+                      <td>
+                        {fundingSourceValue === 'income' ? '--' : (() => {
+                          const [, accountId] = fundingSourceValue.split(':', 2);
+                          if (!accountId) return 'N/A';
+                          const endYearMonth = purchase.endMode === 'endDate'
+                            ? purchase.endYearMonth
+                            : deriveEndYearMonthFromDuration(purchase.startYearMonth, purchase.durationMonths);
+                          const endAge = ageFromYearMonth(endYearMonth, scenario.options.dateOfBirth, currentAge, currentAge, 110);
+                          if (endAge === null) return 'N/A';
+                          const years = projection.years;
+                          let targetYear = years[0];
+                          let closestDist = Infinity;
+                          for (const year of years) {
+                            const dist = Math.abs(year.age - endAge);
+                            if (dist < closestDist) {
+                              closestDist = dist;
+                              targetYear = year;
+                            }
+                          }
+                          if (!targetYear) return 'N/A';
+                          const balance = targetYear.accountBalancesById[accountId];
+                          return Number.isFinite(balance) ? formatCurrency(balance) : 'N/A';
+                        })()}
                       </td>
                       <td>
                         <button type="button" className="text-button" onClick={() => removeLongTermPurchase(purchase.id)}>
@@ -2928,7 +3270,7 @@ const App = () => {
             + Loan
           </button>
         </div>
-        {(scenario.loans ?? []).length === 0 ? (
+        {activeLoans.length === 0 ? (
           <p className="subtle">Add loans to track balances, rates, payments, and payment source accounts.</p>
         ) : (
           <div className="table-wrap">
@@ -2953,7 +3295,7 @@ const App = () => {
                 </tr>
               </thead>
               <tbody>
-                {(scenario.loans ?? []).map((loan) => {
+                {activeLoans.map((loan) => {
                   const totalMonthlyPayment = loan.minimumMonthlyPayment + loan.extraMonthlyPayment;
                   const payoffMonths = estimateLoanPayoffMonths(loan.currentBalance, loan.annualInterestRate, totalMonthlyPayment);
                   const fundingShortfall = futureProjection.loanFundingShortfalls[loan.id] ?? 0;
@@ -3140,6 +3482,80 @@ const App = () => {
           Estimated payoff assumes fixed monthly payments and APR with no new borrowing.
         </p>
       </Panel>
+
+      {showAddPurchaseModal && (
+        <div className="expense-modal-backdrop" onClick={() => setShowAddPurchaseModal(false)}>
+          <div className="expense-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="expense-modal-header">
+              <strong>Choose Purchase Category</strong>
+              <button type="button" className="text-button" onClick={() => setShowAddPurchaseModal(false)}>Cancel</button>
+            </div>
+            <div className="purchase-category-list">
+              <button
+                type="button"
+                className="purchase-category-option"
+                onClick={() => confirmAddPurchase(null)}
+              >
+                Uncategorized
+              </button>
+              {scenario.purchaseCategories.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  className="purchase-category-option"
+                  onClick={() => confirmAddPurchase(cat.id)}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+            {scenario.purchaseCategories.length === 0 && (
+              <p className="subtle" style={{ textAlign: 'center', padding: '0.25rem 0' }}>
+                No categories defined. Use the Categories button to add one, or select Uncategorized.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {showPurchaseCategoryManager && (
+        <div className="expense-modal-backdrop" onClick={() => setShowPurchaseCategoryManager(false)}>
+          <div className="expense-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="expense-modal-header">
+              <strong>Manage Purchase Categories</strong>
+              <button type="button" className="text-button" onClick={() => setShowPurchaseCategoryManager(false)}>Close</button>
+            </div>
+            <div className="purchase-category-list">
+              {scenario.purchaseCategories.length === 0 && (
+                <p className="subtle">No categories defined yet.</p>
+              )}
+              {scenario.purchaseCategories.map((cat) => (
+                <div key={cat.id} className="purchase-category-row">
+                  <input
+                    type="text"
+                    value={cat.label}
+                    onChange={(event) => renamePurchaseCategory(cat.id, event.target.value)}
+                  />
+                  <button type="button" className="text-button danger-text" onClick={() => removePurchaseCategory(cat.id)}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="purchase-category-add">
+              <input
+                type="text"
+                value={newPurchaseCategoryLabel}
+                onChange={(event) => setNewPurchaseCategoryLabel(event.target.value)}
+                placeholder="New category name"
+                onKeyDown={(event) => { if (event.key === 'Enter') addPurchaseCategory(); }}
+              />
+              <button type="button" className="secondary-button" onClick={addPurchaseCategory}>
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 
@@ -3245,7 +3661,7 @@ const App = () => {
   );
 
   const renderHousingTab = () => {
-    const housing = scenario.housing ?? [];
+    const housing = activeHousing;
     const mortgages = housing.filter((h) => h.housingType === 'mortgage');
     const rentals = housing.filter((h) => h.housingType === 'rental');
 
@@ -3260,8 +3676,6 @@ const App = () => {
       const totalMonthly = isMortgage
         ? monthlyPI + h.extraMonthlyPayment + h.propertyTaxYearly / 12 + h.homeInsuranceYearly / 12 + h.hoaMonthly + h.maintenanceMonthly + h.pmiMonthly
         : h.monthlyRent + h.propertyTaxYearly / 12 + h.homeInsuranceYearly / 12 + h.hoaMonthly + h.maintenanceMonthly;
-      const payoff = projection?.housingPayoffMonths?.[h.id];
-      const payoffText = payoff != null ? `${payoff} mo` : '';
       const shortfall = projection?.housingFundingShortfalls?.[h.id] ?? 0;
       const incomeStatus = projection?.incomeFundedItemStatuses?.[h.id];
       const incomeShortfall = incomeStatus?.status === 'shortfall';
@@ -3285,7 +3699,6 @@ const App = () => {
           <td><input type="checkbox" checked={h.showOnGraph} onChange={(e) => updateHousing(h.id, { ...h, showOnGraph: e.target.checked })} /></td>
           <td><input type="text" value={h.label} onChange={(e) => updateHousing(h.id, { ...h, label: e.target.value })} /></td>
           <td><YearMonthInput label="Start" value={h.startYearMonth} onChange={(next) => updateHousing(h.id, { ...h, startYearMonth: next })} /></td>
-          {h.housingType === 'rental' && <td><YearMonthInput label="End" value={h.endYearMonth} onChange={(next) => updateHousing(h.id, { ...h, endYearMonth: next })} /></td>}
           {isMortgage && (
             <>
               <td><BufferedNumberInput value={h.purchasePrice} min={0} max={50000000} step={1000} onCommit={(next) => updateHousing(h.id, { ...h, purchasePrice: next })} /></td>
@@ -3297,47 +3710,30 @@ const App = () => {
                 </select>
               </td>
               <td><BufferedNumberInput value={h.annualInterestRate} min={0} max={80} step={0.1} onCommit={(next) => updateHousing(h.id, { ...h, annualInterestRate: next })} /></td>
-              <td><BufferedNumberInput value={h.loanTermYears} min={1} max={50} step={1} onCommit={(next) => updateHousing(h.id, { ...h, loanTermYears: next })} /></td>
-              <td>{formatCurrency(monthlyPI)}</td>
               <td><BufferedNumberInput value={h.pmiMonthly} min={0} max={10000} step={10} onCommit={(next) => updateHousing(h.id, { ...h, pmiMonthly: next })} /></td>
-              <td><BufferedNumberInput value={h.appreciationRate} min={0} max={30} step={0.1} onCommit={(next) => updateHousing(h.id, { ...h, appreciationRate: next })} /></td>
-              <td><YearMonthInput label="Sell" value={h.sellYearMonth} onChange={(next) => updateHousing(h.id, { ...h, sellYearMonth: next })} /></td>
-              <td>
-                <select aria-label="Sale Proceeds Account" value={h.saleProceedsAccountId ?? ''} onChange={(e) => updateHousing(h.id, { ...h, saleProceedsAccountId: e.target.value || undefined })}>
-                  <option value="">-</option>
-                  {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-                </select>
-              </td>
-              <td>{payoffText}</td>
             </>
           )}
-          {!isMortgage && (
-            <td><BufferedNumberInput value={h.monthlyRent} min={0} max={100000} step={50} onCommit={(next) => updateHousing(h.id, { ...h, monthlyRent: next })} /></td>
-          )}
-          <td><BufferedNumberInput value={h.propertyTaxYearly} min={0} max={500000} step={100} onCommit={(next) => updateHousing(h.id, { ...h, propertyTaxYearly: next })} /></td>
-          <td><BufferedNumberInput value={h.homeInsuranceYearly} min={0} max={100000} step={50} onCommit={(next) => updateHousing(h.id, { ...h, homeInsuranceYearly: next })} /></td>
-          <td><BufferedNumberInput value={h.hoaMonthly} min={0} max={50000} step={10} onCommit={(next) => updateHousing(h.id, { ...h, hoaMonthly: next })} /></td>
-          <td><BufferedNumberInput value={h.maintenanceMonthly} min={0} max={50000} step={10} onCommit={(next) => updateHousing(h.id, { ...h, maintenanceMonthly: next })} /></td>
-          <td><BufferedNumberInput value={h.rentalIncomeMonthly} min={0} max={100000} step={50} onCommit={(next) => updateHousing(h.id, { ...h, rentalIncomeMonthly: next })} /></td>
-          <td>
-            <select aria-label="Rental Income Account" value={h.rentalIncomeAccountId ?? ''} onChange={(e) => updateHousing(h.id, { ...h, rentalIncomeAccountId: e.target.value || undefined })}>
-              <option value="">-</option>
-              {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-            </select>
-          </td>
-          <td>
-            <select aria-label="Pay From" value={h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, paymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
-              <option value="income">Income</option>
-              {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </td>
           <td>{formatCurrency(totalMonthly)}</td>
+          {!isMortgage && (
+            <td>
+              <select aria-label="Pay From" value={h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, paymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
+                <option value="income">Income</option>
+                {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </td>
+          )}
+          <td>
+            <button type="button" className="secondary-button" onClick={() => setEditingHousingId(h.id)}>
+              Edit
+            </button>
+          </td>
           <td><button type="button" className="text-button" onClick={() => removeHousing(h.id)}>Remove</button></td>
         </tr>
       );
     };
 
     return (
+      <>
       <Panel title="Housing Expenses" className="panel-wide">
         <div className="career-actions">
           <button type="button" className="secondary-button" onClick={() => addHousing('mortgage')}>
@@ -3359,21 +3755,9 @@ const App = () => {
                   <th>Down Pay</th>
                   <th>Down From</th>
                   <th>APR %</th>
-                  <th>Term yrs</th>
-                  <th>P&amp;I/mo</th>
                   <th>PMI/mo</th>
-                  <th>Apprec%</th>
-                  <th>Sell Date</th>
-                  <th>Sell To</th>
-                  <th>Est Payoff</th>
-                  <th>PropTax/yr</th>
-                  <th>Ins/yr</th>
-                  <th>HOA/mo</th>
-                  <th>Maint/mo</th>
-                  <th>Rent Inc</th>
-                  <th>Inc To</th>
-                  <th>Pay From</th>
                   <th>Total/mo</th>
+                  <th>Edit</th>
                   <th>Remove</th>
                 </tr>
               </thead>
@@ -3398,16 +3782,9 @@ const App = () => {
                   <th>Flag</th>
                   <th>Name</th>
                   <th>Start</th>
-                  <th>End Date</th>
-                  <th>Monthly Rent</th>
-                  <th>PropTax/yr</th>
-                  <th>Ins/yr</th>
-                  <th>HOA/mo</th>
-                  <th>Maint/mo</th>
-                  <th>Rent Inc</th>
-                  <th>Inc To</th>
-                  <th>Pay From</th>
                   <th>Total/mo</th>
+                  <th>Pay From</th>
+                  <th>Edit</th>
                   <th>Remove</th>
                 </tr>
               </thead>
@@ -3422,6 +3799,129 @@ const App = () => {
           </p>
         )}
       </Panel>
+
+      {editingHousingId && (() => {
+        const h = housing.find((entry) => entry.id === editingHousingId);
+        if (!h) return null;
+        const isMortgage = h.housingType === 'mortgage';
+        return (
+          <div className="expense-modal-backdrop" onClick={() => setEditingHousingId(null)}>
+            <div className="expense-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="expense-modal-header">
+                <strong>Edit: {h.label}</strong>
+                <button type="button" className="secondary-button" onClick={() => setEditingHousingId(null)}>Done</button>
+              </div>
+              <div className="cc-edit-form">
+                <label>
+                  <span>Name</span>
+                  <input type="text" value={h.label} onChange={(e) => updateHousing(h.id, { ...h, label: e.target.value })} />
+                </label>
+                <label>
+                  <span>Start Year-Month</span>
+                  <YearMonthInput label="Start" value={h.startYearMonth} onChange={(next) => updateHousing(h.id, { ...h, startYearMonth: next })} />
+                </label>
+                {isMortgage && (
+                  <>
+                    <label>
+                      <span>Purchase Price</span>
+                      <BufferedNumberInput value={h.purchasePrice} min={0} max={50000000} step={1000} onCommit={(v) => updateHousing(h.id, { ...h, purchasePrice: v })} />
+                    </label>
+                    <label>
+                      <span>Down Payment</span>
+                      <BufferedNumberInput value={h.downPayment} min={0} max={50000000} step={1000} onCommit={(v) => updateHousing(h.id, { ...h, downPayment: v })} />
+                    </label>
+                    <label>
+                      <span>Down Payment Source</span>
+                      <select value={h.downPaymentSource ?? h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, downPaymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
+                        <option value="income">Income</option>
+                        {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span>APR %</span>
+                      <BufferedNumberInput value={h.annualInterestRate} min={0} max={80} step={0.1} onCommit={(v) => updateHousing(h.id, { ...h, annualInterestRate: v })} />
+                    </label>
+                    <label>
+                      <span>Loan Term (years)</span>
+                      <BufferedNumberInput value={h.loanTermYears} min={1} max={50} step={1} onCommit={(v) => updateHousing(h.id, { ...h, loanTermYears: v })} />
+                    </label>
+                    <label>
+                      <span>PMI/mo</span>
+                      <BufferedNumberInput value={h.pmiMonthly} min={0} max={10000} step={10} onCommit={(v) => updateHousing(h.id, { ...h, pmiMonthly: v })} />
+                    </label>
+                    <label>
+                      <span>Appreciation Rate %</span>
+                      <BufferedNumberInput value={h.appreciationRate} min={0} max={30} step={0.1} onCommit={(v) => updateHousing(h.id, { ...h, appreciationRate: v })} />
+                    </label>
+                    <label>
+                      <span>Sell Year-Month</span>
+                      <YearMonthInput label="Sell" value={h.sellYearMonth} onChange={(next) => updateHousing(h.id, { ...h, sellYearMonth: next })} />
+                    </label>
+                    <label>
+                      <span>Sale Proceeds Account</span>
+                      <select value={h.saleProceedsAccountId ?? ''} onChange={(e) => updateHousing(h.id, { ...h, saleProceedsAccountId: e.target.value || undefined })}>
+                        <option value="">-</option>
+                        {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Extra Monthly Payment</span>
+                      <BufferedNumberInput value={h.extraMonthlyPayment} min={0} max={50000} step={50} onCommit={(v) => updateHousing(h.id, { ...h, extraMonthlyPayment: v })} />
+                    </label>
+                  </>
+                )}
+                {!isMortgage && (
+                  <>
+                    <label>
+                      <span>Monthly Rent</span>
+                      <BufferedNumberInput value={h.monthlyRent} min={0} max={100000} step={50} onCommit={(v) => updateHousing(h.id, { ...h, monthlyRent: v })} />
+                    </label>
+                    <label>
+                      <span>End Year-Month</span>
+                      <YearMonthInput label="End" value={h.endYearMonth} onChange={(next) => updateHousing(h.id, { ...h, endYearMonth: next })} />
+                    </label>
+                  </>
+                )}
+                <label>
+                  <span>Property Tax/yr</span>
+                  <BufferedNumberInput value={h.propertyTaxYearly} min={0} max={500000} step={100} onCommit={(v) => updateHousing(h.id, { ...h, propertyTaxYearly: v })} />
+                </label>
+                <label>
+                  <span>Home Insurance/yr</span>
+                  <BufferedNumberInput value={h.homeInsuranceYearly} min={0} max={100000} step={50} onCommit={(v) => updateHousing(h.id, { ...h, homeInsuranceYearly: v })} />
+                </label>
+                <label>
+                  <span>HOA/mo</span>
+                  <BufferedNumberInput value={h.hoaMonthly} min={0} max={50000} step={10} onCommit={(v) => updateHousing(h.id, { ...h, hoaMonthly: v })} />
+                </label>
+                <label>
+                  <span>Maintenance/mo</span>
+                  <BufferedNumberInput value={h.maintenanceMonthly} min={0} max={50000} step={10} onCommit={(v) => updateHousing(h.id, { ...h, maintenanceMonthly: v })} />
+                </label>
+                <label>
+                  <span>Rental Income/mo</span>
+                  <BufferedNumberInput value={h.rentalIncomeMonthly} min={0} max={100000} step={50} onCommit={(v) => updateHousing(h.id, { ...h, rentalIncomeMonthly: v })} />
+                </label>
+                <label>
+                  <span>Rental Income Account</span>
+                  <select value={h.rentalIncomeAccountId ?? ''} onChange={(e) => updateHousing(h.id, { ...h, rentalIncomeAccountId: e.target.value || undefined })}>
+                    <option value="">-</option>
+                    {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>Pay From</span>
+                  <select value={h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, paymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
+                    <option value="income">Income</option>
+                    {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </label>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      </>
     );
   };
 
@@ -4245,9 +4745,8 @@ const App = () => {
                 </button>
               ))}
             </div>
-            {expensesSubTab === 'planning' ? (
-              renderExpensesTab()
-            ) : (
+            {expensesSubTab === 'planning' && renderExpensesTab()}
+            {expensesSubTab === 'tracking' && (
               <Panel title="Expense Tracking">
                 <div className="career-actions">
                   <button
@@ -4299,6 +4798,317 @@ const App = () => {
                 <p className="subtle">Expense tracking view coming soon.</p>
               </Panel>
             )}
+            {expensesSubTab === 'creditCards' && (
+              <>
+                <Panel title="Credit Cards" className="panel-wide">
+                  <div className="career-actions">
+                    <button type="button" className="secondary-button" onClick={addCreditCard}>
+                      + Credit Card
+                    </button>
+                  </div>
+                  {activeCreditCards.length === 0 ? (
+                    <p className="subtle">Add credit cards to track balances, interest, and payments.</p>
+                  ) : (
+                    <div className="table-wrap">
+                      <table className="purchases-table">
+                        <thead>
+                          <tr>
+                            <th>Enabled</th>
+                            <th>Name</th>
+                            <th>Balance</th>
+                            <th>Due Date</th>
+                            <th>Monthly Payment</th>
+                            <th>Pay From</th>
+                            <th>Edit</th>
+                            <th>Remove</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeCreditCards.map((cc) => (
+                            <tr key={cc.id} className="purchase-row">
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  checked={cc.enabled}
+                                  onChange={(e) => updateCreditCard(cc.id, { ...cc, enabled: e.target.checked })}
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  type="text"
+                                  value={cc.label}
+                                  onChange={(e) => updateCreditCard(cc.id, { ...cc, label: e.target.value })}
+                                />
+                              </td>
+                              <td>{cc.paymentMode === 'autopay' ? '-' : formatCurrency(cc.currentBalance)}</td>
+                              <td>{cc.paymentDay}<sup>th</sup></td>
+                              <td>
+                                {cc.paymentMode === 'payInFull' ? 'Full' : cc.paymentMode === 'minimum' ? `${cc.minimumPaymentPercent}%` : formatCurrency(cc.fixedPaymentAmount)}
+                              </td>
+                              <td>
+                                {cc.paymentSource === 'income' ? 'Income' : (() => {
+                                  const aid = cc.paymentSource?.startsWith('account:') ? cc.paymentSource.split(':', 2)[1] : null;
+                                  const acct = aid ? bankAccounts.find((a) => a.id === aid) : null;
+                                  return acct ? acct.label : cc.paymentSource;
+                                })()}
+                              </td>
+                              <td>
+                                <button type="button" className="secondary-button" onClick={() => setEditingCreditCardId(cc.id)}>
+                                  Edit
+                                </button>
+                              </td>
+                              <td>
+                                <button type="button" className="text-button" onClick={() => removeCreditCard(cc.id)}>
+                                  Remove
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Panel>
+
+                {activeCreditCards.filter((cc) => cc.enabled && cc.currentBalance > 0).length > 0 && (
+                  <Panel title="Payment Schedule Projection" className="panel-wide">
+                    {activeCreditCards.filter((cc) => cc.enabled && cc.currentBalance > 0).map((cc) => {
+                      const rows: Array<{ month: string; opening: number; charges: number; interest: number; payment: number; closing: number; payFromBal: number; lumpSumBal: number }> = [];
+                      let bal = cc.currentBalance;
+                      const now = new Date();
+                      let serial = now.getFullYear() * 12 + now.getMonth();
+                      const introEnd = cc.introEnabled && cc.introEndYearMonth ? (() => {
+                        const [y, m] = cc.introEndYearMonth.split('-').map(Number);
+                        return y * 12 + (m - 1);
+                      })() : null;
+                      const isIncome = cc.paymentSource === 'income';
+                      const payFromAcctId = !isIncome && cc.paymentSource.startsWith('account:') ? cc.paymentSource.split(':', 2)[1] : null;
+                      const lumpSumAcctId = !isIncome && cc.lumpSumPaymentSource?.startsWith('account:') ? cc.lumpSumPaymentSource.split(':', 2)[1] : null;
+                      const payFromBalance = { value: payFromAcctId ? (projection.years[0]?.accountBalancesById[payFromAcctId] ?? 0) : 0 };
+                      const lumpSumBalance = { value: lumpSumAcctId ? (projection.years[0]?.accountBalancesById[lumpSumAcctId] ?? 0) : 0 };
+
+                      for (let i = 0; i < 24 && bal > 0.01; i += 1) {
+                        const opening = bal;
+                        bal += cc.monthlyCharges;
+                        const pastIntro = !introEnd || serial >= introEnd;
+                        const interest = pastIntro && cc.annualInterestRate > 0 ? bal * (cc.annualInterestRate / 100 / 12) : 0;
+                        bal += interest;
+                        let payment: number;
+                        let isLump = false;
+                        if (cc.paymentMode === 'payInFull') {
+                          payment = bal;
+                        } else if (cc.paymentMode === 'fixed') {
+                          payment = Math.min(cc.fixedPaymentAmount, bal);
+                        } else if (cc.paymentMode === 'fixedPlusLump') {
+                          const isLastIntroMonth = introEnd !== null && serial === introEnd - 1;
+                          isLump = isLastIntroMonth;
+                          payment = isLastIntroMonth ? bal : Math.min(cc.fixedPaymentAmount, bal);
+                        } else {
+                          payment = Math.min(bal, Math.max(cc.minimumPaymentFloor, bal * cc.minimumPaymentPercent / 100));
+                        }
+                        bal = Math.max(0, bal - payment);
+                        if (!isIncome) {
+                          if (isLump && lumpSumAcctId) {
+                            lumpSumBalance.value = Math.max(0, lumpSumBalance.value - payment);
+                          } else {
+                            payFromBalance.value = Math.max(0, payFromBalance.value - payment);
+                          }
+                        }
+                        const y = Math.floor(serial / 12);
+                        const m = (serial % 12) + 1;
+                        rows.push({
+                          month: `${y}-${String(m).padStart(2, '0')}`,
+                          opening,
+                          charges: cc.monthlyCharges,
+                          interest,
+                          payment,
+                          closing: bal,
+                          payFromBal: payFromBalance.value,
+                          lumpSumBal: lumpSumBalance.value
+                        });
+                        serial += 1;
+                      }
+
+                      return (
+                        <div key={cc.id} className="credit-card-schedule">
+                          <h4>{cc.label}</h4>
+                          <div className="table-wrap">
+                            <table className="purchases-table">
+                              <thead>
+                                <tr>
+                                  <th>Month</th>
+                                  <th>Opening</th>
+                                  <th>Charges</th>
+                                  <th>Interest</th>
+                                  <th>Payment</th>
+                                  <th>Pay From Bal</th>
+                                  <th>Lump Sum Bal</th>
+                                  <th>Closing</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rows.map((row) => (
+                                  <tr key={row.month}>
+                                    <td>{row.month}</td>
+                                    <td>{formatCurrency(row.opening)}</td>
+                                    <td>{formatCurrency(row.charges)}</td>
+                                    <td>{formatCurrency(row.interest)}</td>
+                                    <td>{formatCurrency(row.payment)}</td>
+                                    <td>{isIncome ? '--' : formatCurrency(row.payFromBal)}</td>
+                                    <td>{isIncome || cc.paymentMode !== 'fixedPlusLump' ? '--' : formatCurrency(row.lumpSumBal)}</td>
+                                    <td>{formatCurrency(row.closing)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {bal <= 0.01 && <p className="subtle">Paid off in {rows.length} months.</p>}
+                          {bal > 0.01 && <p className="subtle">Balance after 24 months: {formatCurrency(bal)}</p>}
+                        </div>
+                      );
+                    })}
+                  </Panel>
+                )}
+
+                {editingCreditCardId && (() => {
+                  const cc = activeCreditCards.find((c) => c.id === editingCreditCardId);
+                  if (!cc) return null;
+                  return (
+                    <div className="expense-modal-backdrop" onClick={() => setEditingCreditCardId(null)}>
+                      <div className="expense-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="expense-modal-header">
+                          <strong>Edit: {cc.label}</strong>
+                          <button type="button" className="secondary-button" onClick={() => setEditingCreditCardId(null)}>Done</button>
+                        </div>
+                        <div className="cc-edit-form">
+                          <label>
+                            <span>Name</span>
+                            <input type="text" value={cc.label} onChange={(e) => updateCreditCard(cc.id, { ...cc, label: e.target.value })} />
+                          </label>
+                          {cc.paymentMode !== 'autopay' && (
+                            <>
+                          <label>
+                            <span>Balance</span>
+                            <BufferedNumberInput value={cc.currentBalance} min={0} max={1000000} step={100} onCommit={(v) => updateCreditCard(cc.id, { ...cc, currentBalance: v })} />
+                          </label>
+                          <label>
+                            <span>APR %</span>
+                            <BufferedNumberInput value={cc.annualInterestRate} min={0} max={100} step={0.01} onCommit={(v) => updateCreditCard(cc.id, { ...cc, annualInterestRate: v })} />
+                          </label>
+                          <label>
+                            <span>0% Intro APR</span>
+                            <input type="checkbox" checked={cc.introEnabled} onChange={(e) => updateCreditCard(cc.id, { ...cc, introEnabled: e.target.checked })} />
+                          </label>
+                          {cc.introEnabled && (
+                            <label>
+                              <span>0% Ends</span>
+                              <YearMonthInput label="Intro End" value={cc.introEndYearMonth} onChange={(v) => updateCreditCard(cc.id, { ...cc, introEndYearMonth: v })} />
+                            </label>
+                          )}
+                          <label>
+                            <span>Monthly Charges</span>
+                            <BufferedNumberInput value={cc.monthlyCharges} min={0} max={100000} step={10} onCommit={(v) => updateCreditCard(cc.id, { ...cc, monthlyCharges: v })} />
+                          </label>
+                          <label>
+                            <span>Payment Mode</span>
+                            <select value={cc.paymentMode} onChange={(e) => {
+                              const mode = e.target.value as CreditCard['paymentMode'];
+                              const updates: Partial<CreditCard> = { paymentMode: mode };
+                              if (mode === 'fixedPlusLump' && !cc.introEnabled) {
+                                updates.introEnabled = true;
+                              }
+                              if (mode === 'autopay') {
+                                updates.currentBalance = 0;
+                              }
+                              updateCreditCard(cc.id, { ...cc, ...updates });
+                            }}>
+                              <option value="minimum">Minimum</option>
+                              <option value="fixed">Fixed</option>
+                              <option value="fixedPlusLump">Fixed + Lump Sum</option>
+                              <option value="payInFull">Pay in Full</option>
+                              <option value="autopay">Autopay</option>
+                            </select>
+                          </label>
+                          {(cc.paymentMode === 'fixed' || cc.paymentMode === 'fixedPlusLump') && (
+                            <label>
+                              <span>Fixed Payment</span>
+                              <BufferedNumberInput value={cc.fixedPaymentAmount} min={0} max={100000} step={10} onCommit={(v) => updateCreditCard(cc.id, { ...cc, fixedPaymentAmount: v })} />
+                            </label>
+                          )}
+                          {cc.paymentMode === 'fixedPlusLump' && (
+                            <label>
+                              <span>Lump Sum Pay From</span>
+                              <select value={cc.lumpSumPaymentSource} onChange={(e) => updateCreditCard(cc.id, { ...cc, lumpSumPaymentSource: e.target.value as CreditCard['lumpSumPaymentSource'] })}>
+                                <option value="income">Income</option>
+                                {accountSelectionOptions.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
+                            </label>
+                          )}
+                          {cc.paymentMode === 'fixedPlusLump' && (() => {
+                            if (!cc.introEnabled || !cc.introEndYearMonth) {
+                              return <p className="subtle">Set 0% end date to calculate lump sum.</p>;
+                            }
+                            const [ey, em] = cc.introEndYearMonth.split('-').map(Number);
+                            const introEndSerial = ey * 12 + (em - 1);
+                            const nowDate = new Date();
+                            const nowSerial = nowDate.getFullYear() * 12 + nowDate.getMonth();
+                            const monthsUntilLump = Math.max(0, introEndSerial - 1 - nowSerial);
+                            let simBal = cc.currentBalance;
+                            for (let i = 0; i < monthsUntilLump && simBal > 0.01; i += 1) {
+                              simBal += cc.monthlyCharges;
+                              simBal = Math.max(0, simBal - Math.min(cc.fixedPaymentAmount, simBal));
+                            }
+                            return (
+                              <p className="subtle">
+                                Remaining balance paid in full at end of 0% period.
+                                <br />
+                                <strong>Estimated lump sum: {formatCurrency(Math.max(0, simBal))}</strong>
+                                {monthsUntilLump > 0 && <> ({monthsUntilLump} months of fixed payments)</>}
+                              </p>
+                            );
+                          })()}
+                          {cc.paymentMode === 'minimum' && (
+                            <>
+                              <label>
+                                <span>Min Payment %</span>
+                                <BufferedNumberInput value={cc.minimumPaymentPercent} min={0} max={100} step={0.1} onCommit={(v) => updateCreditCard(cc.id, { ...cc, minimumPaymentPercent: v })} />
+                              </label>
+                              <label>
+                                <span>Min Payment Floor ($)</span>
+                                <BufferedNumberInput value={cc.minimumPaymentFloor} min={0} max={10000} step={5} onCommit={(v) => updateCreditCard(cc.id, { ...cc, minimumPaymentFloor: v })} />
+                              </label>
+                            </>
+                          )}
+                            </>
+                          )}
+                          {cc.paymentMode === 'autopay' && (
+                            <label>
+                              <span>Monthly Autopay</span>
+                              <BufferedNumberInput value={cc.fixedPaymentAmount} min={0} max={100000} step={10} onCommit={(v) => updateCreditCard(cc.id, { ...cc, fixedPaymentAmount: v })} />
+                            </label>
+                          )}
+                          <label>
+                            <span>Pay From</span>
+                            <select value={cc.paymentSource} onChange={(e) => updateCreditCard(cc.id, { ...cc, paymentSource: e.target.value as CreditCard['paymentSource'] })}>
+                              <option value="income">Income</option>
+                              {accountSelectionOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>Due Date (day)</span>
+                            <BufferedNumberInput value={cc.paymentDay} min={1} max={28} step={1} onCommit={(v) => updateCreditCard(cc.id, { ...cc, paymentDay: Math.floor(v) })} />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
           </>
         );
         }
@@ -4318,6 +5128,33 @@ const App = () => {
             onClick={() => updateSidebarTab(tab.id)}
           >
             {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="timeline-bar">
+        <button type="button" className="secondary-button" onClick={addTimeline}>
+          Add Timeline
+        </button>
+        <button type="button" className="secondary-button" onClick={() => setShowTimelineManager(true)}>
+          Timelines
+        </button>
+        <span className="chip-group-label">Timelines:</span>
+        <button
+          type="button"
+          className={`purchase-category-chip${(scenario.activeTimelineId ?? null) === null ? ' active' : ''}`}
+          onClick={() => switchTimeline(null)}
+        >
+          Default
+        </button>
+        {(scenario.timelines ?? []).map((timeline) => (
+          <button
+            key={timeline.id}
+            type="button"
+            className={`purchase-category-chip${scenario.activeTimelineId === timeline.id ? ' active' : ''}`}
+            onClick={() => switchTimeline(timeline.id)}
+          >
+            {timeline.label}
           </button>
         ))}
       </div>
@@ -4374,19 +5211,56 @@ const App = () => {
                       </div>
                       {graphMode === 'portfolio' ? (
                         <ChartPanel
-                          years={displayedPortfolioGraphYears}
+                          years={filteredGraphYears}
                           flags={visibleFlags}
                           onFlagColorChange={handleFlagColorChange}
                         />
                       ) : (
                         <SavingsStackedChart
-                          years={displayedGraphYears}
+                          years={filteredGraphYears}
                           pools={poolDefinitions}
                           bankAccounts={orderedBankAccounts}
                           flags={visibleFlags}
                           onFlagColorChange={handleFlagColorChange}
                         />
                       )}
+                      {displayedGraphYears.length > 1 && (() => {
+                        const fullMin = displayedGraphYears[0].age;
+                        const fullMax = displayedGraphYears[displayedGraphYears.length - 1].age;
+                        const sliderMax = Math.min(fullMax, futureEndAge);
+                        const sliderRange = sliderMax - fullMin;
+                        const leftPct = sliderRange > 0 ? ((graphAgeMin - fullMin) / sliderRange) * 100 : 0;
+                        const rightPct = sliderRange > 0 ? ((graphAgeMax - fullMin) / sliderRange) * 100 : 100;
+                        const widthPct = rightPct - leftPct;
+                        return (
+                        <div className="graph-range-slider">
+                          <span className="range-boundary range-boundary-left">{fullMin}</span>
+                          <div className="range-track">
+                            <span className="range-label" style={{ left: `${leftPct}%` }}>{graphAgeMin}</span>
+                            <span className="range-label" style={{ left: `${rightPct}%` }}>{graphAgeMax}</span>
+                            <div className="range-track-bg" />
+                            <div className="range-track-fill" style={{ left: `${leftPct}%`, width: `${widthPct}%` }} />
+                            <input
+                              type="range"
+                              min={fullMin}
+                              max={sliderMax}
+                              value={graphAgeMin}
+                              onChange={(e) => setGraphAgeMin(Math.min(+e.target.value, graphAgeMax - 1))}
+                              className="range-thumb range-thumb-left"
+                            />
+                            <input
+                              type="range"
+                              min={fullMin}
+                              max={sliderMax}
+                              value={graphAgeMax}
+                              onChange={(e) => setGraphAgeMax(Math.max(+e.target.value, graphAgeMin + 1))}
+                              className="range-thumb range-thumb-right"
+                            />
+                          </div>
+                          <span className="range-boundary range-boundary-right">{sliderMax}</span>
+                        </div>
+                        );
+                      })()}
                       <div
                         className={displayedGraphDepleted || (usesFinancePredictionResults && !hasEnabledCareers) ? 'summary warning' : 'summary success'}
                       >
@@ -4409,9 +5283,87 @@ const App = () => {
                     />
                     <span>Display values in current dollars</span>
                   </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={showMonths}
+                      onChange={(e) => setShowMonths(e.target.checked)}
+                    />
+                    <span>Display months</span>
+                  </label>
                   <ResultsTable
                     years={adjustedTableYears}
                     accountColumns={orderedBankAccounts.map((account) => ({ id: account.id, label: account.label }))}
+                    showMonths={showMonths}
+                    monthlySnapshots={projection?.monthlySnapshots}
+                    rowTooltip={showMonths ? (row, _i) => {
+                      if (!('calendarMonth' in row)) return undefined;
+                      const snap = row as import('./types').MonthlySnapshot;
+                      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                      const monthAbbr = MONTHS[snap.calendarMonth - 1] ?? snap.calendarMonth;
+                      const mk = `${snap.calendarYear}-${String(snap.calendarMonth).padStart(2, '0')}`;
+                      const usage = projection?.incomeUsageByMonth?.[mk];
+                      const change = snap.endBalance - snap.startBalance;
+                      const parts: string[] = [];
+                      parts.push(`${monthAbbr} ${snap.calendarYear} \u2014 Age ${snap.age}`);
+                      parts.push(`Starting balance: ${formatCurrency(snap.startBalance)}`);
+                      if (usage && usage.items.length > 0) {
+                        parts.push(`Monthly income (${formatCurrency(usage.availableIncome)} take-home):`);
+                        usage.items.forEach((item) => parts.push(`  \u2192 ${item.label}: ${formatCurrency(item.amount)}`));
+                        const total = usage.items.reduce((s, i) => s + i.amount, 0);
+                        parts.push(`  Total income used: ${formatCurrency(total)}`);
+                      }
+                      parts.push(`Ending balance: ${formatCurrency(snap.endBalance)}`);
+                      parts.push(`Change: ${change >= 0 ? '+' : '-'}${formatCurrency(Math.abs(change))}`);
+                      return parts.join('\n');
+                    } : undefined}
+                    cellTooltip={showMonths ? (columnId, row, _i) => {
+                      if (!('calendarMonth' in row)) return undefined;
+                      const snap = row as import('./types').MonthlySnapshot;
+                      const activity = snap.accountActivity?.[columnId];
+                      const acctLabel = bankAccounts.find((a) => a.id === columnId)?.label ?? columnId;
+                      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                      const monthAbbr = MONTHS[snap.calendarMonth - 1] ?? snap.calendarMonth;
+                      const endBal = snap.accountBalancesById[columnId] ?? 0;
+                      const creditCards = activeCreditCards;
+                      const friendlyLabel = (raw: string): string => {
+                        for (const cc of creditCards) {
+                          if (raw.startsWith(cc.id + '-')) return cc.label;
+                          if (raw === cc.id) return cc.label;
+                        }
+                        for (const lp of activeLargePurchases) {
+                          for (const sl of (lp.sourceLines ?? [])) { if (sl.id === raw) return lp.label; }
+                          if (raw.startsWith(lp.id)) return lp.label;
+                        }
+                        for (const ltp of activeLongTermPurchases) {
+                          for (const sl of (ltp.sourceLines ?? [])) { if (sl.id === raw) return ltp.label; }
+                          if (raw.startsWith(ltp.id)) return ltp.label;
+                        }
+                        for (const h of activeHousing) {
+                          if (raw.startsWith(h.id)) return h.label;
+                        }
+                        for (const l of activeLoans) {
+                          if (raw.startsWith(l.id)) return l.label;
+                        }
+                        if (raw.startsWith('funding-source-')) {
+                          const acctId = raw.replace('funding-source-', '');
+                          const acct = bankAccounts.find(a => a.id === acctId);
+                          if (acct) return acct.label;
+                        }
+                        const acct = bankAccounts.find(a => a.id === raw);
+                        if (acct) return acct.label;
+                        return raw;
+                      };
+                      const parts: string[] = [];
+                      parts.push(`${acctLabel} \u2014 ${monthAbbr} ${snap.calendarYear}`);
+                      if (activity && activity.length > 0) {
+                        activity.forEach((a) => parts.push(`  ${friendlyLabel(a.label)}: ${a.amount >= 0 ? '+' : ''}${formatCurrency(a.amount)}`));
+                        const net = activity.reduce((s, a) => s + a.amount, 0);
+                        parts.push(`  Net activity: ${net >= 0 ? '+' : ''}${formatCurrency(net)}`);
+                      }
+                      parts.push(`Ending balance: ${formatCurrency(endBal)}`);
+                      return parts.join('\n');
+                    } : undefined}
                   />
                 </div>
               </>
@@ -4420,6 +5372,34 @@ const App = () => {
 
         </section>
       </div>
+
+      {showTimelineManager && (
+        <div className="expense-modal-backdrop" onClick={() => setShowTimelineManager(false)}>
+          <div className="expense-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="expense-modal-header">
+              <strong>Manage Timelines</strong>
+              <button type="button" className="text-button" onClick={() => setShowTimelineManager(false)}>Close</button>
+            </div>
+            <div className="purchase-category-list">
+              {(scenario.timelines ?? []).length === 0 && (
+                <p className="subtle">No timelines yet. Use "Add Timeline" to duplicate the current state.</p>
+              )}
+              {(scenario.timelines ?? []).map((timeline) => (
+                <div key={timeline.id} className="purchase-category-row">
+                  <input
+                    type="text"
+                    value={timeline.label}
+                    onChange={(event) => renameTimeline(timeline.id, event.target.value)}
+                  />
+                  <button type="button" className="text-button danger-text" onClick={() => deleteTimeline(timeline.id)}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 };

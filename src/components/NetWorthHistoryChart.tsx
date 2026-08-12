@@ -1,5 +1,7 @@
+import { memo } from 'react';
 import { formatCurrency } from '../engine/projection';
 import type { NetWorthHistoryEntry } from '../types';
+import { useRenderCount } from '../utils/perfTools';
 
 interface NetWorthHistoryChartProps {
   entries: NetWorthHistoryEntry[];
@@ -18,7 +20,8 @@ const formatShort = (value: string) => {
   });
 };
 
-export const NetWorthHistoryChart = ({ entries }: NetWorthHistoryChartProps) => {
+export const NetWorthHistoryChart = memo(({ entries }: NetWorthHistoryChartProps) => {
+  useRenderCount('NetWorthHistoryChart');
   if (entries.length === 0) {
     return <p className="subtle">No net worth history yet. Update balances or apply imports to start tracking.</p>;
   }
@@ -100,4 +103,4 @@ export const NetWorthHistoryChart = ({ entries }: NetWorthHistoryChartProps) => 
       </svg>
     </div>
   );
-};
+});

@@ -627,9 +627,7 @@ describe('projectScenario', () => {
             enabled: true,
             usePreviousCareerStartAge: false,
             startAge: 40,
-            endAge: 42,
-            startingSalary: 100000,
-            annualRaiseRate: 0,
+            endAge: 42,            annualRaiseRate: 0,
             savingsRate: 10,
             employerMatchRate: 2,
             bonusRate: 0,
@@ -727,9 +725,7 @@ describe('projectScenario', () => {
             enabled: true,
             usePreviousCareerStartAge: false,
             startAge: 40,
-            endAge: 45,
-            startingSalary: 100000,
-            annualRaiseRate: 0,
+            endAge: 45,            annualRaiseRate: 0,
             savingsRate: 0,
             employerMatchRate: 0,
             bonusRate: 0,
@@ -1190,9 +1186,7 @@ describe('projectScenario', () => {
             enabled: true,
             usePreviousCareerStartAge: false,
             startAge: 40,
-            endAge: 42,
-            startingSalary: 100000,
-            annualRaiseRate: 0,
+            endAge: 42,            annualRaiseRate: 0,
             savingsRate: 0,
             employerMatchRate: 0,
             bonusRate: 0,
@@ -1307,9 +1301,7 @@ describe('projectScenario', () => {
             enabled: true,
             usePreviousCareerStartAge: false,
             startAge: 40,
-            endAge: 44,
-            startingSalary: 12000,
-            annualRaiseRate: 0,
+            endAge: 44,            annualRaiseRate: 0,
             savingsRate: 0,
             employerMatchRate: 0,
             bonusRate: 0,
@@ -1883,9 +1875,7 @@ describe('projectScenario', () => {
             id: 'career-1',
             enabled: true,
             startAge: 40,
-            endAge: 40,
-            startingSalary: 12000,
-            annualRaiseRate: 0,
+            endAge: 40,            annualRaiseRate: 0,
             emergencyFundContributionRate: 20,
             hsaContributionRate: 0,
             investmentsContributionRate: 0,
@@ -1956,9 +1946,7 @@ describe('projectScenario', () => {
             id: 'career-1-no-cap',
             enabled: true,
             startAge: 40,
-            endAge: 40,
-            startingSalary: 12000,
-            annualRaiseRate: 0,
+            endAge: 40,            annualRaiseRate: 0,
             emergencyFundContributionRate: 20,
             hsaContributionRate: 0,
             investmentsContributionRate: 0,
@@ -1986,9 +1974,7 @@ describe('projectScenario', () => {
             id: 'career-2-with-cap',
             enabled: true,
             startAge: 41,
-            endAge: 41,
-            startingSalary: 12000,
-            annualRaiseRate: 0,
+            endAge: 41,            annualRaiseRate: 0,
             emergencyFundContributionRate: 20,
             hsaContributionRate: 0,
             investmentsContributionRate: 0,
@@ -2061,9 +2047,7 @@ describe('projectScenario', () => {
             id: 'career-1',
             enabled: true,
             startAge: 40,
-            endAge: 40,
-            startingSalary: 12000,
-            annualRaiseRate: 0,
+            endAge: 40,            annualRaiseRate: 0,
             emergencyFundContributionRate: 20,
             hsaContributionRate: 0,
             investmentsContributionRate: 0,
@@ -2138,9 +2122,7 @@ describe('projectScenario', () => {
             enabled: true,
             usePreviousCareerStartAge: false,
             startAge: 25,
-            endAge: 25,
-            startingSalary: 12000,
-            annualRaiseRate: 0,
+            endAge: 25,            annualRaiseRate: 0,
             savingsRate: 0,
             employerMatchRate: 0,
             bonusRate: 0,
@@ -2228,9 +2210,7 @@ describe('projectScenario', () => {
             enabled: true,
             usePreviousCareerStartAge: false,
             startAge: 25,
-            endAge: 25,
-            startingSalary: 0,
-            annualRaiseRate: 0,
+            endAge: 25,            annualRaiseRate: 0,
             savingsRate: 0,
             employerMatchRate: 0,
             bonusRate: 0,
@@ -2333,7 +2313,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 60000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       largePurchases: [{
@@ -2374,7 +2354,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 12000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 12000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       incomeFallbackAccountId: accountId,
@@ -2416,7 +2396,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 1200, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 1200, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       incomeFallbackAccountId: null,
@@ -2451,7 +2431,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 60000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       largePurchases: [{
@@ -2528,7 +2508,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 1000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 1000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       incomeFallbackAccountId: accountId,
@@ -2567,7 +2547,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 3600, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 3600, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       incomeFallbackAccountId: null,
@@ -2607,7 +2587,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 60000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       loans: [{
@@ -2662,7 +2642,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 60000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       incomeFallbackAccountId: null,
@@ -2709,7 +2689,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 60000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false },
+          paycheckInfo: { grossSalary: 60000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 },
           sourceLines: (defaultScenario.careerPlan.entries[0].sourceLines ?? []).map((sl) => ({ ...sl, contributionRate: 0 }))
         }]
       },
@@ -2752,7 +2732,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 6000, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 6000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       incomeFallbackAccountId: null,
@@ -2805,7 +2785,7 @@ describe('projectScenario', () => {
         entries: [{
           ...defaultScenario.careerPlan.entries[0],
           startAge: 40, endAge: 41,
-          taxInfo: { untaxedBenefits: 0, leftoverIncome: 4800, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+          paycheckInfo: { grossSalary: 4800, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
         }]
       },
       incomeFallbackAccountId: null,
@@ -2969,9 +2949,7 @@ describe('projectScenario', () => {
             usePreviousCareerStartAge: false,
             useBirthdayBasedStartAge: false,
             startAge: 40,
-            endAge: 41,
-            startingSalary: 100000,
-            annualRaiseRate: 0,
+            endAge: 41,            annualRaiseRate: 0,
             savingsRate: 0,
             employerMatchRate: 100,
             bonusRate: 100,

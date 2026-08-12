@@ -1,5 +1,7 @@
+import { memo } from 'react';
 import type { CashflowItem } from '../types';
 import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
+import { useRenderCount } from '../utils/perfTools';
 import { YearMonthInput } from './YearMonthInput';
 
 interface CashflowItemEditorProps {
@@ -13,14 +15,16 @@ interface CashflowItemEditorProps {
 
 const numberValue = (value: string) => Number(value) || 0;
 
-export const CashflowItemEditor = ({
+export const CashflowItemEditor = memo(({
   item,
   retirementEndAge,
   dateOfBirth,
   currentAge,
   onChange,
   onRemove
-}: CashflowItemEditorProps) => (
+}: CashflowItemEditorProps) => {
+  useRenderCount('CashflowItemEditor');
+  return (
   <div className="cashflow-editor">
     <div className="cashflow-editor-header">
       <strong>{item.label}</strong>
@@ -115,4 +119,5 @@ export const CashflowItemEditor = ({
       ) : null}
     </div>
   </div>
-);
+  );
+});

@@ -560,6 +560,13 @@ select {
   stroke-width: 3;
 }
 
+.chart-debt-line {
+  fill: none;
+  stroke: #e53e3e;
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+}
+
 .chart-area {
   fill: rgba(66, 164, 237, 0.33);
 }
@@ -720,6 +727,147 @@ td:first-child {
 
 .sort-arrows .active {
   color: #2563eb;
+}
+
+.purchase-category-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+  align-items: center;
+}
+
+.chip-group-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #6b7280;
+  margin-right: 0.15rem;
+}
+
+.timeline-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafbfc;
+}
+
+.purchase-category-chip {
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  font-size: 0.78rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.purchase-category-chip:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.purchase-category-chip.active {
+  background: #dbeafe;
+  border-color: #2563eb;
+  color: #1d4ed8;
+  font-weight: 500;
+}
+
+.purchase-category-chip.clear {
+  border-color: #fca5a5;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.purchase-category-chip.clear:hover {
+  background: #fee2e2;
+}
+
+.expense-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.purchase-category-list {
+  display: grid;
+  gap: 0.4rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.purchase-category-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.purchase-category-row input[type="text"] {
+  flex: 1;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+}
+
+.purchase-category-option {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.95rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.purchase-category-option:hover {
+  background: #f0f4ff;
+  border-color: #93c5fd;
+}
+
+.purchase-category-add {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.purchase-category-add input[type="text"] {
+  flex: 1;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+}
+
+.cc-edit-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.cc-edit-form label {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cc-edit-form label span {
+  font-size: 0.84rem;
+  color: #374151;
+}
+
+.credit-card-schedule {
+  margin-bottom: 1rem;
+}
+
+.credit-card-schedule h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.9rem;
 }
 
 .purchases-legend {
@@ -1347,4 +1495,102 @@ td:first-child {
 .color-picker-option.selected {
   border-color: #222;
   box-shadow: 0 0 0 2px #fff, 0 0 0 4px #222;
+}
+
+.graph-range-slider {
+  display: flex;
+  align-items: flex-start;
+  padding: 22px 88px 0 80px;
+}
+
+.range-boundary {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: #9aabbf;
+  margin-top: -2px;
+}
+
+.range-boundary-left {
+  margin-right: -1px;
+}
+
+.range-boundary-right {
+  margin-left: -1px;
+}
+
+.range-track {
+  position: relative;
+  flex: 1;
+  height: 24px;
+}
+
+.range-label {
+  position: absolute;
+  top: -20px;
+  transform: translateX(-50%);
+  font-size: 0.75rem;
+  color: #2b5fe2;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.range-track {
+  position: relative;
+  height: 20px;
+}
+
+.range-track-bg {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: #d0d9e6;
+}
+
+.range-track-fill {
+  position: absolute;
+  top: 8px;
+  height: 4px;
+  border-radius: 2px;
+  background: #2b5fe2;
+}
+
+.range-track input[type="range"] {
+  position: absolute;
+  width: 100%;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: transparent;
+  outline: none;
+}
+
+.range-track input[type="range"]::-webkit-slider-thumb {
+  pointer-events: all;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #2b5fe2;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  cursor: pointer;
+  margin-top: -5px;
+}
+
+.range-track input[type="range"]::-moz-range-thumb {
+  pointer-events: all;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #2b5fe2;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  cursor: pointer;
 }

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { formatCurrency } from '../engine/projection';
 import type { BankAccountDefinition, PoolDefinition, ProjectionYear, PurchaseFlag } from '../types';
+import { useRenderCount } from '../utils/perfTools';
 import { pickFlagColor } from '../utils/colorPalette';
 import { layoutFlagCallouts } from './flagCalloutLayout';
 
@@ -30,7 +31,8 @@ const makeAreaPath = (top: number[], bottom: number[], pointX: (index: number) =
   return `${topPath} ${bottomPath} Z`;
 };
 
-export const SavingsStackedChart = ({ years, pools, bankAccounts, flags = [], onFlagColorChange }: SavingsStackedChartProps) => {
+export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [], onFlagColorChange }: SavingsStackedChartProps) => {
+  useRenderCount('SavingsStackedChart');
   const [colorPickerFlagId, setColorPickerFlagId] = useState<string | null>(null);
   const enabledPools = useMemo(() => pools.filter((pool) => pool.enabled), [pools]);
   const accountIdsByPoolId = useMemo(
@@ -125,14 +127,17 @@ export const SavingsStackedChart = ({ years, pools, bankAccounts, flags = [], on
     });
     return closest;
   };
+  const yearCount = years.length;
+  const tickStep = yearCount <= 5 ? 1 : yearCount <= 10 ? 2 : yearCount <= 20 ? 3 : yearCount <= 30 ? 4 : 5;
   const xTickIndexes = years
     .map((_, index) => index)
     .filter((index) => {
       const age = years[index].age;
       const isFirst = index === 0;
       const isLast = index === years.length - 1;
+      const stepAge = years[0].age + Math.round((age - years[0].age) / tickStep) * tickStep;
 
-      return isFirst || isLast || age % 5 === 0;
+      return isFirst || isLast || age === stepAge;
     });
 
   const flagsWithColor = flags.map((flag) => {
@@ -323,4 +328,4 @@ export const SavingsStackedChart = ({ years, pools, bankAccounts, flags = [], on
       ) : null}
     </div>
   );
-};
+});

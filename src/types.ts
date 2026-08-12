@@ -49,12 +49,8 @@ export interface CareerEntry {
   endYearMonth?: string;
   startAge: number;
   endAge: number;
-  startingSalary: number;
   annualRaiseRate: number;
   savingsRate: number;
-  employerMatchRate: number;
-  bonusRate: number;
-  bonusSavingsRate: number;
   emergencyFundContributionRate: number;
   hsaContributionRate: number;
   investmentsContributionRate: number;
@@ -76,16 +72,29 @@ export interface CareerEntry {
   investmentsMonthlyWithdrawal?: number;
   retirement401kMonthlyWithdrawal?: number;
   sourceLines?: CareerSourceLine[];
-  taxInfo?: TaxInfo;
+  paycheckInfo?: PaycheckInfo;
 }
 
-export interface TaxInfo {
-  untaxedBenefits: number;
-  leftoverIncome: number;
-  taxRate: number;
-  lastEditedField: 'leftoverIncome' | 'taxRate' | null;
-  otherExpenses: number;
-  taxRateLocked: boolean;
+export interface PaycheckInfo {
+  grossSalary: number;
+  taxes: number;
+  healthBenefits: number;
+  retirement: number;
+  retirementMatch: number;
+  hsaContribution: number;
+  hsaEmployerMatch: number;
+  otherBenefits: number;
+  retirementAccountId?: string;
+  hsaAccountId?: string;
+  livingExpenses: number;
+  retirementMode?: 'amount' | 'percentOfSalary';
+  retirementMatchMode?: 'amount' | 'percentOfRetirement';
+  employerMaxMatchPercent?: number;
+  hsaContributionMode?: 'amount' | 'percentOfSalary';
+  hsaEmployerMatchMode?: 'amount' | 'percentOfHsaContribution';
+  employerHsaDeposit?: number;
+  employerHsaDepositMode?: 'amount' | 'percentOfSalary';
+  period?: Record<string, 'monthly' | 'yearly'>;
 }
 
 export interface CareerPlan {
@@ -122,6 +131,22 @@ export interface CareerSourceLine {
   overflowFallbackAccountId?: string | null;
 }
 
+export interface PurchaseCategory {
+  id: string;
+  label: string;
+}
+
+export interface Timeline {
+  id: string;
+  label: string;
+  purchases: LargePurchase[];
+  longTermPurchases: LongTermPurchase[];
+  loans: Loan[];
+  creditCards: CreditCard[];
+  careerPlan: CareerPlan;
+  housing: HousingEntry[];
+}
+
 export interface LargePurchase {
   id: string;
   label: string;
@@ -133,6 +158,7 @@ export interface LargePurchase {
   amount: number;
   sourceLines?: SourceLine[];
   fundingSource?: 'income' | `account:${string}`;
+  categoryId?: string | null;
 }
 
 export type LongTermPurchaseEndMode = 'duration' | 'endDate';
@@ -171,6 +197,28 @@ export interface Loan {
   paymentSourceAccount: LoanPaymentSourceAccount;
   paymentSource?: LoanPaymentSource;
   downPaymentSource?: LoanPaymentSource;
+}
+
+export type CreditCardPaymentMode = 'fixed' | 'payInFull' | 'minimum' | 'fixedPlusLump' | 'autopay';
+
+export interface CreditCard {
+  id: string;
+  label: string;
+  enabled: boolean;
+  currentBalance: number;
+  annualInterestRate: number;
+  introEnabled: boolean;
+  introEndYearMonth: string;
+  monthlyCharges: number;
+  paymentMode: CreditCardPaymentMode;
+  fixedPaymentAmount: number;
+  minimumPaymentPercent: number;
+  minimumPaymentFloor: number;
+  paymentSource: 'income' | `account:${string}`;
+  lumpSumPaymentSource: 'income' | `account:${string}`;
+  paymentDay: number;
+  showOnGraph?: boolean;
+  flagColor?: string;
 }
 
 export type HousingType = 'mortgage' | 'rental';
@@ -457,7 +505,11 @@ export interface Scenario {
   futureRetirement: FutureRetirementPlan;
   withdrawal: WithdrawalPlan;
   manualReturns: ManualReturnModel;
+  purchaseCategories: PurchaseCategory[];
+  timelines: Timeline[];
+  activeTimelineId: string | null;
   largePurchases: LargePurchase[];
+  creditCards: CreditCard[];
   longTermPurchases: LongTermPurchase[];
   loans: Loan[];
   housing: HousingEntry[];
@@ -490,6 +542,8 @@ export interface ProjectionYear {
   penaltiesPaid: number;
   savingsBalances: Record<string, number>;
   accountBalancesById: Record<string, number>;
+  creditCardBalancesById: Record<string, number>;
+  totalCreditCardDebt: number;
 }
 
 export interface PurchaseFlag {
@@ -499,6 +553,26 @@ export interface PurchaseFlag {
   amount: number;
   type: 'large_purchase' | 'long_term_purchase' | 'loan' | 'housing';
   color: string;
+}
+
+export interface MonthlySnapshot {
+  age: number;
+  calendarYear: number;
+  calendarMonth: number;
+  periodMonths: number;
+  startBalance: number;
+  salary: number;
+  careerContribution: number;
+  contribution: number;
+  careerLabel: string;
+  withdrawal: number;
+  taxesPaid: number;
+  penaltiesPaid: number;
+  annualReturnRate: number;
+  inflationRate: number;
+  endBalance: number;
+  accountBalancesById: Record<string, number>;
+  accountActivity?: Record<string, Array<{ label: string; amount: number }>>;
 }
 
 export interface ProjectionResult {
@@ -521,4 +595,7 @@ export interface ProjectionResult {
   housingPayoffMonths: Record<string, number | null>;
   housingTotalMonthlyCosts: Record<string, number>;
   housingFundingShortfalls: Record<string, number>;
+   creditCardFundingShortfalls: Record<string, number>;
+  creditCardBalancesById: Record<string, number>;
+  monthlySnapshots?: MonthlySnapshot[];
 }

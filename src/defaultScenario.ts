@@ -2,6 +2,7 @@ import type {
   CareerEntry,
   CashflowCategory,
   CashflowItem,
+  CreditCard,
   HousingEntry,
   LargePurchase,
   Loan,
@@ -193,12 +194,8 @@ export const createDefaultCareerEntry = (
   endYearMonth: '',
   startAge: index === 0 ? currentAge : currentAge + index * 5,
   endAge: index === 0 ? retirementAge : Math.min(retirementAge, currentAge + index * 5 + 4),
-  startingSalary: index === 0 ? 98000 : 110000 + index * 12000,
   annualRaiseRate: index === 0 ? 3.5 : 3,
   savingsRate: index === 0 ? 10 : 9,
-  employerMatchRate: index === 0 ? 3 : 2,
-  bonusRate: index === 0 ? 8 : 5,
-  bonusSavingsRate: index === 0 ? 50 : 40,
   emergencyFundContributionRate: 2,
   hsaContributionRate: 3,
   investmentsContributionRate: 6,
@@ -224,7 +221,7 @@ export const createDefaultCareerEntry = (
   return {
     ...base,
     sourceLines: defaultCareerSourceLines.map((line) => ({ ...line })),
-    taxInfo: { untaxedBenefits: 0, leftoverIncome: 0, taxRate: 0, lastEditedField: null, otherExpenses: 0, taxRateLocked: false }
+    paycheckInfo: { grossSalary: index === 0 ? 98000 : 110000 + index * 12000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0, retirementMode: 'amount', retirementMatchMode: 'amount', employerMaxMatchPercent: 0, hsaContributionMode: 'amount', hsaEmployerMatchMode: 'amount', employerHsaDeposit: 0, employerHsaDepositMode: 'amount', period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' } }
   };
 };
 
@@ -307,6 +304,27 @@ export const createDefaultLoan = (currentAge: number, dateOfBirth: string): Loan
 
     return loan;
   })()
+});
+
+const makeCreditCardId = () => `cc-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+
+export const createDefaultCreditCard = (): CreditCard => ({
+  id: makeCreditCardId(),
+  label: 'Credit Card',
+  enabled: true,
+  currentBalance: 0,
+  annualInterestRate: 24.99,
+  introEnabled: false,
+  introEndYearMonth: '',
+  monthlyCharges: 0,
+  paymentMode: 'minimum',
+  fixedPaymentAmount: 100,
+  minimumPaymentPercent: 2,
+  minimumPaymentFloor: 25,
+  paymentSource: 'income',
+  lumpSumPaymentSource: 'income',
+  paymentDay: 15,
+  showOnGraph: false
 });
 
 const makeHousingId = () => `housing-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
@@ -431,7 +449,11 @@ export const defaultScenario: Scenario = {
     inflationEnabled: true,
     inflationRate: 2.9
   },
+  purchaseCategories: [],
+  timelines: [],
+  activeTimelineId: null,
   largePurchases: [],
+  creditCards: [],
   longTermPurchases: [],
   loans: [],
   housing: [],

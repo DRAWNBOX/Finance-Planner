@@ -1,4 +1,4 @@
-import { Fragment, type ChangeEvent, useMemo, useRef, useState } from 'react';
+import { Fragment, type ChangeEvent, memo, useMemo, useRef, useState } from 'react';
 import { formatCurrency } from '../engine/projection';
 import { parseExpenseImportFiles } from '../importers/expenseImport';
 import type {
@@ -12,6 +12,7 @@ import type {
   RecurringEventRule,
   RecurringExpenseEvent
 } from '../types';
+import { useRenderCount } from '../utils/perfTools';
 
 const DEFAULT_CATEGORY_LABELS = ['Subscription', 'Gas', 'Purchases', 'Fun'];
 const RAINBOW_COLOR_PRESETS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#6366f1', '#a855f7'];
@@ -247,7 +248,7 @@ type CopiedEventPayload =
       anchorDate: string;
     };
 
-export const ExpensesPlanner = ({
+export const ExpensesPlanner = memo(({
   expenses,
   bankAccounts,
   pools,
@@ -255,6 +256,7 @@ export const ExpensesPlanner = ({
   projectionYears,
   onChange
 }: ExpensesPlannerProps) => {
+  useRenderCount('ExpensesPlanner');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [newCategoryLabel, setNewCategoryLabel] = useState('');
@@ -1639,4 +1641,4 @@ export const ExpensesPlanner = ({
       </div>
     </section>
   );
-};
+});

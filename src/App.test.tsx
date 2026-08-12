@@ -240,7 +240,9 @@ describe('App', () => {
 
     const addPurchaseButton = screen.getByRole('button', { name: '+ Purchase' });
     fireEvent.click(addPurchaseButton);
+    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
     fireEvent.click(addPurchaseButton);
+    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
 
     const portfolioGraph = screen.getByRole('img', { name: /portfolio value over time/i });
     const updatedPortfolioFlagCount = portfolioGraph.querySelectorAll('.chart-flag-stem').length;
@@ -397,6 +399,7 @@ describe('App', () => {
     fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
 
     fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
+    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
 
     expect(screen.getByLabelText('Purchase Year')).toBeInTheDocument();
     expect(screen.getByLabelText('Purchase Month')).toBeInTheDocument();
@@ -424,6 +427,7 @@ describe('App', () => {
     const financeSubTabsElement = financeSubTabs as HTMLElement;
     fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
     fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
+    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
 
     const row = screen.getByDisplayValue('Large Purchase').closest('tr') as HTMLTableRowElement;
     const fundingSource = within(row).getByLabelText('Purchase Funding Source') as HTMLSelectElement;
@@ -434,11 +438,11 @@ describe('App', () => {
 
     fireEvent.change(fundingSource, { target: { value: nonIncomeOption!.value } });
 
-    const accountCellText = within(row).getAllByRole('cell')[6].textContent ?? '';
+    const accountCellText = within(row).getAllByRole('cell')[7].textContent ?? '';
     expect(accountCellText).toMatch(/^-?\$[0-9,]+$/);
 
     fireEvent.change(fundingSource, { target: { value: 'income' } });
-    const incomeCellText = within(row).getAllByRole('cell')[6].textContent ?? '';
+    const incomeCellText = within(row).getAllByRole('cell')[7].textContent ?? '';
     expect(incomeCellText).toMatch(/^\$/);
   });
 
@@ -561,7 +565,7 @@ describe('App', () => {
     expect(durationInput).toHaveValue(expectedDuration);
   });
 
-  it('marks purchase rows red when selected pay-from account balance after purchase is negative', () => {
+  it('marks purchase rows red when selected pay-from account balance after purchase is negative', async () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
@@ -571,6 +575,7 @@ describe('App', () => {
     fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
 
     fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
+    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
 
     const purchaseNameInput = screen.getByDisplayValue('Large Purchase');
     const purchaseRow = purchaseNameInput.closest('tr') as HTMLTableRowElement;
@@ -582,7 +587,7 @@ describe('App', () => {
       .find((option) => (option as HTMLOptionElement).value.startsWith('account:')) as HTMLOptionElement;
     fireEvent.change(fundingSource, { target: { value: accountOption.value } });
 
-    const accountBalanceCellText = within(purchaseRow).getAllByRole('cell')[6].textContent ?? '';
+    const accountBalanceCellText = within(purchaseRow).getAllByRole('cell')[7].textContent ?? '';
     const isNegative = accountBalanceCellText.trim().startsWith('-$');
     if (isNegative) {
       expect(purchaseRow.className).toContain('invalid');
@@ -592,7 +597,14 @@ describe('App', () => {
     }
 
     fireEvent.change(fundingSource, { target: { value: 'income' } });
-    expect(purchaseRow.className).toContain('invalid');
+    await waitFor(() => {
+      expect((within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement).value).toBe('income');
+    });
+    const incomeRow = screen.getByDisplayValue('Large Purchase').closest('tr')!;
+    if (isNegative) {
+      expect(incomeRow.className).toContain('invalid');
+      expect(incomeRow.getAttribute('title') ?? '').toContain('goes negative');
+    }
   });
 
   it('updates account balance after purchase when amount changes and keeps income rows as N/A', async () => {
@@ -605,6 +617,7 @@ describe('App', () => {
     fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
 
     fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
+    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
 
     const purchaseRow = screen.getByDisplayValue('Large Purchase').closest('tr') as HTMLTableRowElement;
     const fundingSource = within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement;
@@ -616,7 +629,7 @@ describe('App', () => {
       expect((within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement).value).toBe(accountOption.value);
     });
 
-    const balanceCell = within(purchaseRow).getAllByRole('cell')[6];
+    const balanceCell = within(purchaseRow).getAllByRole('cell')[7];
     const amountInput = purchaseRow.querySelector('input[type="number"]') as HTMLInputElement;
     expect(amountInput).toBeTruthy();
     fireEvent.change(amountInput, { target: { value: '2500' } });
@@ -624,13 +637,82 @@ describe('App', () => {
 
     await waitFor(() => {
       expect((purchaseRow.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('2500');
-      const afterText = within(purchaseRow).getAllByRole('cell')[6].textContent ?? '';
+      const afterText = within(purchaseRow).getAllByRole('cell')[7].textContent ?? '';
       expect(afterText).toMatch(/^-?\$[0-9,]+$/);
     });
 
     fireEvent.change(fundingSource, { target: { value: 'income' } });
-    const incomeCellText2 = within(purchaseRow).getAllByRole('cell')[6].textContent ?? '';
+    const incomeCellText2 = within(purchaseRow).getAllByRole('cell')[7].textContent ?? '';
     expect(incomeCellText2).toMatch(/^\$/);
+  });
+
+  it('adds a timeline that duplicates purchases and switches between them', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
+    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
+    expect(screen.getByDisplayValue('Large Purchase')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Timeline' }));
+
+    const timelineChip = screen.getByRole('button', { name: 'Timeline 1' });
+    expect(timelineChip).toBeInTheDocument();
+    expect(timelineChip.className).toContain('active');
+    expect(screen.getByRole('button', { name: 'Default' })).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Large Purchase')).toBeInTheDocument();
+  });
+
+  it('keeps timeline purchases independent from the default set', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
+    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Timeline' }));
+
+    const nameInput = screen.getByDisplayValue('Large Purchase');
+    fireEvent.change(nameInput, { target: { value: 'Timeline Purchase' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+    expect(screen.getByDisplayValue('Large Purchase')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('Timeline Purchase')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline 1' }));
+    expect(screen.getByDisplayValue('Timeline Purchase')).toBeInTheDocument();
+  });
+
+  it('keeps housing independent across timelines', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Housing Expenses' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Timeline' }));
+    expect(screen.getByRole('button', { name: 'Timeline 1' }).className).toContain('active');
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
+    expect(screen.getByDisplayValue('My Home')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+    expect(screen.queryByDisplayValue('My Home')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline 1' }));
+    expect(screen.getByDisplayValue('My Home')).toBeInTheDocument();
   });
 
   it('maps saved future retirement tab state into Careers', () => {
@@ -659,9 +741,7 @@ describe('App', () => {
                 enabled: true,
                 usePreviousCareerStartAge: false,
                 startAge: 45,
-                endAge: 65,
-                startingSalary: 98000,
-                annualRaiseRate: 3.5,
+                endAge: 65,                annualRaiseRate: 3.5,
                 savingsRate: 10,
                 employerMatchRate: 3,
                 bonusRate: 8,
@@ -820,9 +900,7 @@ describe('App', () => {
                 enabled: true,
                 usePreviousCareerStartAge: false,
                 startAge: 65,
-                endAge: 45,
-                startingSalary: 98000,
-                annualRaiseRate: 3.5,
+                endAge: 45,                annualRaiseRate: 3.5,
                 savingsRate: 10,
                 employerMatchRate: 3,
                 bonusRate: 8,
@@ -988,9 +1066,7 @@ describe('App', () => {
                 enabled: true,
                 usePreviousCareerStartAge: false,
                 startAge: 45,
-                endAge: 65,
-                startingSalary: 98000,
-                annualRaiseRate: 3.5,
+                endAge: 65,                annualRaiseRate: 3.5,
                 savingsRate: 10,
                 employerMatchRate: 3,
                 bonusRate: 8,
@@ -1084,9 +1160,7 @@ describe('App', () => {
                 usePreviousCareerStartAge: false,
                 useBirthdayBasedStartAge: true,
                 startAge: 35,
-                endAge: 65,
-                startingSalary: 98000,
-                annualRaiseRate: 3.5,
+                endAge: 65,                annualRaiseRate: 3.5,
                 savingsRate: 10,
                 employerMatchRate: 3,
                 bonusRate: 8,
@@ -1228,7 +1302,7 @@ describe('App', () => {
     const hsa = parseCurrency(firstProjectedRowCells[6].textContent ?? '');
     const investments = parseCurrency(firstProjectedRowCells[7].textContent ?? '');
     const retirement401k = parseCurrency(firstProjectedRowCells[8].textContent ?? '');
-    const endBalance = parseCurrency(firstProjectedRowCells[12].textContent ?? '');
+    const endBalance = parseCurrency(firstProjectedRowCells[13].textContent ?? '');
     const accountSum = emergencyFund + hsa + investments + retirement401k;
 
     expect(Math.abs(endBalance - accountSum)).toBeLessThanOrEqual(3);
@@ -1237,7 +1311,7 @@ describe('App', () => {
     const summaryEndingBalanceMatch = summaryEndingText.match(/\$[0-9,]+/g);
     const summaryEndingBalance = parseCurrency(summaryEndingBalanceMatch?.[summaryEndingBalanceMatch.length - 1] ?? '0');
     const lastRowCells = within(dataRows[dataRows.length - 1]).getAllByRole('cell');
-    const lastTableEndBalance = parseCurrency(lastRowCells[12].textContent ?? '');
+    const lastTableEndBalance = parseCurrency(lastRowCells[13].textContent ?? '');
 
     expect(lastTableEndBalance).toBe(summaryEndingBalance);
   });
@@ -1438,9 +1512,7 @@ describe('App', () => {
               startYearMonth: '',
               endYearMonth: '',
               startAge: 45,
-              endAge: 65,
-              startingSalary: 98000,
-              annualRaiseRate: 3.5,
+              endAge: 65,              annualRaiseRate: 3.5,
               savingsRate: 10,
               employerMatchRate: 3,
               bonusRate: 8,

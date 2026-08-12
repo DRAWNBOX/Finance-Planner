@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { formatCurrency } from '../engine/projection';
 import type { ProjectionYear, PurchaseFlag } from '../types';
+import { useRenderCount } from '../utils/perfTools';
 import { pickFlagColor } from '../utils/colorPalette';
 import { layoutFlagCallouts } from './flagCalloutLayout';
 
@@ -10,7 +11,8 @@ interface ChartPanelProps {
   onFlagColorChange?: (flagId: string, color: string) => void;
 }
 
-export const ChartPanel = ({ years, flags = [], onFlagColorChange }: ChartPanelProps) => {
+export const ChartPanel = memo(({ years, flags = [], onFlagColorChange }: ChartPanelProps) => {
+  useRenderCount('ChartPanel');
   const [colorPickerFlagId, setColorPickerFlagId] = useState<string | null>(null);
 
   if (years.length === 0) {
@@ -67,14 +69,17 @@ export const ChartPanel = ({ years, flags = [], onFlagColorChange }: ChartPanelP
     height - padding.bottom
   } Z`;
   const yTicks = Array.from({ length: Math.floor(roundedMaxValue / yStep) + 1 }, (_, index) => index * yStep).reverse();
+  const yearCount = years.length;
+  const tickStep = yearCount <= 5 ? 1 : yearCount <= 10 ? 2 : yearCount <= 20 ? 3 : yearCount <= 30 ? 4 : 5;
   const xTickIndexes = years
     .map((_, index) => index)
     .filter((index) => {
       const age = years[index].age;
       const isFirst = index === 0;
       const isLast = index === years.length - 1;
+      const stepAge = years[0].age + Math.round((age - years[0].age) / tickStep) * tickStep;
 
-      return isFirst || isLast || age % 5 === 0;
+      return isFirst || isLast || age === stepAge;
     });
 
   const flagsWithColor = flags.map((flag) => {
@@ -127,6 +132,21 @@ export const ChartPanel = ({ years, flags = [], onFlagColorChange }: ChartPanelP
 
         <path d={areaPath} className="chart-area" />
         <path d={linePath} className="chart-line" />
+
+        {(() => {
+          const maxDebt = Math.max(...years.map((y) => y.totalCreditCardDebt ?? 0));
+          if (maxDebt <= 0) return null;
+          const debtPath = years
+            .map((year, index) => {
+              const debt = year.totalCreditCardDebt ?? 0;
+              const x = padding.left + (index / Math.max(years.length - 1, 1)) * plotWidth;
+              const y2 = padding.top + plotHeight - ((debt - minValue) / Math.max(roundedMaxValue - minValue, 1)) * plotHeight;
+              return `${index === 0 ? 'M' : 'L'} ${x} ${y2}`;
+            })
+            .join(' ');
+          return <path d={debtPath} className="chart-debt-line" />;
+        })()}
+
         {years.map((year, index) => {
           const point = pointFor(index);
 
@@ -232,4 +252,4 @@ export const ChartPanel = ({ years, flags = [], onFlagColorChange }: ChartPanelP
       ) : null}
     </div>
   );
-};
+});
