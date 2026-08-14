@@ -6,8 +6,8 @@ export interface FlagCalloutLayoutInput {
   rightBound: number;
   topY: number;
   bottomBound: number;
-  getAnchorX: (age: number) => number;
-  getAnchorY: (age: number) => number;
+  getAnchorX: (flag: PurchaseFlag & { color: string }) => number;
+  getAnchorY: (flag: PurchaseFlag & { color: string }) => number;
 }
 
 export interface FlagCalloutLayout {
@@ -46,7 +46,7 @@ export const layoutFlagCallouts = ({
   const sorted = [...flags]
     .map((flag) => {
       const width = getFlagLabelWidth(flag.label);
-      const anchorX = getAnchorX(flag.age);
+      const anchorX = getAnchorX(flag);
       const x = Math.max(leftBound, Math.min(anchorX, rightBound - width));
       return { flag, width, anchorX, x };
     })
@@ -63,7 +63,7 @@ export const layoutFlagCallouts = ({
 
     const y = topY + FLAG_Y_PADDING + lane * (FLAG_HEIGHT + LANE_GAP);
     const stemTopY = y + FLAG_HEIGHT;
-    const anchorY = getAnchorY(flag.age);
+    const anchorY = getAnchorY(flag);
     const stemBottomY = Math.max(stemTopY + STEM_MIN_LENGTH, anchorY - 6);
     const label = flag.label.length > 14 ? `${flag.label.slice(0, 13)}...` : flag.label;
 

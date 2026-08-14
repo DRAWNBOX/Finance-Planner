@@ -276,6 +276,11 @@ select {
   gap: 0.55rem;
 }
 
+.housing-editor {
+  display: grid;
+  gap: 0.55rem;
+}
+
 .career-tabs {
   display: flex;
   gap: 0.35rem;
@@ -573,6 +578,43 @@ select {
 
 .chart-point {
   fill: #42a4ed;
+}
+
+.chart-hover-line {
+  stroke: #6b7280;
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
+.chart-hover-point {
+  fill: #42a4ed;
+  stroke: #ffffff;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.chart-hover-tooltip rect {
+  fill: rgba(31, 41, 55, 0.92);
+  stroke: #1f2937;
+  stroke-width: 1;
+}
+
+.chart-hover-tooltip-label {
+  fill: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.chart-hover-tooltip-value {
+  fill: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chart-hover-tooltip-breakdown {
+  fill: #e5e7eb;
+  font-size: 10px;
 }
 
 .stacked-legend {

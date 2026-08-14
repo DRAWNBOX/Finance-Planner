@@ -9,6 +9,7 @@ import { SavingsStackedChart } from './components/SavingsStackedChart';
 import { BufferedNumberInput } from './components/BufferedNumberInput';
 import { ExpensesPlanner } from './components/ExpensesPlanner';
 import { YearMonthInput } from './components/YearMonthInput';
+import { HousingEditor } from './components/HousingEditor';
 import { ColorPickerField } from './components/ColorPickerField';
 import {
   createDefaultCashflowItem,
@@ -217,7 +218,7 @@ const normalizeCareerEntries = (
 };
 
 const makeCareerId = () => `career-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-const makeCustomNetWorthAccountId = () => `custom-networth-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+const makeHousingId = () => `housing-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;const makeCustomNetWorthAccountId = () => `custom-networth-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makePoolId = () => `pool-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeBankAccountId = () => `bank-account-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeExpenseImportSourceId = () => `expense-import-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
@@ -628,7 +629,7 @@ const App = () => {
   const [newPurchaseCategoryLabel, setNewPurchaseCategoryLabel] = useState('');
   const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
   const [editingCreditCardId, setEditingCreditCardId] = useState<string | null>(null);
-  const [editingHousingId, setEditingHousingId] = useState<string | null>(null);
+  const [selectedHousingId, setSelectedHousingId] = useState<string>('');
   const filesInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const scenario = appState.scenario;
@@ -747,15 +748,6 @@ const App = () => {
   const hideResultsPanel = hideResultsForExpenses;
   const displayedGraphYears = usesFinancePredictionResults && !hasEnabledCareers ? [] : graphProjection.years;
   const displayedPortfolioGraphYears = displayedGraphYears;
-  const filteredGraphYears = useMemo(() => {
-    if (displayedGraphYears.length === 0) return displayedGraphYears;
-    const minAge = displayedGraphYears[0].age;
-    const maxAge = displayedGraphYears[displayedGraphYears.length - 1].age;
-    const effectiveMin = graphAgeMin > minAge ? graphAgeMin : minAge;
-    const effectiveMax = graphAgeMax < maxAge ? graphAgeMax : maxAge;
-    if (effectiveMin <= minAge && effectiveMax >= maxAge) return displayedGraphYears;
-    return displayedGraphYears.filter((y) => y.age >= effectiveMin && y.age <= effectiveMax);
-  }, [displayedGraphYears, graphAgeMin, graphAgeMax]);
 
   useEffect(() => {
     if (displayedGraphYears.length > 0) {
@@ -766,7 +758,9 @@ const App = () => {
   }, [displayedGraphYears.length > 0 ? displayedGraphYears[0]?.age : 0, displayedGraphYears.length > 0 ? displayedGraphYears[displayedGraphYears.length - 1]?.age : 0]);
   const displayedTableYears =
     usesFinancePredictionResults && !hasEnabledCareers ? [] : projection.years;
-  const adjustedTableYears = useMemo(() => {
+  const deflationRate = inflationEnabled ? scenario.manualReturns.inflationRate / 100 : 0;
+
+  const adjustedYears = useMemo(() => {
     if (!showRealDollars || displayedTableYears.length === 0) return displayedTableYears;
     let cumFactor = 1;
     return displayedTableYears.map((year) => {
@@ -775,24 +769,90 @@ const App = () => {
       }
       if (Math.abs(cumFactor - 1) < 0.0001) return year;
       const d = (v: number) => v / cumFactor;
+      const dRecord = (rec: Record<string, number>) =>
+        Object.fromEntries(Object.entries(rec).map(([k, v]) => [k, d(v)]));
       return {
         ...year,
         startBalance: d(year.startBalance),
         salary: d(year.salary),
         careerContribution: d(year.careerContribution),
-        accountBalancesById: Object.fromEntries(
-          Object.entries(year.accountBalancesById).map(([k, v]) => [k, d(v)])
-        ),
+        contribution: d(year.contribution),
         withdrawal: d(year.withdrawal),
         extraCashflow: d(year.extraCashflow),
+        lifeEventCashflow: d(year.lifeEventCashflow),
         taxesPaid: d(year.taxesPaid),
         penaltiesPaid: d(year.penaltiesPaid),
-        endBalance: d(year.endBalance),
+        savingsBalances: dRecord(year.savingsBalances),
+        accountBalancesById: dRecord(year.accountBalancesById),
+        creditCardBalancesById: dRecord(year.creditCardBalancesById),
+        totalCreditCardDebt: d(year.totalCreditCardDebt),
+        endBalance: d(year.endBalance)
       };
     });
   }, [showRealDollars, displayedTableYears]);
+
+  const adjustedMonthlySnapshots = useMemo(() => {
+    const snaps = projection?.monthlySnapshots;
+    if (!showRealDollars || !snaps || snaps.length === 0 || deflationRate === 0) return snaps;
+    const first = snaps[0];
+    const firstSerial = first.calendarYear * 12 + (first.calendarMonth - 1);
+    return snaps.map((snap) => {
+      const serial = snap.calendarYear * 12 + (snap.calendarMonth - 1);
+      const months = Math.max(0, serial - firstSerial);
+      const factor = Math.pow(1 + deflationRate, months / 12);
+      if (Math.abs(factor - 1) < 0.0001) return snap;
+      const d = (v: number) => v / factor;
+      const dRecord = (rec: Record<string, number>) =>
+        Object.fromEntries(Object.entries(rec).map(([k, v]) => [k, d(v)]));
+      return {
+        ...snap,
+        startBalance: d(snap.startBalance),
+        salary: d(snap.salary),
+        careerContribution: d(snap.careerContribution),
+        contribution: d(snap.contribution),
+        withdrawal: d(snap.withdrawal),
+        taxesPaid: d(snap.taxesPaid),
+        penaltiesPaid: d(snap.penaltiesPaid),
+        endBalance: d(snap.endBalance),
+        accountBalancesById: dRecord(snap.accountBalancesById)
+      };
+    });
+  }, [showRealDollars, projection?.monthlySnapshots, deflationRate]);
+
+  const adjustedIncomeUsageByMonth = useMemo(() => {
+    const usage = projection?.incomeUsageByMonth;
+    if (!showRealDollars || !usage || deflationRate === 0) return usage;
+    const keys = Object.keys(usage);
+    if (keys.length === 0) return usage;
+    const parseKey = (key: string) => {
+      const [y, m] = key.split('-').map(Number);
+      return y * 12 + (m - 1);
+    };
+    const firstSerial = parseKey(keys[0]);
+    const result: NonNullable<typeof usage> = {};
+    keys.forEach((key) => {
+      const months = Math.max(0, parseKey(key) - firstSerial);
+      const factor = Math.pow(1 + deflationRate, months / 12);
+      const d = (v: number) => v / factor;
+      result[key] = {
+        availableIncome: d(usage[key].availableIncome),
+        items: usage[key].items.map((item) => ({ ...item, amount: d(item.amount) }))
+      };
+    });
+    return result;
+  }, [showRealDollars, projection?.incomeUsageByMonth, deflationRate]);
+
+  const filteredGraphYears = useMemo(() => {
+    if (adjustedYears.length === 0) return adjustedYears;
+    const minAge = adjustedYears[0].age;
+    const maxAge = adjustedYears[adjustedYears.length - 1].age;
+    const effectiveMin = graphAgeMin > minAge ? graphAgeMin : minAge;
+    const effectiveMax = graphAgeMax < maxAge ? graphAgeMax : maxAge;
+    if (effectiveMin <= minAge && effectiveMax >= maxAge) return adjustedYears;
+    return adjustedYears.filter((y) => y.age >= effectiveMin && y.age <= effectiveMax);
+  }, [adjustedYears, graphAgeMin, graphAgeMax]);
   const graphYearsForMode = graphMode === 'portfolio' ? filteredGraphYears : filteredGraphYears;
-  const displayedGraphEndingBalance = displayedGraphYears.length > 0 ? displayedGraphYears[displayedGraphYears.length - 1].endBalance : 0;
+  const displayedGraphEndingBalance = adjustedYears.length > 0 ? adjustedYears[adjustedYears.length - 1].endBalance : 0;
   const displayedGraphBalanceForSummary = displayedGraphEndingBalance;
   const displayedGraphEndAge = displayedGraphYears.length > 0 ? displayedGraphYears[displayedGraphYears.length - 1].age : currentAge;
   const displayedGraphDepleted = displayedGraphYears.some((year) => year.depleted);
@@ -833,7 +893,8 @@ const App = () => {
           age: p.age,
           amount: p.amount,
           type: 'large_purchase' as const,
-          color: p.flagColor ?? ''
+          color: p.flagColor ?? '',
+          yearMonth: p.yearMonth
         })),
       ...activeLongTermPurchases
         .filter((p) => p.enabled && p.showOnGraph)
@@ -845,7 +906,8 @@ const App = () => {
             age: startAge ?? currentAge,
             amount: p.monthlyAmount,
             type: 'long_term_purchase' as const,
-            color: p.flagColor ?? ''
+            color: p.flagColor ?? '',
+            yearMonth: p.startYearMonth
           };
         }),
       ...activeLoans
@@ -858,7 +920,8 @@ const App = () => {
             age: startAge ?? currentAge,
             amount: l.originalAmount,
             type: 'loan' as const,
-            color: l.flagColor ?? ''
+            color: l.flagColor ?? '',
+            yearMonth: l.startYearMonth
           };
         }),
       ...activeHousing
@@ -871,7 +934,8 @@ const App = () => {
             age: startAge ?? currentAge,
             amount: h.purchasePrice || h.monthlyRent,
             type: 'housing' as const,
-            color: h.flagColor ?? ''
+            color: h.flagColor ?? '',
+            yearMonth: h.startYearMonth
           };
         })
     ];
@@ -919,6 +983,13 @@ const App = () => {
       }
     }));
   }, [activeCareerPlan.entries, selectedCareerId]);
+
+  useEffect(() => {
+    if (selectedHousingId || activeHousing.length === 0) {
+      return;
+    }
+    setSelectedHousingId(activeHousing[0].id);
+  }, [activeHousing, selectedHousingId]);
 
   useEffect(() => {
     if (availableNetWorthHistoryRanges.some((range) => range.id === netWorthHistoryRange)) {
@@ -1163,6 +1234,24 @@ const App = () => {
       ...entry,
       sourceLines: normalizeCareerSourceLinesForBankAccounts(entry, normalizedNetWorth.bankAccounts ?? [])
     });
+    const normalizeHousingChain = (entries: Scenario['housing']) => {
+      const result: Scenario['housing'] = [];
+      entries.forEach((entry) => {
+        const previous = result[result.length - 1];
+        if (entry.usePreviousEndAsStart && previous) {
+          const prevEnd = normalizeYearMonth(
+            previous.housingType === 'mortgage' ? previous.sellYearMonth : previous.endYearMonth
+          );
+          if (prevEnd) {
+            result.push({ ...entry, startYearMonth: prevEnd });
+            return;
+          }
+        }
+        result.push(entry);
+      });
+      return result;
+    };
+    const normalizedHousing = normalizeHousingChain(nextScenario.housing ?? []);
     const normalizedLargePurchases = (nextScenario.largePurchases ?? []).map(normalizeLargePurchase);
     const normalizedLongTermPurchases = (nextScenario.longTermPurchases ?? []).map(normalizeLongTermPurchase);
     const normalizedLoans = (nextScenario.loans ?? []).map(normalizeLoan);
@@ -1177,7 +1266,7 @@ const App = () => {
         enabled: timeline.careerPlan.enabled,
         entries: (timeline.careerPlan.entries ?? []).map(normalizeCareerWithBankTargets)
       },
-      housing: timeline.housing ?? []
+      housing: normalizeHousingChain(timeline.housing ?? [])
     }));
 
     setAppState((currentState) => ({
@@ -1198,6 +1287,7 @@ const App = () => {
           entries: normalizedCareerEntriesWithBankTargets
         },
         netWorth: normalizedNetWorth,
+        housing: normalizedHousing,
         withdrawal: {
           ...nextScenario.withdrawal,
           minimumYearlyWithdrawal: Math.max(0, toNumberOrFallback(nextScenario.withdrawal.minimumYearlyWithdrawal, 0)),
@@ -1689,6 +1779,7 @@ const App = () => {
       ...rest,
       housing: [...housing, entry]
     })));
+    setSelectedHousingId(entry.id);
   };
 
   const updateHousing = (housingId: string, nextHousing: Scenario['housing'][number]) => {
@@ -1703,6 +1794,44 @@ const App = () => {
       ...rest,
       housing: housing.filter((h) => h.id !== housingId)
     })));
+    if (selectedHousingId === housingId) {
+      const remaining = activeHousing.filter((h) => h.id !== housingId);
+      setSelectedHousingId(remaining[0]?.id ?? '');
+    }
+  };
+
+  const reorderHousing = (fromHousingId: string, toHousingId: string) => {
+    if (fromHousingId === toHousingId) return;
+    const fromIndex = activeHousing.findIndex((h) => h.id === fromHousingId);
+    const toIndex = activeHousing.findIndex((h) => h.id === toHousingId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const nextHousing = [...activeHousing];
+    const [moving] = nextHousing.splice(fromIndex, 1);
+    nextHousing.splice(toIndex, 0, moving);
+
+    updateScenario(applyToActiveTimeline(({ housing, ...rest }) => ({
+      ...rest,
+      housing: nextHousing
+    })));
+  };
+
+  const duplicateHousing = (housingId: string) => {
+    const sourceIndex = activeHousing.findIndex((h) => h.id === housingId);
+    if (sourceIndex < 0) return;
+    const source = activeHousing[sourceIndex];
+    const duplicate = {
+      ...source,
+      id: makeHousingId(),
+      label: `${source.label} Copy`
+    };
+    const nextHousing = [...activeHousing];
+    nextHousing.splice(sourceIndex + 1, 0, duplicate);
+    updateScenario(applyToActiveTimeline(({ housing, ...rest }) => ({
+      ...rest,
+      housing: nextHousing
+    })));
+    setSelectedHousingId(duplicate.id);
   };
 
   const handleFlagColorChange = (flagId: string, color: string) => {
@@ -2537,6 +2666,7 @@ const App = () => {
                 retirementEndAge={retirementEndAge}
                 dateOfBirth={scenario.options.dateOfBirth}
                 currentAge={currentAge}
+                accounts={bankAccounts.map((account) => ({ id: account.id, label: account.label }))}
                 onChange={(nextItem) =>
                   updateScenario({
                     ...scenario,
@@ -3660,270 +3790,22 @@ const App = () => {
     </>
   );
 
-  const renderHousingTab = () => {
-    const housing = activeHousing;
-    const mortgages = housing.filter((h) => h.housingType === 'mortgage');
-    const rentals = housing.filter((h) => h.housingType === 'rental');
-
-    const renderHousingRow = (h: Scenario['housing'][number]) => {
-      const isMortgage = h.housingType === 'mortgage';
-      const loanAmount = Math.max(0, h.purchasePrice - h.downPayment);
-      const totalTermMonths = Math.max(1, h.loanTermYears * 12);
-      const monthlyRate = h.annualInterestRate / 100 / 12;
-      const monthlyPI = loanAmount > 0 ? (monthlyRate > 0
-        ? loanAmount * (monthlyRate * Math.pow(1 + monthlyRate, totalTermMonths)) / (Math.pow(1 + monthlyRate, totalTermMonths) - 1)
-        : loanAmount / totalTermMonths) : 0;
-      const totalMonthly = isMortgage
-        ? monthlyPI + h.extraMonthlyPayment + h.propertyTaxYearly / 12 + h.homeInsuranceYearly / 12 + h.hoaMonthly + h.maintenanceMonthly + h.pmiMonthly
-        : h.monthlyRent + h.propertyTaxYearly / 12 + h.homeInsuranceYearly / 12 + h.hoaMonthly + h.maintenanceMonthly;
-      const shortfall = projection?.housingFundingShortfalls?.[h.id] ?? 0;
-      const incomeStatus = projection?.incomeFundedItemStatuses?.[h.id];
-      const incomeShortfall = incomeStatus?.status === 'shortfall';
-      const incomeFallback = incomeStatus?.status === 'fallback';
-      const housingNotViable = h.enabled && (shortfall > 0.01 || incomeShortfall);
-      const housingTooltip = formatIncomeFallbackTooltip(incomeStatus, projection?.incomeUsageByMonth ?? {}, incomeStatus?.fallbackDetails, bankAccounts);
-      const title = housingNotViable
-        ? (incomeShortfall
-            ? 'Not enough income or fallback accounts to cover this housing payment.'
-            : 'Not viable: selected payment source cannot fund this housing payment.')
-        : housingTooltip ?? undefined;
-      const rowClass = (housingNotViable && (shortfall > 0.01 || incomeShortfall))
-        ? 'purchase-row invalid'
-        : incomeFallback
-          ? 'purchase-row warning'
-          : 'purchase-row';
-
-      return (
-        <tr key={h.id} className={rowClass} title={title}>
-          <td><input type="checkbox" checked={h.enabled} onChange={(e) => updateHousing(h.id, { ...h, enabled: e.target.checked })} /></td>
-          <td><input type="checkbox" checked={h.showOnGraph} onChange={(e) => updateHousing(h.id, { ...h, showOnGraph: e.target.checked })} /></td>
-          <td><input type="text" value={h.label} onChange={(e) => updateHousing(h.id, { ...h, label: e.target.value })} /></td>
-          <td><YearMonthInput label="Start" value={h.startYearMonth} onChange={(next) => updateHousing(h.id, { ...h, startYearMonth: next })} /></td>
-          {isMortgage && (
-            <>
-              <td><BufferedNumberInput value={h.purchasePrice} min={0} max={50000000} step={1000} onCommit={(next) => updateHousing(h.id, { ...h, purchasePrice: next })} /></td>
-              <td><BufferedNumberInput value={h.downPayment} min={0} max={50000000} step={1000} onCommit={(next) => updateHousing(h.id, { ...h, downPayment: next })} /></td>
-              <td>
-                <select aria-label="Down Payment Source" value={h.downPaymentSource ?? h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, downPaymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
-                  <option value="income">Income</option>
-                  {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </td>
-              <td><BufferedNumberInput value={h.annualInterestRate} min={0} max={80} step={0.1} onCommit={(next) => updateHousing(h.id, { ...h, annualInterestRate: next })} /></td>
-              <td><BufferedNumberInput value={h.pmiMonthly} min={0} max={10000} step={10} onCommit={(next) => updateHousing(h.id, { ...h, pmiMonthly: next })} /></td>
-            </>
-          )}
-          <td>{formatCurrency(totalMonthly)}</td>
-          {!isMortgage && (
-            <td>
-              <select aria-label="Pay From" value={h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, paymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
-                <option value="income">Income</option>
-                {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </td>
-          )}
-          <td>
-            <button type="button" className="secondary-button" onClick={() => setEditingHousingId(h.id)}>
-              Edit
-            </button>
-          </td>
-          <td><button type="button" className="text-button" onClick={() => removeHousing(h.id)}>Remove</button></td>
-        </tr>
-      );
-    };
-
-    return (
-      <>
-      <Panel title="Housing Expenses" className="panel-wide">
-        <div className="career-actions">
-          <button type="button" className="secondary-button" onClick={() => addHousing('mortgage')}>
-            + Mortgage
-          </button>
-        </div>
-        {mortgages.length === 0 ? (
-          <p className="subtle">Add a mortgage to track home purchase, amortization, property tax, insurance, PMI, and sell proceeds.</p>
-        ) : (
-          <div className="table-wrap">
-            <table className="purchases-table">
-              <thead>
-                <tr>
-                  <th>Enabled</th>
-                  <th>Flag</th>
-                  <th>Name</th>
-                  <th>Start</th>
-                  <th>Purchase Price</th>
-                  <th>Down Pay</th>
-                  <th>Down From</th>
-                  <th>APR %</th>
-                  <th>PMI/mo</th>
-                  <th>Total/mo</th>
-                  <th>Edit</th>
-                  <th>Remove</th>
-                </tr>
-              </thead>
-              <tbody>{mortgages.map(renderHousingRow)}</tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="career-actions" style={{ marginTop: mortgages.length > 0 ? '1rem' : 0 }}>
-          <button type="button" className="secondary-button" onClick={() => addHousing('rental')}>
-            + Rental
-          </button>
-        </div>
-        {rentals.length === 0 ? (
-          <p className="subtle">Add a rental to track monthly rent and associated expenses.</p>
-        ) : (
-          <div className="table-wrap">
-            <table className="purchases-table">
-              <thead>
-                <tr>
-                  <th>Enabled</th>
-                  <th>Flag</th>
-                  <th>Name</th>
-                  <th>Start</th>
-                  <th>Total/mo</th>
-                  <th>Pay From</th>
-                  <th>Edit</th>
-                  <th>Remove</th>
-                </tr>
-              </thead>
-              <tbody>{rentals.map(renderHousingRow)}</tbody>
-            </table>
-          </div>
-        )}
-
-        {housing.length > 0 && (
-          <p className="subtle purchases-legend">
-            PMI drops automatically at 20% equity. Sale proceeds are calculated as sale price minus selling costs minus remaining balance.
-          </p>
-        )}
-      </Panel>
-
-      {editingHousingId && (() => {
-        const h = housing.find((entry) => entry.id === editingHousingId);
-        if (!h) return null;
-        const isMortgage = h.housingType === 'mortgage';
-        return (
-          <div className="expense-modal-backdrop" onClick={() => setEditingHousingId(null)}>
-            <div className="expense-modal" onClick={(e) => e.stopPropagation()}>
-              <div className="expense-modal-header">
-                <strong>Edit: {h.label}</strong>
-                <button type="button" className="secondary-button" onClick={() => setEditingHousingId(null)}>Done</button>
-              </div>
-              <div className="cc-edit-form">
-                <label>
-                  <span>Name</span>
-                  <input type="text" value={h.label} onChange={(e) => updateHousing(h.id, { ...h, label: e.target.value })} />
-                </label>
-                <label>
-                  <span>Start Year-Month</span>
-                  <YearMonthInput label="Start" value={h.startYearMonth} onChange={(next) => updateHousing(h.id, { ...h, startYearMonth: next })} />
-                </label>
-                {isMortgage && (
-                  <>
-                    <label>
-                      <span>Purchase Price</span>
-                      <BufferedNumberInput value={h.purchasePrice} min={0} max={50000000} step={1000} onCommit={(v) => updateHousing(h.id, { ...h, purchasePrice: v })} />
-                    </label>
-                    <label>
-                      <span>Down Payment</span>
-                      <BufferedNumberInput value={h.downPayment} min={0} max={50000000} step={1000} onCommit={(v) => updateHousing(h.id, { ...h, downPayment: v })} />
-                    </label>
-                    <label>
-                      <span>Down Payment Source</span>
-                      <select value={h.downPaymentSource ?? h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, downPaymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
-                        <option value="income">Income</option>
-                        {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </label>
-                    <label>
-                      <span>APR %</span>
-                      <BufferedNumberInput value={h.annualInterestRate} min={0} max={80} step={0.1} onCommit={(v) => updateHousing(h.id, { ...h, annualInterestRate: v })} />
-                    </label>
-                    <label>
-                      <span>Loan Term (years)</span>
-                      <BufferedNumberInput value={h.loanTermYears} min={1} max={50} step={1} onCommit={(v) => updateHousing(h.id, { ...h, loanTermYears: v })} />
-                    </label>
-                    <label>
-                      <span>PMI/mo</span>
-                      <BufferedNumberInput value={h.pmiMonthly} min={0} max={10000} step={10} onCommit={(v) => updateHousing(h.id, { ...h, pmiMonthly: v })} />
-                    </label>
-                    <label>
-                      <span>Appreciation Rate %</span>
-                      <BufferedNumberInput value={h.appreciationRate} min={0} max={30} step={0.1} onCommit={(v) => updateHousing(h.id, { ...h, appreciationRate: v })} />
-                    </label>
-                    <label>
-                      <span>Sell Year-Month</span>
-                      <YearMonthInput label="Sell" value={h.sellYearMonth} onChange={(next) => updateHousing(h.id, { ...h, sellYearMonth: next })} />
-                    </label>
-                    <label>
-                      <span>Sale Proceeds Account</span>
-                      <select value={h.saleProceedsAccountId ?? ''} onChange={(e) => updateHousing(h.id, { ...h, saleProceedsAccountId: e.target.value || undefined })}>
-                        <option value="">-</option>
-                        {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Extra Monthly Payment</span>
-                      <BufferedNumberInput value={h.extraMonthlyPayment} min={0} max={50000} step={50} onCommit={(v) => updateHousing(h.id, { ...h, extraMonthlyPayment: v })} />
-                    </label>
-                  </>
-                )}
-                {!isMortgage && (
-                  <>
-                    <label>
-                      <span>Monthly Rent</span>
-                      <BufferedNumberInput value={h.monthlyRent} min={0} max={100000} step={50} onCommit={(v) => updateHousing(h.id, { ...h, monthlyRent: v })} />
-                    </label>
-                    <label>
-                      <span>End Year-Month</span>
-                      <YearMonthInput label="End" value={h.endYearMonth} onChange={(next) => updateHousing(h.id, { ...h, endYearMonth: next })} />
-                    </label>
-                  </>
-                )}
-                <label>
-                  <span>Property Tax/yr</span>
-                  <BufferedNumberInput value={h.propertyTaxYearly} min={0} max={500000} step={100} onCommit={(v) => updateHousing(h.id, { ...h, propertyTaxYearly: v })} />
-                </label>
-                <label>
-                  <span>Home Insurance/yr</span>
-                  <BufferedNumberInput value={h.homeInsuranceYearly} min={0} max={100000} step={50} onCommit={(v) => updateHousing(h.id, { ...h, homeInsuranceYearly: v })} />
-                </label>
-                <label>
-                  <span>HOA/mo</span>
-                  <BufferedNumberInput value={h.hoaMonthly} min={0} max={50000} step={10} onCommit={(v) => updateHousing(h.id, { ...h, hoaMonthly: v })} />
-                </label>
-                <label>
-                  <span>Maintenance/mo</span>
-                  <BufferedNumberInput value={h.maintenanceMonthly} min={0} max={50000} step={10} onCommit={(v) => updateHousing(h.id, { ...h, maintenanceMonthly: v })} />
-                </label>
-                <label>
-                  <span>Rental Income/mo</span>
-                  <BufferedNumberInput value={h.rentalIncomeMonthly} min={0} max={100000} step={50} onCommit={(v) => updateHousing(h.id, { ...h, rentalIncomeMonthly: v })} />
-                </label>
-                <label>
-                  <span>Rental Income Account</span>
-                  <select value={h.rentalIncomeAccountId ?? ''} onChange={(e) => updateHousing(h.id, { ...h, rentalIncomeAccountId: e.target.value || undefined })}>
-                    <option value="">-</option>
-                    {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>Pay From</span>
-                  <select value={h.paymentSource ?? 'income'} onChange={(e) => updateHousing(h.id, { ...h, paymentSource: e.target.value === 'income' ? 'income' : (e.target.value as `account:${string}`) })}>
-                    <option value="income">Income</option>
-                    {accountSelectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </label>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-      </>
-    );
-  };
+  const renderHousingTab = () => (
+    <Panel title="Housing Expenses" className="panel-wide">
+      <HousingEditor
+        housing={activeHousing}
+        selectedHousingId={selectedHousingId}
+        onSelectHousing={setSelectedHousingId}
+        onChangeHousing={(housingEntry) => updateHousing(housingEntry.id, housingEntry)}
+        onReorderHousing={reorderHousing}
+        onAddHousing={addHousing}
+        onDuplicateHousing={duplicateHousing}
+        onRemoveHousing={removeHousing}
+        accountOptions={accountSelectionOptions}
+        orderedBankAccounts={orderedBankAccounts}
+      />
+    </Panel>
+  );
 
   const renderTimelineManagementTab = () => (
     <></>
@@ -5213,6 +5095,7 @@ const App = () => {
                         <ChartPanel
                           years={filteredGraphYears}
                           flags={visibleFlags}
+                          monthlySnapshots={adjustedMonthlySnapshots}
                           onFlagColorChange={handleFlagColorChange}
                         />
                       ) : (
@@ -5221,6 +5104,7 @@ const App = () => {
                           pools={poolDefinitions}
                           bankAccounts={orderedBankAccounts}
                           flags={visibleFlags}
+                          monthlySnapshots={adjustedMonthlySnapshots}
                           onFlagColorChange={handleFlagColorChange}
                         />
                       )}
@@ -5292,17 +5176,17 @@ const App = () => {
                     <span>Display months</span>
                   </label>
                   <ResultsTable
-                    years={adjustedTableYears}
+                    years={adjustedYears}
                     accountColumns={orderedBankAccounts.map((account) => ({ id: account.id, label: account.label }))}
                     showMonths={showMonths}
-                    monthlySnapshots={projection?.monthlySnapshots}
+                    monthlySnapshots={adjustedMonthlySnapshots}
                     rowTooltip={showMonths ? (row, _i) => {
                       if (!('calendarMonth' in row)) return undefined;
                       const snap = row as import('./types').MonthlySnapshot;
                       const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
                       const monthAbbr = MONTHS[snap.calendarMonth - 1] ?? snap.calendarMonth;
                       const mk = `${snap.calendarYear}-${String(snap.calendarMonth).padStart(2, '0')}`;
-                      const usage = projection?.incomeUsageByMonth?.[mk];
+                      const usage = adjustedIncomeUsageByMonth?.[mk];
                       const change = snap.endBalance - snap.startBalance;
                       const parts: string[] = [];
                       parts.push(`${monthAbbr} ${snap.calendarYear} \u2014 Age ${snap.age}`);

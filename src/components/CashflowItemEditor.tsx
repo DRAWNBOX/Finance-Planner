@@ -9,6 +9,7 @@ interface CashflowItemEditorProps {
   retirementEndAge: number;
   dateOfBirth: string;
   currentAge: number;
+  accounts: Array<{ id: string; label: string }>;
   onChange: (item: CashflowItem) => void;
   onRemove: (id: string) => void;
 }
@@ -20,6 +21,7 @@ export const CashflowItemEditor = memo(({
   retirementEndAge,
   dateOfBirth,
   currentAge,
+  accounts,
   onChange,
   onRemove
 }: CashflowItemEditorProps) => {
@@ -52,6 +54,18 @@ export const CashflowItemEditor = memo(({
         />
       </label>
       <label>
+        <span>Account</span>
+        <select
+          value={item.accountId ?? ''}
+          onChange={(event) => onChange({ ...item, accountId: event.target.value || null })}
+        >
+          <option value="">-</option>
+          {accounts.map((account) => (
+            <option key={account.id} value={account.id}>{account.label}</option>
+          ))}
+        </select>
+      </label>
+      <label>
         <span>{item.cadence === 'one_time' ? 'Age' : 'Start Age'}</span>
         <input
           type="number"
@@ -65,7 +79,7 @@ export const CashflowItemEditor = memo(({
         <span>{item.cadence === 'one_time' ? 'Year-Month' : 'Start (Year-Month)'}</span>
         <YearMonthInput
           label={item.cadence === 'one_time' ? 'Age' : 'Start'}
-          value={formatYearMonthFromAge(item.startAge, dateOfBirth, currentAge)}
+          value={item.startYearMonth ?? formatYearMonthFromAge(item.startAge, dateOfBirth, currentAge)}
           onChange={(nextValue) => {
             const derivedAge = ageFromYearMonth(nextValue, dateOfBirth, currentAge, 18, retirementEndAge);
 
@@ -76,6 +90,7 @@ export const CashflowItemEditor = memo(({
             onChange({
               ...item,
               startAge: derivedAge,
+              startYearMonth: nextValue,
               endAge: item.cadence === 'one_time' ? derivedAge : Math.max(item.endAge, derivedAge)
             });
           }}
@@ -97,7 +112,7 @@ export const CashflowItemEditor = memo(({
             <span>End (Year-Month)</span>
             <YearMonthInput
               label="End"
-              value={formatYearMonthFromAge(item.endAge, dateOfBirth, currentAge)}
+              value={item.endYearMonth ?? formatYearMonthFromAge(item.endAge, dateOfBirth, currentAge)}
               onChange={(nextValue) => {
                 const derivedAge = ageFromYearMonth(
                   nextValue,
@@ -111,7 +126,7 @@ export const CashflowItemEditor = memo(({
                   return;
                 }
 
-                onChange({ ...item, endAge: derivedAge });
+                onChange({ ...item, endAge: derivedAge, endYearMonth: nextValue });
               }}
             />
           </label>

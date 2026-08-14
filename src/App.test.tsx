@@ -715,6 +715,58 @@ describe('App', () => {
     expect(screen.getByDisplayValue('My Home')).toBeInTheDocument();
   });
 
+  it('shows per-expense payment source selectors in the housing editor', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Housing Expenses' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
+
+    expect(screen.getByLabelText('PMI Source')).toBeInTheDocument();
+    expect(screen.getByLabelText('Taxes & Insurance Source')).toBeInTheDocument();
+    expect(screen.getByLabelText('HOA & Maintenance Source')).toBeInTheDocument();
+  });
+
+  it('shows mortgages and rentals as chips and supports duplicate', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Housing Expenses' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
+
+    expect(screen.getByRole('button', { name: 'My Home' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apartment' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate Housing' }));
+    expect(screen.getByRole('button', { name: 'Apartment Copy' })).toBeInTheDocument();
+  });
+
+  it('disables use-previous-end when the previous housing has no end date', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Housing Expenses' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
+
+    const usePrevious = screen.getByRole('checkbox', { name: 'Use previous housing end date as start date' });
+    expect(usePrevious).toBeInTheDocument();
+    expect(usePrevious).toBeDisabled();
+  });
+
   it('maps saved future retirement tab state into Careers', () => {
     window.localStorage.setItem(
       'finance-planner-state',

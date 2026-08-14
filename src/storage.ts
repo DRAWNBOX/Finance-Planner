@@ -412,7 +412,11 @@ export const loadAppState = (): PersistedAppState => {
         appreciationRate: toNumberOrFallback(entry.appreciationRate, 0),
         sellingCostsRate: Math.max(0, toNumberOrFallback(entry.sellingCostsRate, 0)),
         saleProceedsAccountId: typeof entry.saleProceedsAccountId === 'string' ? entry.saleProceedsAccountId : undefined,
-        paymentSource: typeof entry.paymentSource === 'string' ? entry.paymentSource as LoanPaymentSource : 'income'
+        usePreviousEndAsStart: Boolean(entry.usePreviousEndAsStart),
+        paymentSource: typeof entry.paymentSource === 'string' ? entry.paymentSource as LoanPaymentSource : 'income',
+        taxesInsuranceSource: typeof entry.taxesInsuranceSource === 'string' ? entry.taxesInsuranceSource as LoanPaymentSource : undefined,
+        hoaMaintenanceSource: typeof entry.hoaMaintenanceSource === 'string' ? entry.hoaMaintenanceSource as LoanPaymentSource : undefined,
+        pmiSource: typeof entry.pmiSource === 'string' ? entry.pmiSource as LoanPaymentSource : undefined
       };
     };
 
@@ -805,8 +809,18 @@ export const loadAppState = (): PersistedAppState => {
             )
           }
         },
-        cashflowItems: scenario.cashflowItems ?? [],
-        lifeEvents: scenario.lifeEvents ?? [],
+        cashflowItems: (scenario.cashflowItems ?? []).map((item) => ({
+          ...item,
+          accountId: typeof item.accountId === 'string' && item.accountId.trim().length > 0 ? item.accountId : null,
+          startYearMonth: typeof item.startYearMonth === 'string' ? normalizeYearMonth(item.startYearMonth) : undefined,
+          endYearMonth: typeof item.endYearMonth === 'string' ? normalizeYearMonth(item.endYearMonth) : undefined
+        })),
+        lifeEvents: (scenario.lifeEvents ?? []).map((event) => ({
+          ...event,
+          accountId: typeof event.accountId === 'string' && event.accountId.trim().length > 0 ? event.accountId : null,
+          startYearMonth: typeof event.startYearMonth === 'string' ? normalizeYearMonth(event.startYearMonth) : undefined,
+          endYearMonth: typeof event.endYearMonth === 'string' ? normalizeYearMonth(event.endYearMonth) : undefined
+        })),
         incomeFallbackAccountId: normalizeIncomeFallbackId(scenario.incomeFallbackAccountId, bankAccountIds),
         incomeFallbackAccountId2: normalizeIncomeFallbackId(scenario.incomeFallbackAccountId2, bankAccountIds)
       },

@@ -602,6 +602,104 @@ describe('projectScenario', () => {
     expect(age51.extraCashflow).toBe(50000);
   });
 
+  it('deposits recurring cashflow income into the selected account monthly', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 65, retirementYears: 1 },
+      netWorth: {
+        accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }),
+        pools: (defaultScenario.netWorth.pools ?? []).map((p) => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
+      },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      careerPlan: { ...defaultScenario.careerPlan, entries: [] },
+      cashflowItems: [
+        {
+          id: 'ss', category: 'social_security' as const, label: 'Social Security', enabled: true,
+          cadence: 'recurring' as const, direction: 'inflow' as const, amount: 12000, startAge: 41, endAge: 41,
+          accountId: 'investments-account-default'
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    const age42 = findProjectedYear(result, 42);
+
+    expect(age42.accountBalancesById['investments-account-default']).toBeCloseTo(12000, 2);
+  });
+
+  it('deposits one-time cashflow income once at its exact age', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 65, retirementYears: 1 },
+      netWorth: {
+        accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }),
+        pools: (defaultScenario.netWorth.pools ?? []).map((p) => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
+      },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      careerPlan: { ...defaultScenario.careerPlan, entries: [] },
+      cashflowItems: [
+        {
+          id: 'gift', category: 'inheritance' as const, label: 'Gift', enabled: true,
+          cadence: 'one_time' as const, direction: 'inflow' as const, amount: 50000, startAge: 42, endAge: 42,
+          accountId: 'investments-account-default'
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    const age43 = findProjectedYear(result, 43);
+
+    expect(age43.accountBalancesById['investments-account-default']).toBeCloseTo(50000, 2);
+  });
+
+  it('pays each housing expense group from its own source account', () => {
+    const startYearMonth = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    })();
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 65, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      careerPlan: { ...defaultScenario.careerPlan, entries: [] },
+      netWorth: {
+        accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        asOfDate: '',
+        bankAccounts: seedDefaultBankAccounts({ emergencyFund: 50000, hsa: 50000, investments: 50000, retirement401k: 50000 }),
+        pools: (defaultScenario.netWorth.pools ?? []).map((p) => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0, taxRate: 0, penaltyRate: 0 }))
+      },
+      housing: [
+        {
+          id: 'house-1', label: 'Home', enabled: true, showOnGraph: false,
+          housingType: 'rental' as const,
+          startYearMonth,
+          purchasePrice: 0, downPayment: 0, annualInterestRate: 0, loanTermYears: 30, extraMonthlyPayment: 0,
+          monthlyRent: 1200, endYearMonth: '',
+          propertyTaxYearly: 1200, homeInsuranceYearly: 600, hoaMonthly: 100, maintenanceMonthly: 50, pmiMonthly: 0,
+          rentalIncomeMonthly: 0, sellYearMonth: '', appreciationRate: 0, sellingCostsRate: 0,
+          paymentSource: 'account:emergencyFund-account-default' as const,
+          taxesInsuranceSource: 'account:hsa-account-default' as const,
+          hoaMaintenanceSource: 'account:retirement401k-account-default' as const
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    const age41 = findProjectedYear(result, 41);
+
+    expect(age41.accountBalancesById['emergencyFund-account-default']).toBeCloseTo(50000 - 14400, 2);
+    expect(age41.accountBalancesById['hsa-account-default']).toBeCloseTo(50000 - 1800, 2);
+    expect(age41.accountBalancesById['retirement401k-account-default']).toBeCloseTo(50000 - 1800, 2);
+    expect(age41.accountBalancesById['investments-account-default']).toBeCloseTo(50000, 2);
+  });
+
   it('estimates salary-based career savings before retirement', () => {
     const scenario = {
       ...defaultScenario,

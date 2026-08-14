@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { formatCurrency } from '../engine/projection';
-import type { BankAccountDefinition, PoolDefinition, ProjectionYear, PurchaseFlag } from '../types';
+import type { BankAccountDefinition, MonthlySnapshot, PoolDefinition, ProjectionYear, PurchaseFlag } from '../types';
 import { useRenderCount } from '../utils/perfTools';
 import { pickFlagColor } from '../utils/colorPalette';
 import { layoutFlagCallouts } from './flagCalloutLayout';
@@ -10,7 +10,17 @@ interface SavingsStackedChartProps {
   pools: PoolDefinition[];
   bankAccounts: BankAccountDefinition[];
   flags?: PurchaseFlag[];
+  monthlySnapshots?: MonthlySnapshot[];
   onFlagColorChange?: (flagId: string, color: string) => void;
+}
+
+interface StackedHoverPoint {
+  x: number;
+  y: number;
+  value: number;
+  yearMonth: string;
+  age: number;
+  breakdown: Array<{ label: string; value: number }>;
 }
 
 const FALLBACK_COLORS = ['#4b87d9', '#32a884', '#f0a235', '#ca5d7b', '#7a75d8', '#3e9ab1', '#d0735a', '#6e9c4e'] as const;
@@ -31,9 +41,10 @@ const makeAreaPath = (top: number[], bottom: number[], pointX: (index: number) =
   return `${topPath} ${bottomPath} Z`;
 };
 
-export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [], onFlagColorChange }: SavingsStackedChartProps) => {
+export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [], monthlySnapshots, onFlagColorChange }: SavingsStackedChartProps) => {
   useRenderCount('SavingsStackedChart');
   const [colorPickerFlagId, setColorPickerFlagId] = useState<string | null>(null);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const enabledPools = useMemo(() => pools.filter((pool) => pool.enabled), [pools]);
   const accountIdsByPoolId = useMemo(
     () =>
@@ -72,16 +83,28 @@ export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
 
+  const filteredMonthlySnapshots = useMemo(() => {
+    if (!monthlySnapshots || monthlySnapshots.length === 0 || years.length === 0) return [];
+    const minAge = years[0].age;
+    const maxAge = years[years.length - 1].age;
+    return monthlySnapshots.filter((snap) => snap.age >= minAge && snap.age <= maxAge);
+  }, [monthlySnapshots, years]);
+
+  const useMonthly = filteredMonthlySnapshots.length > 0;
+
+  const resolvePoolValue = (data: { accountBalancesById: Record<string, number> }, poolId: string) => {
+    const accountIds = accountIdsByPoolId.get(poolId) ?? [];
+    return accountIds.reduce((sum, accountId) => sum + Math.max(0, data.accountBalancesById[accountId] ?? 0), 0);
+  };
+
   const stackedSeries = useMemo(() => {
     const visible = series.filter((entry) => visibleKeys[entry.key] ?? true);
-    const resolvePoolValue = (year: ProjectionYear, poolId: string) => {
-      const accountIds = accountIdsByPoolId.get(poolId) ?? [];
-      return accountIds.reduce((sum, accountId) => sum + Math.max(0, year.accountBalancesById[accountId] ?? 0), 0);
-    };
-    const totals = years.map((year) =>
-      visible.reduce((sum, entry) => sum + resolvePoolValue(year, entry.key), 0)
-    );
-    const maxValue = Math.max(...totals, 1);
+
+    const monthlyTotals = useMonthly
+      ? filteredMonthlySnapshots.map((snap) => visible.reduce((sum, entry) => sum + resolvePoolValue(snap, entry.key), 0))
+      : [];
+    const yearlyTotals = years.map((year) => visible.reduce((sum, entry) => sum + resolvePoolValue(year, entry.key), 0));
+    const maxValue = Math.max(useMonthly ? Math.max(...monthlyTotals, 1) : Math.max(...yearlyTotals, 1), 1);
     const yStep =
       maxValue <= 1_000_000
         ? 50_000
@@ -93,28 +116,95 @@ export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [
     const roundedMaxValue = Math.max(yStep, Math.ceil(maxValue / yStep) * yStep);
     const yTicks = Array.from({ length: Math.floor(roundedMaxValue / yStep) + 1 }, (_, index) => index * yStep).reverse();
 
-    let running = new Array(years.length).fill(0);
-    const layers = visible.map((entry) => {
-      const lower = [...running];
-      const top = running.map((value, index) => value + resolvePoolValue(years[index], entry.key));
-      running = top;
+    let layers: Array<{ key: string; label: string; color: string; lower: number[]; top: number[] }> = [];
+    if (useMonthly) {
+      let running = new Array(filteredMonthlySnapshots.length).fill(0);
+      layers = visible.map((entry) => {
+        const lower = [...running];
+        const top = running.map((value, index) => value + resolvePoolValue(filteredMonthlySnapshots[index], entry.key));
+        running = top;
+        return { ...entry, lower, top };
+      });
+    } else {
+      let running = new Array(years.length).fill(0);
+      layers = visible.map((entry) => {
+        const lower = [...running];
+        const top = running.map((value, index) => value + resolvePoolValue(years[index], entry.key));
+        running = top;
+        return { ...entry, lower, top };
+      });
+    }
 
-      return {
-        ...entry,
-        lower,
-        top
-      };
-    });
-
-    return { layers, maxValue: roundedMaxValue, yTicks, totals };
-  }, [accountIdsByPoolId, series, visibleKeys, years]);
+    return {
+      layers,
+      maxValue: roundedMaxValue,
+      yTicks,
+      totals: useMonthly ? monthlyTotals : yearlyTotals,
+      pointCount: useMonthly ? filteredMonthlySnapshots.length : years.length
+    };
+  }, [accountIdsByPoolId, series, visibleKeys, years, useMonthly, filteredMonthlySnapshots]);
 
   if (years.length === 0) {
     return null;
   }
 
-  const pointX = (index: number) => padding.left + (index / Math.max(years.length - 1, 1)) * plotWidth;
+  const pointX = (index: number) => padding.left + (index / Math.max(stackedSeries.pointCount - 1, 1)) * plotWidth;
+  const yearX = (index: number) => padding.left + (index / Math.max(years.length - 1, 1)) * plotWidth;
   const pointY = (value: number) => padding.top + plotHeight - (value / Math.max(stackedSeries.maxValue, 1)) * plotHeight;
+
+  const hoverPoints = useMemo<StackedHoverPoint[]>(() => {
+    if (!useMonthly) return [];
+    const visible = series.filter((entry) => visibleKeys[entry.key] ?? true);
+    return filteredMonthlySnapshots.map((snap, index) => {
+      const breakdown = visible.map((entry) => ({
+        label: entry.label,
+        value: resolvePoolValue(snap, entry.key)
+      }));
+      const total = breakdown.reduce((sum, entry) => sum + entry.value, 0);
+      return {
+        x: padding.left + (index / Math.max(filteredMonthlySnapshots.length - 1, 1)) * plotWidth,
+        y: pointY(total),
+        value: total,
+        yearMonth: `${snap.calendarYear}-${String(snap.calendarMonth).padStart(2, '0')}`,
+        age: snap.age,
+        breakdown
+      };
+    });
+  }, [useMonthly, filteredMonthlySnapshots, series, visibleKeys, accountIdsByPoolId, stackedSeries.maxValue]);
+
+  const handleMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
+    if (hoverPoints.length === 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const viewX = ((event.clientX - rect.left) / rect.width) * width;
+    let closest = 0;
+    let closestDist = Infinity;
+    hoverPoints.forEach((point, index) => {
+      const dist = Math.abs(point.x - viewX);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = index;
+      }
+    });
+    setHoverIndex(closest);
+  };
+
+  const hoverPoint = hoverIndex !== null ? hoverPoints[hoverIndex] ?? null : null;
+
+  const hoverTooltip = (() => {
+    if (!hoverPoint) return null;
+    const lineCount = 2 + hoverPoint.breakdown.length;
+    const w = 160;
+    const h = 16 + lineCount * 16;
+    let tx = hoverPoint.x + 10;
+    if (tx + w > width - padding.right) tx = hoverPoint.x - w - 10;
+    if (tx < padding.left) tx = padding.left + 4;
+    let ty = hoverPoint.y - h / 2;
+    if (ty < padding.top) ty = padding.top + 4;
+    if (ty + h > height - padding.bottom) ty = height - padding.bottom - h - 4;
+    return { tx, ty, w, h };
+  })();
+
   const ageToIndex = (age: number): number => {
     let closest = 0;
     let closestDist = Infinity;
@@ -127,6 +217,28 @@ export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [
     });
     return closest;
   };
+
+  const monthlyIndexForAge = (age: number): number => {
+    let closest = -1;
+    let closestDist = Infinity;
+    hoverPoints.forEach((point, index) => {
+      const dist = Math.abs(point.age - age);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = index;
+      }
+    });
+    return closest;
+  };
+
+  const monthlyIndexForFlag = (flag: { age: number; yearMonth?: string }): number => {
+    if (flag.yearMonth) {
+      const exact = hoverPoints.findIndex((point) => point.yearMonth === flag.yearMonth);
+      if (exact >= 0) return exact;
+    }
+    return monthlyIndexForAge(flag.age);
+  };
+
   const yearCount = years.length;
   const tickStep = yearCount <= 5 ? 1 : yearCount <= 10 ? 2 : yearCount <= 20 ? 3 : yearCount <= 30 ? 4 : 5;
   const xTickIndexes = years
@@ -150,14 +262,19 @@ export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [
     rightBound: width - padding.right,
     topY: padding.top,
     bottomBound: height - padding.bottom,
-    getAnchorX: (age) => {
-      const index = ageToIndex(age);
-      return pointX(index);
+    getAnchorX: (flag) => {
+      if (useMonthly) {
+        const idx = monthlyIndexForFlag(flag);
+        return idx >= 0 ? hoverPoints[idx].x : pointX(ageToIndex(flag.age));
+      }
+      return pointX(ageToIndex(flag.age));
     },
-    getAnchorY: (age) => {
-      const index = ageToIndex(age);
-      const value = stackedSeries.totals[index] ?? 0;
-      return pointY(value);
+    getAnchorY: (flag) => {
+      if (useMonthly) {
+        const idx = monthlyIndexForFlag(flag);
+        return idx >= 0 ? hoverPoints[idx].y : pointY(stackedSeries.totals[ageToIndex(flag.age)] ?? 0);
+      }
+      return pointY(stackedSeries.totals[ageToIndex(flag.age)] ?? 0);
     }
   });
 
@@ -197,7 +314,14 @@ export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [
           </label>
         ))}
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Stacked savings balances over time">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="chart-svg"
+        role="img"
+        aria-label="Stacked savings balances over time"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHoverIndex(null)}
+      >
         {stackedSeries.yTicks.map((tick) => {
           const y = pointY(tick);
 
@@ -213,7 +337,7 @@ export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [
 
         {xTickIndexes.map((index) => {
           const year = years[index];
-          const x = pointX(index);
+          const x = yearX(index);
 
           return (
             <g key={`stacked-${year.age}`}>
@@ -228,6 +352,48 @@ export const SavingsStackedChart = memo(({ years, pools, bankAccounts, flags = [
         {stackedSeries.layers.map((layer) => (
           <path key={layer.key} d={makeAreaPath(layer.top, layer.lower, pointX, pointY)} className="savings-area" style={{ fill: layer.color }} />
         ))}
+
+        {hoverPoint && (
+          <g className="chart-hover-group">
+            <line
+              x1={hoverPoint.x}
+              x2={hoverPoint.x}
+              y1={padding.top}
+              y2={height - padding.bottom}
+              className="chart-hover-line"
+            />
+            <circle cx={hoverPoint.x} cy={hoverPoint.y} r={5} className="chart-hover-point" />
+          </g>
+        )}
+
+        {hoverPoint && hoverTooltip && (
+          <g className="chart-hover-tooltip" pointerEvents="none">
+            <rect
+              x={hoverTooltip.tx}
+              y={hoverTooltip.ty}
+              width={hoverTooltip.w}
+              height={hoverTooltip.h}
+              rx={5}
+              ry={5}
+            />
+            <text x={hoverTooltip.tx + 8} y={hoverTooltip.ty + 16} className="chart-hover-tooltip-label">
+              {hoverPoint.yearMonth}
+            </text>
+            <text x={hoverTooltip.tx + 8} y={hoverTooltip.ty + 32} className="chart-hover-tooltip-value">
+              Total: {formatCurrency(hoverPoint.value)}
+            </text>
+            {hoverPoint.breakdown.map((entry, index) => (
+              <text
+                key={entry.label}
+                x={hoverTooltip.tx + 8}
+                y={hoverTooltip.ty + 48 + index * 16}
+                className="chart-hover-tooltip-breakdown"
+              >
+                {entry.label}: {formatCurrency(entry.value)}
+              </text>
+            ))}
+          </g>
+        )}
 
         {flagCallouts.map((callout) => {
           const isOpen = colorPickerFlagId === callout.id;

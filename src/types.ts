@@ -257,7 +257,11 @@ export interface HousingEntry {
   sellingCostsRate: number;
   saleProceedsAccountId?: string;
 
+  usePreviousEndAsStart?: boolean;
   paymentSource?: LoanPaymentSource;
+  taxesInsuranceSource?: LoanPaymentSource;
+  hoaMaintenanceSource?: LoanPaymentSource;
+  pmiSource?: LoanPaymentSource;
 }
 
 export interface PoolDefinition {
@@ -470,6 +474,9 @@ export interface CashflowItem {
   amount: number;
   startAge: number;
   endAge: number;
+  accountId?: string | null;
+  startYearMonth?: string;
+  endYearMonth?: string;
 }
 
 export type LifeEventType =
@@ -493,6 +500,9 @@ export interface LifeEvent {
   amount: number;
   newSalary: number;
   annualSalaryGrowthOverride: number;
+  accountId?: string | null;
+  startYearMonth?: string;
+  endYearMonth?: string;
 }
 
 export interface Scenario {
@@ -553,6 +563,7 @@ export interface PurchaseFlag {
   amount: number;
   type: 'large_purchase' | 'long_term_purchase' | 'loan' | 'housing';
   color: string;
+  yearMonth?: string;
 }
 
 export interface MonthlySnapshot {
