@@ -13,8 +13,18 @@ Primary interfaces live in `src/types.ts`.
 - `careerPlan`: timeline entries
 - `netWorth`: starting balances + as-of date
 - `futureRetirement`, `withdrawal`, `manualReturns`
+- `purchaseCategories`, `timelines`, `activeTimelineId`
 - `cashflowItems`, `lifeEvents`
 - `largePurchases`, `longTermPurchases`, `loans`, `housing`, `creditCards`
+
+## Timeline
+
+`Timeline` (`src/types.ts`) is a named, independent snapshot of:
+- `purchases`, `longTermPurchases`, `loans`, `creditCards`
+- `careerPlan` (enabled + entries)
+- `housing`
+
+`activeTimelineId` selects which timeline is active (`null` = the base `scenario.*` fields). Categories are universal across timelines.
 
 ## CareerEntry
 
@@ -30,14 +40,23 @@ Each career entry represents a timeline segment:
   - `retirementAccountId`, `hsaAccountId` — target accounts for deposits
   - `livingExpenses` — subtracted from monthly take-home
   - Only the employee portion of retirement/HSA is subtracted from take-home pay
+  - Take-home pay and `percentOfSalary` retirement/HSA amounts are computed from the **raised salary** (`grossSalary * (1 + annualRaiseRate)^(age - startAge)`), consistent with source-line contributions
   - Each field has a `period` toggle (monthly/yearly) for display/input conversion
 - `incomeFallbackAccountId`, `incomeFallbackAccountId2` — fallback accounts when income is insufficient
 
 ## Housing, Loans, Credit Cards
 
-- `HousingEntry`: mortgages (with PMI, sell proceeds) and rentals
+- `HousingEntry`: mortgages (with PMI, sell proceeds) and rentals. Grouped payment sources: `paymentSource` (P&I+extra / rent), `taxesInsuranceSource`, `hoaMaintenanceSource`, `pmiSource` (each falls back to `paymentSource`); `usePreviousEndAsStart` chains start to the previous entry's end; `linkedCareerStartId`/`linkedCareerEndId` link the start / end dates (one-way) to a career.
 - `Loan`: amortized debt with interest, down payment, payment source
 - `CreditCard`: revolving debt with autopay or fixed-plus-lump payment modes
+
+## Cashflow Items & Life Events
+
+- `CashflowItem` / `LifeEvent` carry `accountId` (deposit/withdraw target) and `startYearMonth`/`endYearMonth` (exact month timing). Recurring items apply monthly; one-time items fire at their exact `startYearMonth`.
+
+## Purchase Flags
+
+- `PurchaseFlag` carries `yearMonth` so flags anchor to the exact month on the monthly-scale charts (falling back to `age`).
 
 ## Projection Outputs
 

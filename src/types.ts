@@ -24,7 +24,6 @@ export interface PersonProfile {
 }
 
 export interface AgeOptions {
-  useDateBasedAge: boolean;
   dateOfBirth: string;
 }
 
@@ -258,6 +257,8 @@ export interface HousingEntry {
   saleProceedsAccountId?: string;
 
   usePreviousEndAsStart?: boolean;
+  linkedCareerStartId?: string | null;
+  linkedCareerEndId?: string | null;
   paymentSource?: LoanPaymentSource;
   taxesInsuranceSource?: LoanPaymentSource;
   hoaMaintenanceSource?: LoanPaymentSource;
@@ -293,43 +294,6 @@ export interface NetWorthCustomAccount {
   balance: number;
 }
 
-export type NetWorthImportFileType = 'csv' | 'pdf' | 'unknown';
-export type NetWorthImportStatus = 'ready' | 'needs_review' | 'error' | 'applied';
-export type NetWorthImportApplyMode = 'net_worth_only' | 'net_worth_and_expenses';
-
-export interface NetWorthImportSourceAccount {
-  id: string;
-  label: string;
-  balance: number;
-}
-
-export interface BankImportParseResult {
-  detectedAccountId: string | null;
-  detectedBalance: number | null;
-  statementDate: string;
-  confidence: number;
-  status: Exclude<NetWorthImportStatus, 'applied'>;
-  parseNotes: string[];
-  previewText: string;
-}
-
-export interface NetWorthImportRecord {
-  id: string;
-  fileName: string;
-  fileType: NetWorthImportFileType;
-  previewText: string;
-  detectedAccountId: string | null;
-  detectedBalance: number | null;
-  statementDate: string;
-  selectedAccountId: string | null;
-  status: NetWorthImportStatus;
-  confidence: number;
-  parseNotes: string[];
-  applyMode?: NetWorthImportApplyMode;
-  applied: boolean;
-  appliedAt: string;
-}
-
 export interface NetWorthHistoryAccountSnapshot {
   id: string;
   label: string;
@@ -343,12 +307,44 @@ export interface NetWorthHistoryEntry {
   totalNetWorth: number;
 }
 
+export interface TrajectoryYear {
+  age: number;
+  calendarYear: number;
+  isBaselineNow: boolean;
+  startBalance: number;
+  endBalance: number;
+  salary: number;
+  careerContribution: number;
+  contribution: number;
+  withdrawal: number;
+  taxesPaid: number;
+  penaltiesPaid: number;
+  annualReturnRate: number;
+  inflationRate: number;
+  depleted: boolean;
+  savingsBalances: Record<string, number>;
+  accountBalancesById: Record<string, number>;
+  creditCardBalancesById: Record<string, number>;
+  totalCreditCardDebt: number;
+}
+
+export interface TrajectorySnapshot {
+  id: string;
+  label: string;
+  createdAt: string;
+  survivesToEnd: boolean;
+  depletedAge: number | null;
+  endAge: number;
+  endingBalance: number;
+  summary: string;
+  years: TrajectoryYear[];
+}
+
 export interface NetWorthConfig {
   accountBalances: Record<string, number>;
   pools?: PoolDefinition[];
   bankAccounts?: BankAccountDefinition[];
   customAccounts?: NetWorthCustomAccount[];
-  imports?: NetWorthImportRecord[];
   history?: NetWorthHistoryEntry[];
   asOfDate: string;
 }
@@ -518,6 +514,7 @@ export interface Scenario {
   purchaseCategories: PurchaseCategory[];
   timelines: Timeline[];
   activeTimelineId: string | null;
+  trajectorySnapshots: TrajectorySnapshot[];
   largePurchases: LargePurchase[];
   creditCards: CreditCard[];
   longTermPurchases: LongTermPurchase[];
@@ -586,6 +583,62 @@ export interface MonthlySnapshot {
   accountActivity?: Record<string, Array<{ label: string; amount: number }>>;
 }
 
+export interface MonthlyWaterfallSnapshot {
+  calendarYear: number;
+  calendarMonth: number;
+  careerLabel: string;
+  takeHomeIncome: number;
+  careerSavingsDeposits: number;
+  careerWithdrawals: number;
+  housingCosts: number;
+  housingIncomeCosts: number;
+  otherIncomeExpenses: number;
+  leftoverIncome: number;
+}
+
+export interface IncomePoolUsageItem {
+  id: string;
+  label: string;
+  requested: number;
+  fromIncome: number;
+  fromFallback: number;
+  shortfall: number;
+}
+
+export interface IncomePoolUsagePeriod {
+  pool: 'monthly' | 'yearly';
+  periodKey: string;
+  budget: number;
+  totalRequested: number;
+  totalFromIncome: number;
+  totalFromFallback: number;
+  totalShortfall: number;
+  exceedsIncome: boolean;
+  hasUnmet: boolean;
+  items: IncomePoolUsageItem[];
+}
+
+export interface IncomeValidationGroup {
+  pool: 'monthly' | 'yearly';
+  periodKeys: string[];
+  budget: number;
+  totalRequested: number;
+  totalFromIncome: number;
+  totalFromFallback: number;
+  totalShortfall: number;
+  minOverage: number;
+  maxOverage: number;
+  exceedsIncome: boolean;
+  hasUnmet: boolean;
+  items: IncomePoolUsageItem[];
+}
+
+export interface IncomeValidation {
+  hasOverspend: boolean;
+  periods: IncomePoolUsagePeriod[];
+  groups: IncomeValidationGroup[];
+}
+
 export interface ProjectionResult {
   years: ProjectionYear[];
   survivesToEnd: boolean;
@@ -593,6 +646,8 @@ export interface ProjectionResult {
   endAge: number;
   endingBalance: number;
   summary: string;
+  simulationStartDate: string;
+  simulationStartYearMonth: string;
   careerEndSavingsBalances: Record<string, Record<string, number>>;
   firstRetirementYearPlannedAccountWithdrawals: Record<string, number>;
   purchaseFundingShortfalls: Record<string, number>;
@@ -603,10 +658,12 @@ export interface ProjectionResult {
   warnings?: string[];
   incomeFundedItemStatuses: Record<string, { status: 'covered' | 'fallback' | 'shortfall'; shortfallAmount?: number; fallbackDetails?: { accountId: string; amount: number }[]; firstFallbackYearMonth?: string }>;
   incomeUsageByMonth: Record<string, { availableIncome: number; items: { id: string; label: string; amount: number }[] }>;
+  incomeValidation: IncomeValidation;
   housingPayoffMonths: Record<string, number | null>;
   housingTotalMonthlyCosts: Record<string, number>;
   housingFundingShortfalls: Record<string, number>;
    creditCardFundingShortfalls: Record<string, number>;
   creditCardBalancesById: Record<string, number>;
   monthlySnapshots?: MonthlySnapshot[];
+  monthlyWaterfall?: MonthlyWaterfallSnapshot[];
 }

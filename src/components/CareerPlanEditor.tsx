@@ -2,7 +2,7 @@ import { memo, useMemo, useState } from 'react';
 import { BufferedNumberInput } from './BufferedNumberInput';
 import { YearMonthInput } from './YearMonthInput';
 import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, PaycheckInfo, PoolDefinition, ProjectionYear } from '../types';
-import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
+import { addMonthsToYearMonth, ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
 import { useRenderCount } from '../utils/perfTools';
 
 interface CareerPlanEditorProps {
@@ -24,6 +24,7 @@ interface CareerPlanEditorProps {
   incomeFallbackAccountId2: string | null | undefined;
   onChangeIncomeFallbackAccount1: (accountId: string | null) => void;
   onChangeIncomeFallbackAccount2: (accountId: string | null) => void;
+  allowReordering?: boolean;
 }
 
 const formatCurrency = (value: number) =>
@@ -81,18 +82,30 @@ export const CareerPlanEditor = memo(({
   incomeFallbackAccountId,
   incomeFallbackAccountId2,
   onChangeIncomeFallbackAccount1,
-  onChangeIncomeFallbackAccount2
+  onChangeIncomeFallbackAccount2,
+  allowReordering = true
 }: CareerPlanEditorProps) => {
   useRenderCount('CareerPlanEditor');
   const selectedCareer = value.entries.find((career) => career.id === selectedCareerId) ?? value.entries[0];
   const [dragCareerId, setDragCareerId] = useState<string | null>(null);
   const selectedCareerIndex = selectedCareer ? value.entries.findIndex((career) => career.id === selectedCareer.id) : -1;
   const previousCareer = selectedCareerIndex > 0 ? value.entries[selectedCareerIndex - 1] : undefined;
+  const previousCareerEndYearMonth = previousCareer
+    ? previousCareer.endYearMonth || formatYearMonthFromAge(previousCareer.endAge, dateOfBirth, currentAge)
+    : '';
+  const previousCareerStartYearMonth = previousCareerEndYearMonth
+    ? addMonthsToYearMonth(previousCareerEndYearMonth, 1)
+    : '';
+  const previousCareerStartAge = previousCareer
+    ? previousCareerStartYearMonth
+      ? ageFromYearMonth(previousCareerStartYearMonth, dateOfBirth, currentAge, 18, 110) ?? previousCareer.endAge
+      : previousCareer.endAge
+    : undefined;
   const selectedStartAge = selectedCareer
     ? selectedCareer.useBirthdayBasedStartAge
       ? birthdayBasedCareerStartAge
       : selectedCareer.usePreviousCareerStartAge && previousCareer
-        ? previousCareer.endAge
+        ? previousCareerStartAge
         : selectedCareer.startAge
     : undefined;
 
@@ -151,7 +164,7 @@ export const CareerPlanEditor = memo(({
     selectedCareer.useBirthdayBasedStartAge
       ? formatYearMonthFromAge(selectedStartAge ?? selectedCareer.startAge, dateOfBirth, currentAge)
       : selectedCareer.usePreviousCareerStartAge && previousCareer
-        ? previousCareer.endYearMonth || formatYearMonthFromAge(previousCareer.endAge, dateOfBirth, currentAge)
+        ? previousCareerStartYearMonth || formatYearMonthFromAge(previousCareer.endAge, dateOfBirth, currentAge)
         : selectedCareer.startYearMonth || formatYearMonthFromAge(selectedStartAge ?? selectedCareer.startAge, dateOfBirth, currentAge);
   const endYearMonthValue =
     selectedCareer.endYearMonth || formatYearMonthFromAge(selectedCareer.endAge, dateOfBirth, currentAge);
@@ -303,16 +316,16 @@ export const CareerPlanEditor = memo(({
             className={`${career.id === selectedCareer?.id ? 'career-tab active' : 'career-tab'}${
               dragCareerId === career.id ? ' dragging' : ''
             }`}
-            draggable
+            draggable={allowReordering}
             onClick={() => onSelectCareer(career.id)}
-            onDragStart={() => setDragCareerId(career.id)}
-            onDragOver={(event) => event.preventDefault()}
+            onDragStart={() => allowReordering && setDragCareerId(career.id)}
+            onDragOver={(event) => allowReordering && event.preventDefault()}
             onDrop={() => {
-              if (dragCareerId) {
+              if (allowReordering && dragCareerId) {
                 onReorderCareers(dragCareerId, career.id);
               }
             }}
-            onDragEnd={() => setDragCareerId(null)}
+            onDragEnd={() => allowReordering && setDragCareerId(null)}
           >
             {career.label}
           </button>
@@ -437,15 +450,15 @@ export const CareerPlanEditor = memo(({
                     ...selectedCareer,
                     usePreviousCareerStartAge: event.target.checked,
                     useBirthdayBasedStartAge: event.target.checked ? false : selectedCareer.useBirthdayBasedStartAge,
-                    startAge: event.target.checked && previousCareer ? previousCareer.endAge : selectedCareer.startAge,
+                    startAge: event.target.checked && previousCareer ? previousCareerStartAge ?? previousCareer.endAge : selectedCareer.startAge,
                     startYearMonth:
                       event.target.checked && previousCareer
-                        ? previousCareer.endYearMonth || formatYearMonthFromAge(previousCareer.endAge, dateOfBirth, currentAge)
+                        ? previousCareerStartYearMonth || formatYearMonthFromAge(previousCareer.endAge, dateOfBirth, currentAge)
                         : formatYearMonthFromAge(selectedCareer.startAge, dateOfBirth, currentAge)
                   })
                 }
               />
-              <span>Use previous career end age as this start age</span>
+              <span>Use the month after the previous career end as this start</span>
             </label>
             <label>
               <span>Annual Raise %</span>

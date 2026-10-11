@@ -191,10 +191,11 @@ const defaultCareerSourceLines = defaultBankAccounts.map((account) => ({
 export const createDefaultCareerEntry = (
   index: number,
   currentAge: number,
-  retirementAge: number
+  retirementAge: number,
+  id?: string
 ): CareerEntry => {
   const base: CareerEntry = {
-  id: makeCareerId(index),
+  id: id ?? makeCareerId(index),
   label: index === 0 ? 'Current Career' : `Career ${index + 1}`,
   enabled: true,
   usePreviousCareerStartAge: false,
@@ -362,6 +363,8 @@ export const createDefaultHousingEntry = (currentAge: number, dateOfBirth: strin
   sellYearMonth: '',
   appreciationRate: 3,
   sellingCostsRate: 6,
+  linkedCareerStartId: null,
+  linkedCareerEndId: null,
   paymentSource: 'income'
 });
 
@@ -388,6 +391,8 @@ export const createDefaultRentalEntry = (currentAge: number, dateOfBirth: string
   sellYearMonth: '',
   appreciationRate: 0,
   sellingCostsRate: 0,
+  linkedCareerStartId: null,
+  linkedCareerEndId: null,
   paymentSource: 'income'
 });
 
@@ -398,7 +403,6 @@ export const defaultScenario: Scenario = {
     retirementYears: 30
   },
   options: {
-    useDateBasedAge: false,
     dateOfBirth: '1980-10-01'
   },
   portfolio: {
@@ -427,7 +431,6 @@ export const defaultScenario: Scenario = {
     ],
     bankAccounts: defaultBankAccounts,
     customAccounts: [],
-    imports: [],
     history: [],
     asOfDate: ''
   },
@@ -461,6 +464,7 @@ export const defaultScenario: Scenario = {
   purchaseCategories: [],
   timelines: [],
   activeTimelineId: null,
+  trajectorySnapshots: [],
   largePurchases: [],
   creditCards: [],
   longTermPurchases: [],

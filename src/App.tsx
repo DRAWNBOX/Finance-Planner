@@ -6,6 +6,7 @@ import { CareerPlanEditor } from './components/CareerPlanEditor';
 import { NetWorthHistoryChart } from './components/NetWorthHistoryChart';
 import { ResultsTable } from './components/ResultsTable';
 import { SavingsStackedChart } from './components/SavingsStackedChart';
+import { TrajectoryComparisonChart } from './components/TrajectoryComparisonChart';
 import { BufferedNumberInput } from './components/BufferedNumberInput';
 import { ExpensesPlanner } from './components/ExpensesPlanner';
 import { YearMonthInput } from './components/YearMonthInput';
@@ -25,9 +26,8 @@ import {
 import {
   normalizePurchaseFundingSource
 } from './financeModel';
-import { calculateAgeFromBirthDate, formatCurrency, projectScenario, resolveCurrentAge } from './engine/projection';
-import { parseBankImportFiles } from './importers/bankImport';
-import { ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
+import { calculateAgeFromBirthDate, describeIncomeValidationGroup, formatCurrency, projectScenario, resolveCurrentAge } from './engine/projection';
+import { addMonthsToYearMonth, ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
 import { loadAppState, saveAppState, type AppUiState, type CareersSubTab, type ExpensesSubTab } from './storage';
 import type {
   AccountTypePreset,
@@ -38,15 +38,15 @@ import type {
   NetWorthCustomAccount,
   NetWorthHistoryEntry,
   NetWorthHistoryAccountSnapshot,
-  NetWorthImportRecord,
-  NetWorthImportApplyMode,
-  NetWorthImportSourceAccount,
   ProjectionResult,
   ProjectionYear,
   PurchaseCategory,
   PurchaseFlag,
   Scenario,
-  SourceLine
+  SourceLine,
+  Timeline,
+  TrajectorySnapshot,
+  TrajectoryYear
 } from './types';
 import { pickFlagColor } from './utils/colorPalette';
 
@@ -65,7 +65,9 @@ const FINANCE_PREDICTION_SUB_TABS: Array<{ id: FinancePredictionSubTab; label: s
   { id: 'careers', label: 'Careers' },
   { id: 'timeline', label: 'Timeline Management' },
   { id: 'purchasesExpenses', label: 'Purchases and expenses' },
-  { id: 'housing', label: 'Housing Expenses' }
+  { id: 'housing', label: 'Housing Expenses' },
+  { id: 'trajectory', label: 'Trajectory' },
+  { id: 'warnings', label: 'Warnings' }
 ];
 const EXPENSES_SUB_TABS: Array<{ id: ExpensesTab; label: string }> = [
   { id: 'planning', label: 'Expense Planning' },
@@ -172,6 +174,26 @@ const normalizeCareerTimeline = (
   };
 };
 
+const ensureUniqueCareerIds = <T extends { id: string }>(entries: T[]): T[] => {
+  const seen = new Set<string>();
+
+  return entries.map((entry) => {
+    let id = entry.id;
+    if (!id || seen.has(id)) {
+      const baseId = id || 'career';
+      let suffix = 1;
+      let candidate = `${baseId}-${suffix}`;
+      while (seen.has(candidate)) {
+        suffix += 1;
+        candidate = `${baseId}-${suffix}`;
+      }
+      id = candidate;
+    }
+    seen.add(id);
+    return id === entry.id ? entry : { ...entry, id };
+  });
+};
+
 const normalizeCareerEntries = (
   entries: Scenario['careerPlan']['entries'],
   birthdayBasedCareerStartAge: number,
@@ -198,15 +220,17 @@ const normalizeCareerEntries = (
     }
 
     if (base.usePreviousCareerStartAge && previous) {
-      const startAge = previous.endAge;
-      const previousEndYearMonth = normalizeYearMonth(previous.endYearMonth) || formatYearMonthFromAge(startAge, dateOfBirth, currentAge);
+      const previousEndYearMonth =
+        normalizeYearMonth(previous.endYearMonth) || formatYearMonthFromAge(previous.endAge, dateOfBirth, currentAge);
+      const startYearMonth = addMonthsToYearMonth(previousEndYearMonth, 1);
+      const startAge = ageFromYearMonth(startYearMonth, dateOfBirth, currentAge, 18, 110) ?? previous.endAge;
 
       normalized.push({
         ...base,
         useBirthdayBasedStartAge: false,
         startAge,
         endAge: Math.max(base.endAge, startAge),
-        startYearMonth: previousEndYearMonth
+        startYearMonth
       });
       return;
     }
@@ -214,16 +238,13 @@ const normalizeCareerEntries = (
     normalized.push(base);
   });
 
-  return normalized;
+  return ensureUniqueCareerIds(normalized);
 };
 
 const makeCareerId = () => `career-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeHousingId = () => `housing-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;const makeCustomNetWorthAccountId = () => `custom-networth-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makePoolId = () => `pool-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const makeBankAccountId = () => `bank-account-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-const makeExpenseImportSourceId = () => `expense-import-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-const makeExpenseImportBatchId = () => `expense-import-batch-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-const makeExpenseEntryId = () => `expense-entry-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 type NetWorthHistoryRange = '30d' | '60d' | '90d' | '180d' | '1y' | '3y' | '5y' | '10y' | 'all';
 const NET_WORTH_HISTORY_RANGE_OPTIONS: Array<{ id: NetWorthHistoryRange; label: string; days: number | null }> = [
   { id: '30d', label: '30 days', days: 30 },
@@ -246,63 +267,6 @@ const ACCOUNT_TYPE_OPTIONS: Array<{ id: AccountTypePreset; label: string }> = [
 ];
 const normalizeImportDate = (value: unknown) =>
   typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(value) ? value : '';
-const normalizeNetWorthImportRecord = (record: Partial<NetWorthImportRecord>, index: number): NetWorthImportRecord => ({
-  id: typeof record.id === 'string' && record.id.trim().length > 0 ? record.id : `networth-import-${index + 1}`,
-  fileName: typeof record.fileName === 'string' && record.fileName.trim().length > 0 ? record.fileName : `import-${index + 1}.csv`,
-  fileType: record.fileType === 'csv' || record.fileType === 'pdf' ? record.fileType : 'unknown',
-  previewText: typeof record.previewText === 'string' ? record.previewText : '',
-  detectedAccountId: typeof record.detectedAccountId === 'string' && record.detectedAccountId.trim().length > 0 ? record.detectedAccountId : null,
-  detectedBalance:
-    typeof record.detectedBalance === 'number' && Number.isFinite(record.detectedBalance) ? record.detectedBalance : null,
-  statementDate: normalizeImportDate(record.statementDate),
-  selectedAccountId: typeof record.selectedAccountId === 'string' && record.selectedAccountId.trim().length > 0 ? record.selectedAccountId : null,
-  status:
-    record.status === 'ready' || record.status === 'needs_review' || record.status === 'error' || record.status === 'applied'
-      ? record.status
-      : 'needs_review',
-  confidence: typeof record.confidence === 'number' && Number.isFinite(record.confidence) ? Math.min(1, Math.max(0, record.confidence)) : 0,
-  parseNotes: Array.isArray(record.parseNotes) ? record.parseNotes.filter((note): note is string => typeof note === 'string') : [],
-  applyMode: record.applyMode === 'net_worth_and_expenses' || record.applyMode === 'net_worth_only' ? record.applyMode : 'net_worth_only',
-  applied: Boolean(record.applied),
-  appliedAt: normalizeImportDate(record.appliedAt)
-});
-const parseCsvPreview = (text: string) => {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  if (lines.length === 0) {
-    return [] as string[][];
-  }
-
-  const parseLine = (line: string) => {
-    const cells: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let index = 0; index < line.length; index += 1) {
-      const char = line[index];
-      if (char === '"') {
-        if (inQuotes && line[index + 1] === '"') {
-          current += '"';
-          index += 1;
-        } else {
-          inQuotes = !inQuotes;
-        }
-        continue;
-      }
-      if (char === ',' && !inQuotes) {
-        cells.push(current.trim());
-        current = '';
-        continue;
-      }
-      current += char;
-    }
-    cells.push(current.trim());
-    return cells;
-  };
-
-  return lines.map(parseLine);
-};
 const makeNetWorthHistoryEntryId = () => `networth-history-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
 const daysBetweenDates = (startDate: string, endDate: string) => {
   const start = new Date(startDate);
@@ -347,18 +311,50 @@ const filterNetWorthHistoryByRange = (history: NetWorthHistoryEntry[], range: Ne
     return !Number.isNaN(parsed.getTime()) && parsed >= cutoff;
   });
 };
-const confirmAction = (message: string) => {
-  if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
-    return true;
+const deflateTrajectoryYears = (years: TrajectoryYear[], showRealDollars: boolean): TrajectoryYear[] => {
+  if (!showRealDollars || years.length === 0) {
+    return years;
   }
-  try {
-    const result = window.confirm(message);
-    return typeof result === 'boolean' ? result : true;
-  } catch {
-    return true;
-  }
+  let cumFactor = 1;
+  return years.map((year) => {
+    if (!year.isBaselineNow && year.inflationRate !== 0) {
+      cumFactor *= 1 + year.inflationRate;
+    }
+    if (Math.abs(cumFactor - 1) < 0.0001) {
+      return year;
+    }
+    const d = (value: number) => value / cumFactor;
+    const dRecord = (record: Record<string, number>) =>
+      Object.fromEntries(Object.entries(record).map(([key, value]) => [key, d(value)]));
+    return {
+      ...year,
+      startBalance: d(year.startBalance),
+      endBalance: d(year.endBalance),
+      salary: d(year.salary),
+      careerContribution: d(year.careerContribution),
+      contribution: d(year.contribution),
+      withdrawal: d(year.withdrawal),
+      taxesPaid: d(year.taxesPaid),
+      penaltiesPaid: d(year.penaltiesPaid),
+      savingsBalances: dRecord(year.savingsBalances),
+      accountBalancesById: dRecord(year.accountBalancesById),
+      creditCardBalancesById: dRecord(year.creditCardBalancesById),
+      totalCreditCardDebt: d(year.totalCreditCardDebt)
+    };
+  });
 };
-
+const summarizeTrajectoryYears = (years: Array<ProjectionYear | TrajectoryYear>) => {
+  const last = years[years.length - 1];
+  return {
+    endingBalance: last ? last.endBalance : 0,
+    depletionAge: years.find((year) => year.depleted)?.age ?? null,
+    survives: !years.some((year) => year.depleted),
+    contributions: years.reduce((sum, year) => sum + year.contribution, 0),
+    withdrawals: years.reduce((sum, year) => sum + year.withdrawal, 0),
+    taxes: years.reduce((sum, year) => sum + year.taxesPaid, 0),
+    penalties: years.reduce((sum, year) => sum + year.penaltiesPaid, 0)
+  };
+};
 const ControlRow = ({
   label,
   value,
@@ -455,7 +451,10 @@ const formatShortDate = (value: string) => {
     return 'Not set';
   }
 
-  const parsed = new Date(value);
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const parsed = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(value);
 
   if (Number.isNaN(parsed.getTime())) {
     return 'Not set';
@@ -609,18 +608,20 @@ const App = () => {
   useRenderCount('App');
   const [appState, setAppState] = useState(() => loadAppState());
   const [graphMode, setGraphMode] = useState<'portfolio' | 'savings'>('portfolio');
-  const [showRealDollars, setShowRealDollars] = useState(false);
+  const showRealDollars = appState.ui.showRealDollars;
+  const setShowRealDollars = useCallback((value: boolean) => {
+    setAppState((currentState) => ({
+      ...currentState,
+      ui: { ...currentState.ui, showRealDollars: value }
+    }));
+  }, []);
   const [showPurchaseFlags, setShowPurchaseFlags] = useState(true);
   const [showHousingFlags, setShowHousingFlags] = useState(true);
   const [showMonths, setShowMonths] = useState(false);
   const [graphAgeMin, setGraphAgeMin] = useState(0);
   const [graphAgeMax, setGraphAgeMax] = useState(999);
-  const [isImportingNetWorthFiles, setIsImportingNetWorthFiles] = useState(false);
   const [netWorthHistoryRange, setNetWorthHistoryRange] = useState<NetWorthHistoryRange>('all');
-  const [showNetWorthImportsModal, setShowNetWorthImportsModal] = useState(false);
-  const [selectedNetWorthImportId, setSelectedNetWorthImportId] = useState<string | null>(null);
-  const [expandedNetWorthImportIds, setExpandedNetWorthImportIds] = useState<string[]>([]);
-  const [checkedNetWorthImportIds, setCheckedNetWorthImportIds] = useState<string[]>([]);
+  const [trajectoryCompareAge, setTrajectoryCompareAge] = useState<number | null>(null);
   const [showExpenseTrackerAccountConfig, setShowExpenseTrackerAccountConfig] = useState(false);
   const [purchaseSort, setPurchaseSort] = useState<{ column: 'yearMonth' | 'amount' | 'fundingSource' | null; direction: 'asc' | 'desc' }>({ column: null, direction: 'asc' });
   const [showPurchaseCategoryManager, setShowPurchaseCategoryManager] = useState(false);
@@ -630,30 +631,17 @@ const App = () => {
   const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
   const [editingCreditCardId, setEditingCreditCardId] = useState<string | null>(null);
   const [selectedHousingId, setSelectedHousingId] = useState<string>('');
-  const filesInputRef = useRef<HTMLInputElement | null>(null);
-  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const [timelineSelection, setTimelineSelection] = useState<'career' | 'housing'>('career');
+  const [timelineStartYear, setTimelineStartYear] = useState<number | null>(null);
+  const [timelineEndYear, setTimelineEndYear] = useState<number | null>(null);
   const scenario = appState.scenario;
   const inflationEnabled = scenario.manualReturns.inflationEnabled;
   const customNetWorthAccounts = scenario.netWorth.customAccounts ?? [];
   const poolDefinitions = (scenario.netWorth.pools ?? []).slice().sort((a, b) => a.priority - b.priority);
   const bankAccounts =
     scenario.netWorth.bankAccounts ?? [];
-  const netWorthImports = scenario.netWorth.imports ?? [];
-  const pendingNetWorthImports = netWorthImports.filter((record) => !record.applied);
   const netWorthHistory = scenario.netWorth.history ?? [];
   const expenses = scenario.expenses;
-  const netWorthImportAccounts: NetWorthImportSourceAccount[] = [
-    ...bankAccounts.map((account) => ({
-      id: account.id,
-      label: account.label,
-      balance: account.balance
-    })),
-    ...customNetWorthAccounts.map((account) => ({
-      id: account.id,
-      label: account.label,
-      balance: account.balance
-    }))
-  ];
   const accountSelectionOptions: Array<{ value: string; label: string }> = bankAccounts.map((account) => ({
     value: `account:${account.id}`,
     label: `${account.label} (Account)`
@@ -683,8 +671,43 @@ const App = () => {
   const activeTab = appState.ui.activeTab;
   const careersSubTab = appState.ui.careersSubTab;
   const expensesSubTab = appState.ui.expensesSubTab;
-  const currentAge = resolveCurrentAge(scenario);
-  const birthdayBasedCareerStartAge = resolveBirthdayBasedCareerStartAge(scenario);
+  const compareTrajectoryId = appState.ui.compareTrajectoryId;
+  const simulationStartEntry = useMemo(() => {
+    const entries = [...(scenario.netWorth.history ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+    return entries.length > 0 ? entries[entries.length - 1] : null;
+  }, [scenario.netWorth.history]);
+  const simulationStartDate = simulationStartEntry?.date || getTodayIsoDate();
+  const simulationReferenceDate = useMemo(() => {
+    const parsed = new Date(simulationStartDate);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  }, [simulationStartDate]);
+  const simulationStartBalancesById = useMemo(
+    () => (simulationStartEntry ? Object.fromEntries(simulationStartEntry.accounts.map((account) => [account.id, account.balance])) : null),
+    [simulationStartEntry]
+  );
+  const anchoredBankAccounts = useMemo(
+    () =>
+      simulationStartBalancesById
+        ? bankAccounts.map((account) => {
+            const anchoredBalance = simulationStartBalancesById[account.id];
+            return typeof anchoredBalance === 'number' ? { ...account, balance: anchoredBalance } : account;
+          })
+        : bankAccounts,
+    [bankAccounts, simulationStartBalancesById]
+  );
+  const anchoredNetWorth = useMemo(
+    () => (simulationStartBalancesById ? { ...scenario.netWorth, bankAccounts: anchoredBankAccounts } : scenario.netWorth),
+    [scenario.netWorth, anchoredBankAccounts, simulationStartBalancesById]
+  );
+  const anchoredPortfolio = useMemo(
+    () =>
+      simulationStartEntry && anchoredBankAccounts.length === 0
+        ? { ...scenario.portfolio, currentAssets: simulationStartEntry.totalNetWorth }
+        : scenario.portfolio,
+    [scenario.portfolio, simulationStartEntry, anchoredBankAccounts]
+  );
+  const currentAge = resolveCurrentAge(scenario, simulationReferenceDate);
+  const birthdayBasedCareerStartAge = resolveBirthdayBasedCareerStartAge(scenario, simulationReferenceDate);
   const activeTimelineData = useMemo(() => {
     const activeTimelineId = scenario.activeTimelineId ?? null;
     const timeline = activeTimelineId
@@ -714,14 +737,20 @@ const App = () => {
     loans: activeLoans,
     creditCards: activeCreditCards,
     housing: activeHousing,
+    netWorth: anchoredNetWorth,
+    portfolio: anchoredPortfolio,
     careerPlan: {
       ...activeCareerPlan,
       enabled: false,
       entries: activeCareerPlan.entries.map((entry) => ({ ...entry, enabled: false }))
     },
     lifeEvents: scenario.lifeEvents.filter((event) => event.type !== 'job_change' && event.type !== 'career_break')
-  }), [scenario, activeTimelineData]);
-  const retirementProjection = useTimedMemo('retirementProjection', () => projectScenario(retirementScenario), [retirementScenario]);
+  }), [scenario, activeTimelineData, anchoredNetWorth, anchoredPortfolio]);
+  const retirementProjection = useTimedMemo(
+    'retirementProjection',
+    () => projectScenario(retirementScenario, { startDate: simulationStartDate }),
+    [retirementScenario, simulationStartDate]
+  );
   const futureScenario = useMemo((): Scenario => ({
     ...scenario,
     largePurchases: activeLargePurchases,
@@ -729,6 +758,8 @@ const App = () => {
     loans: activeLoans,
     creditCards: activeCreditCards,
     housing: activeHousing,
+    netWorth: anchoredNetWorth,
+    portfolio: anchoredPortfolio,
     careerPlan: activeCareerPlan,
     profile: {
       ...scenario.profile,
@@ -738,10 +769,15 @@ const App = () => {
         : scenario.futureRetirement.retirementAge,
       retirementYears: scenario.futureRetirement.retirementYears
     }
-  }), [scenario, currentAge, activeTimelineData]);
-  const futureProjection = useTimedMemo('futureProjection', () => projectScenario(futureScenario), [futureScenario]);
+  }), [scenario, currentAge, activeTimelineData, anchoredNetWorth, anchoredPortfolio]);
+  const futureProjection = useTimedMemo(
+    'futureProjection',
+    () => projectScenario(futureScenario, { startDate: simulationStartDate }),
+    [futureScenario, simulationStartDate]
+  );
   const hasEnabledCareers = futureScenario.careerPlan.entries.some((entry) => entry.enabled);
   const usesFinancePredictionResults = activeTab === 'careers' || activeTab === 'options';
+  const showTrajectoryComparison = activeTab === 'careers' && careersSubTab === 'trajectory';
   const projection = usesFinancePredictionResults ? futureProjection : retirementProjection;
   const graphProjection = projection;
   const hideResultsForExpenses = activeTab === 'expenses';
@@ -851,6 +887,30 @@ const App = () => {
     if (effectiveMin <= minAge && effectiveMax >= maxAge) return adjustedYears;
     return adjustedYears.filter((y) => y.age >= effectiveMin && y.age <= effectiveMax);
   }, [adjustedYears, graphAgeMin, graphAgeMax]);
+  const trajectorySnapshots = scenario.trajectorySnapshots ?? [];
+  const selectedTrajectorySnapshot = trajectorySnapshots.find((snapshot) => snapshot.id === compareTrajectoryId) ?? null;
+  const netWorthHistoryPoints = useMemo(
+    () =>
+      (scenario.netWorth.history ?? [])
+        .map((entry) => {
+          const parsed = new Date(entry.date);
+          if (Number.isNaN(parsed.getTime())) {
+            return null;
+          }
+          const birthAge = calculateAgeFromBirthDate(scenario.options.dateOfBirth, parsed);
+          const age = birthAge ?? currentAge + (parsed.getFullYear() - new Date().getFullYear());
+          return { date: entry.date, age, value: entry.totalNetWorth };
+        })
+        .filter((point): point is { date: string; age: number; value: number } => point !== null),
+    [scenario.netWorth.history, scenario.options.dateOfBirth, currentAge]
+  );
+  const adjustedSelectedTrajectory = useMemo(() => {
+    if (!selectedTrajectorySnapshot) {
+      return null;
+    }
+    return { ...selectedTrajectorySnapshot, years: deflateTrajectoryYears(selectedTrajectorySnapshot.years, showRealDollars) };
+  }, [selectedTrajectorySnapshot, showRealDollars]);
+  const adjustedSelectedTrajectoryYears = adjustedSelectedTrajectory?.years ?? [];
   const graphYearsForMode = graphMode === 'portfolio' ? filteredGraphYears : filteredGraphYears;
   const displayedGraphEndingBalance = adjustedYears.length > 0 ? adjustedYears[adjustedYears.length - 1].endBalance : 0;
   const displayedGraphBalanceForSummary = displayedGraphEndingBalance;
@@ -968,7 +1028,7 @@ const App = () => {
         selectedCareerId
       }
     });
-  }, [appState.ui.activeTab, appState.ui.careersSubTab, appState.ui.expensesSubTab, scenario, selectedCareerId]);
+  }, [appState.ui.activeTab, appState.ui.careersSubTab, appState.ui.expensesSubTab, appState.ui.compareTrajectoryId, appState.ui.showRealDollars, scenario, selectedCareerId]);
 
   useEffect(() => {
     if (selectedCareerId || activeCareerPlan.entries.length === 0) {
@@ -1126,7 +1186,6 @@ const App = () => {
             : 'taxable',
         balance: Math.max(0, toNumberOrFallback(account.balance, 0))
       })),
-      imports: (nextScenario.netWorth.imports ?? []).map((record, index) => normalizeNetWorthImportRecord(record, index)),
       history: (nextScenario.netWorth.history ?? []).map((entry, index) => ({
         id: typeof entry.id === 'string' && entry.id.trim().length > 0 ? entry.id : `networth-history-${index + 1}`,
         date: normalizeImportDate(entry.date),
@@ -1234,40 +1293,68 @@ const App = () => {
       ...entry,
       sourceLines: normalizeCareerSourceLinesForBankAccounts(entry, normalizedNetWorth.bankAccounts ?? [])
     });
-    const normalizeHousingChain = (entries: Scenario['housing']) => {
+    const normalizeHousingChain = (
+      entries: Scenario['housing'],
+      careers: Scenario['careerPlan']['entries']
+    ) => {
+      const careerById = new Map(careers.map((career) => [career.id, career]));
+      const careerStartYearMonth = (career: Scenario['careerPlan']['entries'][number]) =>
+        normalizeYearMonth(career.startYearMonth) ||
+        formatYearMonthFromAge(career.startAge, nextScenario.options.dateOfBirth, resolvedAge);
+      const careerEndYearMonth = (career: Scenario['careerPlan']['entries'][number]) =>
+        normalizeYearMonth(career.endYearMonth) ||
+        formatYearMonthFromAge(career.endAge, nextScenario.options.dateOfBirth, resolvedAge);
       const result: Scenario['housing'] = [];
       entries.forEach((entry) => {
         const previous = result[result.length - 1];
-        if (entry.usePreviousEndAsStart && previous) {
+        let nextEntry = entry;
+        const startCareer = entry.linkedCareerStartId ? careerById.get(entry.linkedCareerStartId) : undefined;
+        if (startCareer) {
+          nextEntry = { ...nextEntry, startYearMonth: careerStartYearMonth(startCareer) };
+        } else if (entry.usePreviousEndAsStart && previous) {
           const prevEnd = normalizeYearMonth(
             previous.housingType === 'mortgage' ? previous.sellYearMonth : previous.endYearMonth
           );
           if (prevEnd) {
-            result.push({ ...entry, startYearMonth: prevEnd });
-            return;
+            nextEntry = { ...nextEntry, startYearMonth: addMonthsToYearMonth(prevEnd, 1) };
           }
         }
-        result.push(entry);
+        const endCareer = entry.linkedCareerEndId ? careerById.get(entry.linkedCareerEndId) : undefined;
+        if (endCareer) {
+          const linkedEnd = careerEndYearMonth(endCareer);
+          nextEntry = nextEntry.housingType === 'mortgage'
+            ? { ...nextEntry, sellYearMonth: linkedEnd }
+            : { ...nextEntry, endYearMonth: linkedEnd };
+        }
+        result.push(nextEntry);
       });
       return result;
     };
-    const normalizedHousing = normalizeHousingChain(nextScenario.housing ?? []);
+    const normalizedHousing = normalizeHousingChain(nextScenario.housing ?? [], normalizedCareerEntries);
     const normalizedLargePurchases = (nextScenario.largePurchases ?? []).map(normalizeLargePurchase);
     const normalizedLongTermPurchases = (nextScenario.longTermPurchases ?? []).map(normalizeLongTermPurchase);
     const normalizedLoans = (nextScenario.loans ?? []).map(normalizeLoan);
     const normalizedCareerEntriesWithBankTargets = normalizedCareerEntries.map(normalizeCareerWithBankTargets);
-    const normalizedTimelines = (nextScenario.timelines ?? []).map((timeline) => ({
-      ...timeline,
-      purchases: (timeline.purchases ?? []).map(normalizeLargePurchase),
-      longTermPurchases: (timeline.longTermPurchases ?? []).map(normalizeLongTermPurchase),
-      loans: (timeline.loans ?? []).map(normalizeLoan),
-      creditCards: timeline.creditCards ?? [],
-      careerPlan: {
-        enabled: timeline.careerPlan.enabled,
-        entries: (timeline.careerPlan.entries ?? []).map(normalizeCareerWithBankTargets)
-      },
-      housing: normalizeHousingChain(timeline.housing ?? [])
-    }));
+    const normalizedTimelines = (nextScenario.timelines ?? []).map((timeline) => {
+      const timelineCareerEntries = normalizeCareerEntries(
+        timeline.careerPlan.entries ?? [],
+        normalizedBirthdayBasedCareerStartAge,
+        nextScenario.options.dateOfBirth,
+        resolvedAge
+      );
+      return {
+        ...timeline,
+        purchases: (timeline.purchases ?? []).map(normalizeLargePurchase),
+        longTermPurchases: (timeline.longTermPurchases ?? []).map(normalizeLongTermPurchase),
+        loans: (timeline.loans ?? []).map(normalizeLoan),
+        creditCards: timeline.creditCards ?? [],
+        careerPlan: {
+          enabled: timeline.careerPlan.enabled,
+          entries: timelineCareerEntries.map(normalizeCareerWithBankTargets)
+        },
+        housing: normalizeHousingChain(timeline.housing ?? [], timelineCareerEntries)
+      };
+    });
 
     setAppState((currentState) => ({
       ...currentState,
@@ -1340,7 +1427,9 @@ const App = () => {
         activeTab: 'careers',
         selectedCareerId: defaultScenario.careerPlan.entries[0]?.id ?? '',
         careersSubTab: 'careers',
-        expensesSubTab: 'planning'
+        expensesSubTab: 'planning',
+        compareTrajectoryId: '',
+        showRealDollars: false
       }
     });
   }, []);
@@ -1367,7 +1456,7 @@ const App = () => {
 
   const addCareer = () => {
     const nextIndex = activeCareerPlan.entries.length;
-    const entry = createDefaultCareerEntry(nextIndex, currentAge, scenario.profile.retirementAge);
+    const entry = createDefaultCareerEntry(nextIndex, currentAge, scenario.profile.retirementAge, makeCareerId());
 
     updateScenario(applyToActiveTimeline(({ careerPlan, ...rest }) => ({
       ...rest,
@@ -1382,12 +1471,17 @@ const App = () => {
   const removeCareer = (careerId: string) => {
     const remaining = activeCareerPlan.entries.filter((career) => career.id !== careerId);
 
-    updateScenario(applyToActiveTimeline(({ careerPlan, ...rest }) => ({
+    updateScenario(applyToActiveTimeline(({ careerPlan, housing, ...rest }) => ({
       ...rest,
       careerPlan: {
         ...careerPlan,
         entries: remaining
-      }
+      },
+      housing: housing.map((entry) => ({
+        ...entry,
+        linkedCareerStartId: entry.linkedCareerStartId === careerId ? null : entry.linkedCareerStartId,
+        linkedCareerEndId: entry.linkedCareerEndId === careerId ? null : entry.linkedCareerEndId
+      }))
     })));
 
     if (selectedCareerId === careerId) {
@@ -1590,6 +1684,108 @@ const App = () => {
       timelines: (scenario.timelines ?? []).filter((timeline) => timeline.id !== timelineId),
       activeTimelineId: scenario.activeTimelineId === timelineId ? null : scenario.activeTimelineId
     });
+  };
+
+  const duplicateTimeline = (timelineId: string) => {
+    const source = (scenario.timelines ?? []).find((timeline) => timeline.id === timelineId);
+    if (!source) {
+      return;
+    }
+
+    const copy: Timeline = {
+      id: `timeline-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`,
+      label: `${source.label} (copy)`,
+      purchases: source.purchases.map((purchase) => ({
+        ...purchase,
+        sourceLines: purchase.sourceLines ? purchase.sourceLines.map((line) => ({ ...line })) : undefined
+      })),
+      longTermPurchases: source.longTermPurchases.map((purchase) => ({
+        ...purchase,
+        sourceLines: purchase.sourceLines ? purchase.sourceLines.map((line) => ({ ...line })) : undefined
+      })),
+      loans: source.loans.map((loan) => ({ ...loan })),
+      creditCards: source.creditCards.map((creditCard) => ({ ...creditCard })),
+      careerPlan: { ...source.careerPlan, entries: source.careerPlan.entries.map(cloneCareer) },
+      housing: source.housing.map((entry) => ({ ...entry }))
+    };
+
+    updateScenario({
+      ...scenario,
+      timelines: [...(scenario.timelines ?? []), copy]
+    });
+  };
+
+  const saveTrajectorySnapshot = () => {
+    const snapshotYears: TrajectoryYear[] = futureProjection.years.map((year) => ({
+      age: year.age,
+      calendarYear: year.calendarYear,
+      isBaselineNow: year.isBaselineNow,
+      startBalance: year.startBalance,
+      endBalance: year.endBalance,
+      salary: year.salary,
+      careerContribution: year.careerContribution,
+      contribution: year.contribution,
+      withdrawal: year.withdrawal,
+      taxesPaid: year.taxesPaid,
+      penaltiesPaid: year.penaltiesPaid,
+      annualReturnRate: year.annualReturnRate,
+      inflationRate: year.inflationRate,
+      depleted: year.depleted,
+      savingsBalances: { ...year.savingsBalances },
+      accountBalancesById: { ...year.accountBalancesById },
+      creditCardBalancesById: { ...year.creditCardBalancesById },
+      totalCreditCardDebt: year.totalCreditCardDebt
+    }));
+    const snapshot: TrajectorySnapshot = {
+      id: `trajectory-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`,
+      label: `Trajectory ${trajectorySnapshots.length + 1}`,
+      createdAt: getTodayIsoDate(),
+      survivesToEnd: futureProjection.survivesToEnd,
+      depletedAge: futureProjection.depletedAge,
+      endAge: futureProjection.endAge,
+      endingBalance: futureProjection.endingBalance,
+      summary: futureProjection.summary,
+      years: snapshotYears
+    };
+
+    updateScenario({
+      ...scenario,
+      trajectorySnapshots: [...trajectorySnapshots, snapshot]
+    });
+    setAppState((currentState) => ({
+      ...currentState,
+      ui: { ...currentState.ui, compareTrajectoryId: snapshot.id }
+    }));
+  };
+
+  const renameTrajectorySnapshot = (snapshotId: string, label: string) => {
+    updateScenario({
+      ...scenario,
+      trajectorySnapshots: trajectorySnapshots.map((snapshot) =>
+        snapshot.id === snapshotId ? { ...snapshot, label } : snapshot
+      )
+    });
+  };
+
+  const deleteTrajectorySnapshot = (snapshotId: string) => {
+    updateScenario({
+      ...scenario,
+      trajectorySnapshots: trajectorySnapshots.filter((snapshot) => snapshot.id !== snapshotId)
+    });
+    setAppState((currentState) => ({
+      ...currentState,
+      ui: {
+        ...currentState.ui,
+        compareTrajectoryId: currentState.ui.compareTrajectoryId === snapshotId ? '' : currentState.ui.compareTrajectoryId
+      }
+    }));
+  };
+
+  const setCompareTrajectoryId = (snapshotId: string) => {
+    setAppState((currentState) => ({
+      ...currentState,
+      ui: { ...currentState.ui, compareTrajectoryId: snapshotId }
+    }));
   };
 
   const normalizePurchaseSourceLinesForAccounts = (
@@ -2085,244 +2281,18 @@ const App = () => {
     });
   };
 
-  const updateNetWorthImportRecord = (recordId: string, changes: Partial<NetWorthImportRecord>) => {
-    updateScenario({
-      ...scenario,
-      netWorth: {
-        ...scenario.netWorth,
-        imports: netWorthImports.map((record) => (record.id === recordId ? { ...record, ...changes } : record))
-      }
-    });
-  };
-
-  const toggleExpandedNetWorthImport = (recordId: string) => {
-    setExpandedNetWorthImportIds((current) => (current.includes(recordId) ? current.filter((id) => id !== recordId) : [recordId]));
-    setSelectedNetWorthImportId(recordId);
-  };
-
-  const appendNetWorthImports = (records: NetWorthImportRecord[]) => {
-    if (records.length === 0) {
-      return;
-    }
-
-    updateScenario({
-      ...scenario,
-      netWorth: {
-        ...scenario.netWorth,
-        imports: [...netWorthImports, ...records]
-      }
-    });
-    setSelectedNetWorthImportId(records[0]?.id ?? null);
-    setExpandedNetWorthImportIds([]);
-    setCheckedNetWorthImportIds((current) => [...new Set([...current, ...records.map((record) => record.id)])]);
-  };
-
-  useEffect(() => {
-    const pendingIds = new Set(pendingNetWorthImports.map((record) => record.id));
-    setCheckedNetWorthImportIds((current) => {
-      const next = current.filter((id) => pendingIds.has(id));
-      return next.length === current.length ? current : next;
-    });
-  }, [pendingNetWorthImports]);
-
-  const handleNetWorthImportInput = async (event: ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(event.target.files ?? []);
-    event.target.value = '';
-
-    if (selectedFiles.length === 0) {
-      return;
-    }
-
-    setIsImportingNetWorthFiles(true);
-    try {
-      const parsed = await parseBankImportFiles(selectedFiles, netWorthImportAccounts);
-      appendNetWorthImports(parsed);
-    } finally {
-      setIsImportingNetWorthFiles(false);
-    }
-  };
-
-  const promptImportFiles = () => {
-    if (filesInputRef.current) {
-      filesInputRef.current.value = '';
-      filesInputRef.current.click();
-    }
-  };
-
-  const promptImportFolder = () => {
-    if (folderInputRef.current) {
-      folderInputRef.current.value = '';
-      folderInputRef.current.click();
-    }
-  };
-
-  const applyImportedRecords = (recordIds: string[]) => {
-    const recordsToApply = netWorthImports.filter((record) => recordIds.includes(record.id));
-    if (recordsToApply.length === 0) {
-      return;
-    }
-
-    const nextAccountBalances = { ...scenario.netWorth.accountBalances };
-    let nextBankAccounts = [...bankAccounts];
-    let nextCustomAccounts = [...customNetWorthAccounts];
-    let nextExpenseImports = [...(scenario.expenses.imports ?? [])];
-    let nextExpenseEntries = [...(scenario.expenses.entries ?? [])];
-    const todayIso = getTodayIsoDate();
-    const appliedDates: string[] = [];
-
-    const nextImports = netWorthImports.map((record) => {
-      const shouldApply = recordIds.includes(record.id);
-      const selectedAccountId = record.selectedAccountId;
-      const detectedBalance = record.detectedBalance;
-      if (!shouldApply || !selectedAccountId || detectedBalance === null || !record.statementDate) {
-        return record;
-      }
-
-      const matchedBankAccount = nextBankAccounts.find((account) => account.id === selectedAccountId);
-      if (matchedBankAccount) {
-        nextBankAccounts = nextBankAccounts.map((account) =>
-          account.id === selectedAccountId ? { ...account, balance: Math.max(0, detectedBalance) } : account
-        );
-      } else {
-        const mappedBankAccountId = getDefaultBankAccountIdForPool(nextBankAccounts, selectedAccountId);
-        if (mappedBankAccountId) {
-          nextBankAccounts = nextBankAccounts.map((account) =>
-            account.id === mappedBankAccountId ? { ...account, balance: Math.max(0, detectedBalance) } : account
-          );
-        } else {
-          nextCustomAccounts = nextCustomAccounts.map((account) =>
-            account.id === selectedAccountId
-              ? {
-                  ...account,
-                  balance: Math.max(0, detectedBalance)
-                }
-              : account
-          );
-        }
-      }
-
-      const appliedDate = record.statementDate || todayIso;
-      appliedDates.push(appliedDate);
-
-      if (record.applyMode === 'net_worth_and_expenses') {
-        const expenseSourceId = makeExpenseImportSourceId();
-        const expenseBatchId = makeExpenseImportBatchId();
-        const normalizedAmount = Math.max(0, detectedBalance);
-        const matchedPoolId = nextBankAccounts.find((account) => account.id === selectedAccountId)?.poolId ?? null;
-
-        nextExpenseImports.push({
-          id: expenseSourceId,
-          batchId: expenseBatchId,
-          fileName: record.fileName,
-          fileType: record.fileType === 'csv' || record.fileType === 'pdf' ? record.fileType : 'unknown',
-          previewText: record.previewText,
-          status: 'needs_review',
-          parseNotes: [
-            'Generated from net worth import with "Net Worth + Expenses" enabled.',
-            'Review and adjust imported expense placeholder entry as needed.'
-          ],
-          confidence: record.confidence,
-          importedAt: todayIso,
-          appliedAt: todayIso,
-          entryIds: []
-        });
-
-        const expenseEntryId = makeExpenseEntryId();
-        nextExpenseEntries.push({
-          id: expenseEntryId,
-          label: `${record.fileName} (Statement Import)`,
-          amount: normalizedAmount,
-          startDate: appliedDate,
-          endDate: appliedDate,
-          accountId: selectedAccountId,
-          poolId: matchedPoolId,
-          notes: 'Auto-created from net worth import. Edit as needed.',
-          originType: 'imported',
-          importSourceId: expenseSourceId,
-          importBatchId: expenseBatchId,
-          createdAt: todayIso,
-          updatedAt: todayIso,
-          categoryId: null
-        });
-        nextExpenseImports = nextExpenseImports.map((source) =>
-          source.id === expenseSourceId ? { ...source, entryIds: [...source.entryIds, expenseEntryId] } : source
-        );
-      }
-
-      return {
-        ...record,
-        status: 'applied' as const,
-        applied: true,
-        appliedAt: todayIso
-      };
-    });
-
-    const persistedImports = nextImports.filter((record) => {
-      if (record.applied) {
-        return true;
-      }
-      const hasNetWorthSelection = Boolean(record.selectedAccountId) && record.detectedBalance !== null && Boolean(record.statementDate);
-      return hasNetWorthSelection && record.applyMode === 'net_worth_and_expenses';
-    });
-
-    const latestAppliedDate = appliedDates.length > 0 ? appliedDates.sort().slice(-1)[0] : todayIso;
+  const saveNetWorthSnapshot = () => {
+    const today = getTodayIsoDate();
+    const historyWithoutToday = (scenario.netWorth.history ?? []).filter((entry) => entry.date !== today);
 
     updateNetWorthWithHistory(
       {
         ...scenario.netWorth,
-        accountBalances: nextAccountBalances,
-        bankAccounts: nextBankAccounts,
-        customAccounts: nextCustomAccounts,
-        imports: persistedImports,
-        asOfDate: latestAppliedDate
+        asOfDate: today,
+        history: historyWithoutToday
       },
-      { logDate: latestAppliedDate, forceLog: true }
+      { logDate: today, forceLog: true }
     );
-
-    if (nextExpenseImports.length !== scenario.expenses.imports.length || nextExpenseEntries.length !== scenario.expenses.entries.length) {
-      setAppState((currentState) => ({
-        ...currentState,
-        scenario: {
-          ...currentState.scenario,
-          expenses: {
-            ...currentState.scenario.expenses,
-            imports: nextExpenseImports,
-            entries: nextExpenseEntries
-          }
-        }
-      }));
-    }
-  };
-
-  const applyImportedRecord = (recordId: string) => {
-    const record = netWorthImports.find((item) => item.id === recordId);
-    if (!record) {
-      return;
-    }
-    const selectedLabel =
-      netWorthImportAccounts.find((account) => account.id === record.selectedAccountId)?.label ?? 'Unmatched account';
-    const statementLabel = record.statementDate ? formatShortDate(record.statementDate) : 'missing statement date';
-    const shouldApply = confirmAction(
-      `Confirm import for "${record.fileName}"?\nAccount: ${selectedLabel}\nBalance: ${record.detectedBalance ?? 'missing'}\nDate: ${statementLabel}`
-    );
-    if (!shouldApply) {
-      return;
-    }
-    applyImportedRecords([recordId]);
-  };
-
-  const applyAllReadyImports = () => {
-    const recordIds = netWorthImports
-      .filter((record) => !record.applied && record.selectedAccountId && record.detectedBalance !== null && record.statementDate)
-      .map((record) => record.id);
-    if (recordIds.length === 0) {
-      return;
-    }
-    const shouldApplyAll = confirmAction(`Confirm import for ${recordIds.length} selected report(s)?`);
-    if (!shouldApplyAll) {
-      return;
-    }
-    applyImportedRecords(recordIds);
   };
 
   const retirementPoolRows = poolDefinitions.map((pool, index) => {
@@ -2395,40 +2365,14 @@ const App = () => {
     <>
       {showRetirementCalculator ? (
         <Panel title="Retirement Calculator">
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={scenario.options.useDateBasedAge}
-              onChange={(event) =>
-                updateScenario({
-                  ...scenario,
-                  options: {
-                    ...scenario.options,
-                    useDateBasedAge: event.target.checked
-                  }
-                })
-              }
-            />
-            <span>Make current age based on date of birth</span>
+          <label className="control-row">
+            <span>Current Age</span>
+            <div className="control-inputs">
+              <input type="range" min={18} max={100} value={currentAge} disabled />
+              <input type="number" value={currentAge} readOnly disabled />
+            </div>
+            <span className="subtle">Derived from the date of birth set in Options.</span>
           </label>
-          {!forCareerRetirementItem ? (
-            <ControlRow
-              label="Current Age"
-              value={currentAge}
-              min={18}
-              max={100}
-              disabled={scenario.options.useDateBasedAge}
-              onChange={(value) =>
-                updateScenario({
-                  ...scenario,
-                  profile: { ...scenario.profile, currentAge: value }
-                })
-              }
-            />
-          ) : null}
-          {scenario.options.useDateBasedAge ? (
-            <p className="subtle">Current age is derived from the date of birth set in Options.</p>
-          ) : null}
           <ControlRow
             label="Retirement Age"
             value={scenario.profile.retirementAge}
@@ -2754,6 +2698,14 @@ const App = () => {
             }
           />
         </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={showRealDollars}
+            onChange={(event) => setShowRealDollars(event.target.checked)}
+          />
+          <span>Display values in current dollars</span>
+        </label>
       </Panel>
       <Panel title="Expense Planning Options">
         <label className="full-span">
@@ -2808,6 +2760,293 @@ const App = () => {
       </Panel>
     </>
   );
+
+  const renderWarningsTab = () => {
+    const validation = futureProjection.incomeValidation;
+    const allWarnings = futureProjection.warnings ?? [];
+    const otherWarnings = allWarnings.filter((warning) => !warning.startsWith('Income validation:'));
+    const hasIncomeWarnings = Boolean(validation?.hasOverspend);
+    return (
+      <Panel title="Warnings" className="panel-wide">
+        <div className={`income-validation-banner${hasIncomeWarnings ? '' : ' success'}`}>
+          <div className="income-validation-header">
+            <strong>Income usage warnings</strong>
+            <span>
+              {hasIncomeWarnings
+                ? `${validation!.groups.length} consolidated ${validation!.groups.length === 1 ? 'issue' : 'issues'} across ${validation!.periods.length} ${validation!.periods.length === 1 ? 'period' : 'periods'} where income-funded spending exceeds career take-home income.`
+                : 'No periods where income-funded spending exceeds career take-home income.'}
+            </span>
+          </div>
+          {hasIncomeWarnings ? (
+            <div className="income-validation-list">
+              {validation!.groups.map((group) => {
+                const overageText = group.minOverage === group.maxOverage
+                  ? formatCurrency(group.maxOverage)
+                  : `${formatCurrency(group.minOverage)}–${formatCurrency(group.maxOverage)}`;
+                return (
+                  <div
+                    key={`${group.pool}-${group.periodKeys[0]}`}
+                    className={`income-validation-period${group.hasUnmet ? ' invalid' : ' warning'}`}
+                  >
+                    <div className="income-validation-period-head">
+                      <strong>{describeIncomeValidationGroup(group)}</strong>
+                      <span>
+                        Budget {formatCurrency(group.budget)} · Requested {formatCurrency(group.totalRequested)}
+                        {group.maxOverage > 0.01 ? ` · Over by ${overageText}` : ''}
+                        {group.totalFromFallback > 0.01 ? ` · From fallback ${formatCurrency(group.totalFromFallback)}` : ''}
+                        {group.totalShortfall > 0.01 ? ` · Unpaid ${formatCurrency(group.totalShortfall)}` : ''}
+                      </span>
+                    </div>
+                    <ul className="income-validation-items">
+                      {group.items.map((item, index) => (
+                        <li key={`${item.id}-${index}`}>
+                          <span>{item.label}</span>
+                          <span>
+                            {formatCurrency(item.requested)}
+                            {item.fromFallback > 0.01 ? ` (fallback ${formatCurrency(item.fromFallback)})` : ''}
+                            {item.shortfall > 0.01 ? ` (unpaid ${formatCurrency(item.shortfall)})` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+        {otherWarnings.length > 0 ? (
+          <div className="income-validation-banner">
+            <div className="income-validation-header">
+              <strong>Other warnings</strong>
+              <span>{otherWarnings.length === 1 ? '1 other warning.' : `${otherWarnings.length} other warnings.`}</span>
+            </div>
+            <ul className="income-validation-items">
+              {otherWarnings.map((warning, index) => (
+                <li key={index}>
+                  <span>{warning}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </Panel>
+    );
+  };
+
+  const renderTrajectoryTab = () => {
+    const currentDisplayYears: Array<ProjectionYear | TrajectoryYear> =
+      adjustedYears.length > 0 ? adjustedYears : futureProjection.years;
+    const selectedDisplayYears = adjustedSelectedTrajectoryYears;
+    const currentSummary = summarizeTrajectoryYears(currentDisplayYears);
+    const selectedSummary = selectedTrajectorySnapshot ? summarizeTrajectoryYears(selectedDisplayYears) : null;
+    const ageOptions = currentDisplayYears.map((year) => year.age);
+    const chosenAge =
+      trajectoryCompareAge !== null && ageOptions.includes(trajectoryCompareAge)
+        ? trajectoryCompareAge
+        : ageOptions[ageOptions.length - 1] ?? currentAge;
+    const currentRow = currentDisplayYears.find((year) => year.age === chosenAge) ?? null;
+    const selectedRow = selectedDisplayYears.find((year) => year.age === chosenAge) ?? null;
+
+    const formatMetric = (value: number | null, format: 'currency' | 'age') => {
+      if (value === null) {
+        return format === 'age' ? 'Never' : '—';
+      }
+      return format === 'age' ? `Age ${value}` : formatCurrency(value);
+    };
+    const absDiff = (current: number | null, selected: number | null) =>
+      current === null || selected === null ? '—' : formatCurrency(selected - current);
+    const pctDiff = (current: number | null, selected: number | null) => {
+      if (current === null || selected === null || current === 0) {
+        return '—';
+      }
+      return `${(((selected - current) / Math.abs(current)) * 100).toFixed(1)}%`;
+    };
+
+    const metricRows: Array<{ label: string; current: number | null; selected: number | null; format: 'currency' | 'age' }> = [
+      { label: 'Ending balance', current: currentSummary.endingBalance, selected: selectedSummary?.endingBalance ?? null, format: 'currency' },
+      { label: 'Depletion age', current: currentSummary.depletionAge, selected: selectedSummary?.depletionAge ?? null, format: 'age' },
+      { label: 'Total contributions', current: currentSummary.contributions, selected: selectedSummary?.contributions ?? null, format: 'currency' },
+      { label: 'Total withdrawals', current: currentSummary.withdrawals, selected: selectedSummary?.withdrawals ?? null, format: 'currency' },
+      { label: 'Total taxes paid', current: currentSummary.taxes, selected: selectedSummary?.taxes ?? null, format: 'currency' },
+      { label: 'Total penalties paid', current: currentSummary.penalties, selected: selectedSummary?.penalties ?? null, format: 'currency' }
+    ];
+
+    return (
+      <Panel title="Trajectory Comparison" className="panel-wide">
+        <div className="career-actions">
+          <button type="button" className="secondary-button" onClick={saveTrajectorySnapshot}>
+            Save Current Trajectory
+          </button>
+          <span className="subtle">Freezes the current projection. Saved trajectories never change.</span>
+        </div>
+
+        {trajectorySnapshots.length === 0 ? (
+          <p className="subtle">
+            No saved trajectories yet. Click "Save Current Trajectory" to snapshot the current projection.
+          </p>
+        ) : (
+          <div className="trajectory-list">
+            <label className="trajectory-row trajectory-row-none">
+              <span className="trajectory-compare-toggle">
+                <input
+                  type="radio"
+                  name="trajectory-compare"
+                  checked={!selectedTrajectorySnapshot}
+                  onChange={() => setCompareTrajectoryId('')}
+                />
+                <span>No comparison</span>
+              </span>
+            </label>
+            {trajectorySnapshots.map((snapshot) => (
+              <div key={snapshot.id} className="trajectory-row">
+                <label className="trajectory-compare-toggle">
+                  <input
+                    type="radio"
+                    name="trajectory-compare"
+                    checked={compareTrajectoryId === snapshot.id}
+                    onChange={() => setCompareTrajectoryId(snapshot.id)}
+                  />
+                  <span>Compare</span>
+                </label>
+                <input
+                  type="text"
+                  className="trajectory-name-input"
+                  aria-label={`${snapshot.label} name`}
+                  value={snapshot.label}
+                  onChange={(event) => renameTrajectorySnapshot(snapshot.id, event.target.value)}
+                />
+                <span className="subtle">Saved {formatShortDate(snapshot.createdAt)}</span>
+                <button type="button" className="text-button danger-text" onClick={() => deleteTrajectorySnapshot(snapshot.id)}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {selectedTrajectorySnapshot ? (
+          <>
+            <div className="panel-divider" />
+            <h3>Metrics vs {selectedTrajectorySnapshot.label}</h3>
+            <div className="table-wrap">
+              <table className="purchases-table">
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th>Current</th>
+                    <th>Selected</th>
+                    <th>Δ</th>
+                    <th>Δ %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {metricRows.map((row) => (
+                    <tr key={row.label}>
+                      <td>{row.label}</td>
+                      <td>{formatMetric(row.current, row.format)}</td>
+                      <td>{formatMetric(row.selected, row.format)}</td>
+                      <td>{absDiff(row.current, row.selected)}</td>
+                      <td>{pctDiff(row.current, row.selected)}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td>Survives to end</td>
+                    <td>{currentSummary.survives ? 'Yes' : 'No'}</td>
+                    <td>{selectedSummary?.survives ? 'Yes' : 'No'}</td>
+                    <td>—</td>
+                    <td>—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3>Account balances at age {chosenAge}</h3>
+            <label className="trajectory-age-select">
+              <span>Compare age</span>
+              <select value={chosenAge} onChange={(event) => setTrajectoryCompareAge(Number(event.target.value))}>
+                {ageOptions.map((age) => (
+                  <option key={age} value={age}>
+                    {age}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="table-wrap">
+              <table className="purchases-table">
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th>Current</th>
+                    <th>Selected</th>
+                    <th>Δ</th>
+                    <th>Δ %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderedBankAccounts.map((account) => {
+                    const currentValue = currentRow?.accountBalancesById[account.id] ?? 0;
+                    const selectedValue = selectedRow ? selectedRow.accountBalancesById[account.id] ?? 0 : null;
+                    return (
+                      <tr key={account.id}>
+                        <td>{account.label}</td>
+                        <td>{formatCurrency(currentValue)}</td>
+                        <td>{selectedValue === null ? '—' : formatCurrency(selectedValue)}</td>
+                        <td>{absDiff(currentValue, selectedValue)}</td>
+                        <td>{pctDiff(currentValue, selectedValue)}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr>
+                    <td>Total</td>
+                    <td>{formatCurrency(currentRow ? Object.values(currentRow.accountBalancesById).reduce((sum, value) => sum + value, 0) : 0)}</td>
+                    <td>
+                      {selectedRow
+                        ? formatCurrency(Object.values(selectedRow.accountBalancesById).reduce((sum, value) => sum + value, 0))
+                        : '—'}
+                    </td>
+                    <td>—</td>
+                    <td>—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <p className="subtle">Select a saved trajectory to compare metrics and account balances.</p>
+        )}
+
+        <div className="panel-divider" />
+        <h3>Actual balance history</h3>
+        {netWorthHistoryPoints.length === 0 ? (
+          <p className="subtle">No saved balance snapshots yet. Use "Save Account Balance" on the Net Worth tab.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="purchases-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Age</th>
+                  <th>Total net worth</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...netWorthHistoryPoints]
+                  .sort((a, b) => b.date.localeCompare(a.date))
+                  .map((point) => (
+                    <tr key={`${point.date}-${point.age}`}>
+                      <td>{formatShortDate(point.date)}</td>
+                      <td>{point.age}</td>
+                      <td>{formatCurrency(point.value)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+    );
+  };
 
   const renderCareersTab = () => (
     <>
@@ -3803,13 +4042,133 @@ const App = () => {
         onRemoveHousing={removeHousing}
         accountOptions={accountSelectionOptions}
         orderedBankAccounts={orderedBankAccounts}
+        careerOptions={activeCareerPlan.entries.map((career) => ({ id: career.id, label: career.label }))}
       />
     </Panel>
   );
 
-  const renderTimelineManagementTab = () => (
-    <></>
-  );
+  const renderTimelineManagementTab = () => {
+    const waterfall = futureProjection.monthlyWaterfall ?? [];
+    const waterfallFirstSerial = waterfall.length > 0 ? waterfall[0].calendarYear * 12 + waterfall[0].calendarMonth - 1 : 0;
+    const displayedWaterfall = showRealDollars && deflationRate !== 0
+      ? waterfall.map((month) => {
+          const serial = month.calendarYear * 12 + month.calendarMonth - 1;
+          const factor = Math.pow(1 + deflationRate, Math.max(0, serial - waterfallFirstSerial) / 12);
+          const deflate = (value: number) => value / factor;
+          return {
+            ...month,
+            takeHomeIncome: deflate(month.takeHomeIncome),
+            careerSavingsDeposits: deflate(month.careerSavingsDeposits),
+            careerWithdrawals: deflate(month.careerWithdrawals),
+            housingCosts: deflate(month.housingCosts),
+            housingIncomeCosts: deflate(month.housingIncomeCosts),
+            otherIncomeExpenses: deflate(month.otherIncomeExpenses),
+            leftoverIncome: deflate(month.leftoverIncome)
+          };
+        })
+      : waterfall;
+    const availableYears = Array.from(new Set(displayedWaterfall.map((month) => month.calendarYear))).sort((a, b) => a - b);
+    const firstYear = availableYears[0] ?? new Date().getFullYear();
+    const lastYear = availableYears[availableYears.length - 1] ?? firstYear;
+    const startYear = timelineStartYear ?? firstYear;
+    const endYear = timelineEndYear ?? lastYear;
+    const visibleWaterfall = displayedWaterfall.filter((month) => month.calendarYear >= startYear && month.calendarYear <= endYear);
+    const timelineItems = [
+      ...activeCareerPlan.entries.filter((entry) => entry.enabled).map((entry) => ({
+        id: entry.id,
+        kind: 'career' as const,
+        label: entry.label,
+        start: entry.startYearMonth || formatYearMonthFromAge(entry.startAge, scenario.options.dateOfBirth, currentAge),
+        end: entry.endYearMonth || formatYearMonthFromAge(entry.endAge, scenario.options.dateOfBirth, currentAge),
+        color: '#2b5fe2'
+      })),
+      ...activeHousing.filter((entry) => entry.enabled).map((entry) => ({
+        id: entry.id,
+        kind: 'housing' as const,
+        label: entry.label,
+        start: entry.startYearMonth,
+        end: entry.housingType === 'mortgage' ? entry.sellYearMonth : entry.endYearMonth,
+        color: '#18a58b'
+      }))
+    ].sort((a, b) => (parseYearMonthSerial(a.start) ?? Number.MAX_SAFE_INTEGER) - (parseYearMonthSerial(b.start) ?? Number.MAX_SAFE_INTEGER));
+    const rangeStart = `${startYear}-01`;
+    const rangeEnd = `${endYear}-12`;
+    const rangeStartSerial = parseYearMonthSerial(rangeStart) ?? 0;
+    const rangeEndSerial = parseYearMonthSerial(rangeEnd) ?? rangeStartSerial;
+    const visibleTimelineItems = timelineItems.filter((item) => {
+      const itemStart = parseYearMonthSerial(item.start);
+      const itemEnd = item.end ? parseYearMonthSerial(item.end) : null;
+      return itemStart === null || itemStart <= rangeEndSerial && (itemEnd === null || itemEnd >= rangeStartSerial);
+    });
+    const positionFor = (yearMonth: string, fallbackEnd = yearMonth) => {
+      const start = Math.max(rangeStartSerial, parseYearMonthSerial(yearMonth) ?? rangeStartSerial);
+      const end = Math.min(rangeEndSerial, parseYearMonthSerial(fallbackEnd) ?? rangeEndSerial);
+      return {
+        left: ((start - rangeStartSerial) / Math.max(1, rangeEndSerial - rangeStartSerial)) * 100,
+        width: Math.max(1.5, ((Math.max(start, end) - start + 1) / Math.max(1, rangeEndSerial - rangeStartSerial + 1)) * 100)
+      };
+    };
+    const maxChartValue = Math.max(1, ...visibleWaterfall.map((month) => Math.max(month.takeHomeIncome, month.housingCosts, month.leftoverIncome)));
+    const chartWidth = 760;
+    const chartHeight = 260;
+    const chartPadding = { left: 58, right: 18, top: 18, bottom: 36 };
+    const chartPlotWidth = chartWidth - chartPadding.left - chartPadding.right;
+    const chartPlotHeight = chartHeight - chartPadding.top - chartPadding.bottom;
+    const chartY = (value: number) => chartPadding.top + chartPlotHeight - (Math.max(0, value) / maxChartValue) * chartPlotHeight;
+    const chartPoint = (index: number, value: number) => ({
+      x: chartPadding.left + (index / Math.max(1, visibleWaterfall.length - 1)) * chartPlotWidth,
+      y: chartY(value)
+    });
+    const leftoverPath = visibleWaterfall.map((month, index) => {
+      const point = chartPoint(index, month.leftoverIncome);
+      return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`;
+    }).join(' ');
+    const selectedCareer = activeCareerPlan.entries.find((entry) => entry.id === selectedCareerId);
+    const selectedHousing = activeHousing.find((entry) => entry.id === selectedHousingId);
+
+    return (
+      <>
+        <Panel title="Career and Housing Timeline" className="panel-wide">
+          <div className="timeline-toolbar">
+            <label><span>From year</span><select value={startYear} onChange={(event) => setTimelineStartYear(Number(event.target.value))}>{availableYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+            <label><span>Through year</span><select value={endYear} onChange={(event) => setTimelineEndYear(Number(event.target.value))}>{availableYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+            <button type="button" className="text-button" onClick={() => { setTimelineStartYear(firstYear); setTimelineEndYear(lastYear); }}>Show full range</button>
+          </div>
+          <div className="timeline-scroll">
+            <div className="timeline-axis">
+              {Array.from({ length: Math.max(1, endYear - startYear + 1) }, (_, index) => <span key={startYear + index}>{startYear + index}</span>)}
+            </div>
+            <div className="timeline-track">
+              {visibleTimelineItems.length === 0 && <p className="subtle">Enable careers or housing entries to see them here.</p>}
+              {visibleTimelineItems.map((item, index) => {
+                const position = positionFor(item.start, item.end || rangeEnd);
+                const active = (item.kind === 'career' ? timelineSelection === 'career' && item.id === selectedCareerId : timelineSelection === 'housing' && item.id === selectedHousingId);
+                return <button key={`${item.kind}-${item.id}`} type="button" className={`timeline-chip${active ? ' active' : ''}`} style={{ left: `${position.left}%`, width: `${position.width}%`, top: `${0.8 + (index % 2) * 2.15}rem`, borderColor: item.color, backgroundColor: `${item.color}18` }} onClick={() => { setTimelineSelection(item.kind); if (item.kind === 'career') updateSelectedCareerId(item.id); else setSelectedHousingId(item.id); }}><strong>{item.kind === 'career' ? 'Career' : 'Housing'}</strong><span>{item.label}</span><small>{item.start} to {item.end || 'ongoing'}</small></button>;
+              })}
+            </div>
+          </div>
+        </Panel>
+
+        <Panel title="Monthly Income Waterfall" className="panel-wide">
+          {visibleWaterfall.length === 0 ? <p className="subtle">No monthly projection data is available for this range.</p> : <>
+            <div className="timeline-chart-wrap">
+              <svg className="timeline-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label="Monthly leftover income chart">
+                {[0, 0.5, 1].map((fraction) => <line key={fraction} x1={chartPadding.left} x2={chartWidth - chartPadding.right} y1={chartY(maxChartValue * fraction)} y2={chartY(maxChartValue * fraction)} stroke="#dbe4ef" />)}
+                <path d={leftoverPath} fill="none" stroke="#2b5fe2" strokeWidth="3" />
+                {visibleWaterfall.map((month, index) => { const point = chartPoint(index, month.leftoverIncome); return <circle key={`${month.calendarYear}-${month.calendarMonth}`} cx={point.x} cy={point.y} r="3" fill="#2b5fe2"><title>{`${month.calendarYear}-${String(month.calendarMonth).padStart(2, '0')}: ${formatCurrency(month.leftoverIncome)} leftover`}</title></circle>; })}
+                <text x={chartPadding.left} y={chartHeight - 8} className="timeline-chart-label">{`${visibleWaterfall[0].calendarYear}-${String(visibleWaterfall[0].calendarMonth).padStart(2, '0')}`}</text>
+                <text x={chartWidth - chartPadding.right} y={chartHeight - 8} textAnchor="end" className="timeline-chart-label">{`${visibleWaterfall[visibleWaterfall.length - 1].calendarYear}-${String(visibleWaterfall[visibleWaterfall.length - 1].calendarMonth).padStart(2, '0')}`}</text>
+              </svg>
+            </div>
+            <div className="table-wrap"><table className="purchases-table timeline-waterfall-table"><thead><tr><th>Month</th><th>Career</th><th>Take-home</th><th>Career savings</th><th>Career withdrawals</th><th>Housing</th><th>Other expenses</th><th>Leftover</th></tr></thead><tbody>{visibleWaterfall.map((month) => <tr key={`${month.calendarYear}-${month.calendarMonth}`}><td>{`${month.calendarYear}-${String(month.calendarMonth).padStart(2, '0')}`}</td><td>{month.careerLabel}</td><td>{formatCurrency(month.takeHomeIncome)}</td><td>{formatCurrency(month.careerSavingsDeposits)}</td><td>{formatCurrency(month.careerWithdrawals)}</td><td>{formatCurrency(month.housingCosts)}</td><td>{formatCurrency(month.otherIncomeExpenses)}</td><td className={month.leftoverIncome < 0.01 ? 'negative-value' : ''}>{formatCurrency(month.leftoverIncome)}</td></tr>)}</tbody></table></div>
+          </>}
+        </Panel>
+
+        {timelineSelection === 'career' && selectedCareer && <Panel title={`Edit Career: ${selectedCareer.label}`} className="panel-wide"><CareerPlanEditor value={activeCareerPlan} selectedCareerId={selectedCareerId} onSelectCareer={updateSelectedCareerId} onChangeCareer={updateCareer} onDuplicateCareer={duplicateCareer} onReorderCareers={reorderCareers} onAddCareer={addCareer} onRemoveCareer={removeCareer} previewYear={futureProjection.years.find((year) => !year.isBaselineNow) ?? futureProjection.years[0]} bankAccounts={bankAccounts} pools={poolDefinitions} birthdayBasedCareerStartAge={birthdayBasedCareerStartAge} dateOfBirth={scenario.options.dateOfBirth} currentAge={currentAge} incomeFallbackAccountId={scenario.incomeFallbackAccountId} incomeFallbackAccountId2={scenario.incomeFallbackAccountId2} onChangeIncomeFallbackAccount1={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId: accountId })} onChangeIncomeFallbackAccount2={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId2: accountId })} allowReordering={false} /></Panel>}
+        {timelineSelection === 'housing' && selectedHousing && <Panel title={`Edit Housing: ${selectedHousing.label}`} className="panel-wide"><HousingEditor housing={activeHousing} selectedHousingId={selectedHousingId} onSelectHousing={setSelectedHousingId} onChangeHousing={(entry) => updateHousing(entry.id, entry)} onReorderHousing={reorderHousing} onAddHousing={addHousing} onDuplicateHousing={duplicateHousing} onRemoveHousing={removeHousing} accountOptions={accountSelectionOptions} orderedBankAccounts={orderedBankAccounts} careerOptions={activeCareerPlan.entries.map((career) => ({ id: career.id, label: career.label }))} allowReordering={false} /></Panel>}
+      </>
+    );
+  };
 
   const renderNetWorthTab = () => {
     const trackedBalanceTotal =
@@ -3828,6 +4187,9 @@ const App = () => {
           </button>
           <button type="button" className="secondary-button" onClick={addBankAccount}>
             + Add Bank Account
+          </button>
+          <button type="button" className="secondary-button" onClick={saveNetWorthSnapshot}>
+            Save Account Balance
           </button>
         </div>
         <div className="table-wrap">
@@ -3966,509 +4328,6 @@ const App = () => {
           </table>
         </div>
           </>
-        <div className="panel-divider" />
-
-        <div className="career-actions networth-import-actions">
-          <input
-            ref={filesInputRef}
-            data-testid="networth-import-files-input"
-            type="file"
-            multiple
-            accept=".csv,.pdf"
-            onChange={handleNetWorthImportInput}
-            style={{ display: 'none' }}
-          />
-          <input
-            ref={folderInputRef}
-            data-testid="networth-import-folder-input"
-            type="file"
-            multiple
-            accept=".csv,.pdf"
-            onChange={handleNetWorthImportInput}
-            style={{ display: 'none' }}
-            {...({ webkitdirectory: '' } as unknown as Record<string, string>)}
-          />
-          <button type="button" className="secondary-button" onClick={promptImportFiles}>
-            Import Files
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              setShowNetWorthImportsModal(true);
-              setExpandedNetWorthImportIds([]);
-              promptImportFolder();
-            }}
-          >
-            Import Folder
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              setShowNetWorthImportsModal(true);
-              setExpandedNetWorthImportIds([]);
-              if (!selectedNetWorthImportId && pendingNetWorthImports.length > 0) {
-                setSelectedNetWorthImportId(pendingNetWorthImports[0].id);
-              }
-            }}
-          >
-            Manage Imports
-          </button>
-          <button type="button" className="secondary-button" onClick={applyAllReadyImports}>
-            Apply Selected
-          </button>
-          {isImportingNetWorthFiles ? <p className="subtle">Importing files...</p> : null}
-        </div>
-        {pendingNetWorthImports.length > 0 ? (
-          <div className="networth-import-list">
-            {pendingNetWorthImports.map((record) => {
-              const selectedAccountLabel =
-                netWorthImportAccounts.find((account) => account.id === record.selectedAccountId)?.label ?? 'Unmatched';
-              const canApply =
-                !record.applied && Boolean(record.selectedAccountId) && record.detectedBalance !== null && Boolean(record.statementDate);
-              const statementDate = record.statementDate ? formatShortDate(record.statementDate) : 'Not detected';
-              const accountBalanceText =
-                record.detectedBalance === null ? 'Not detected' : formatCurrency(Math.max(0, record.detectedBalance));
-
-              return (
-                <div key={record.id} className="networth-import-item">
-                  <div className="networth-import-item-row">
-                    <div>
-                      <strong>{selectedAccountLabel}</strong>
-                    </div>
-                    <div>
-                      <span>Account Balance: </span>
-                      <strong>{accountBalanceText}</strong>
-                    </div>
-                    <div>
-                      <span>Statement Date: </span>
-                      <strong>{statementDate}</strong>
-                    </div>
-                  </div>
-                  <div className="networth-import-item-row">
-                    <label>
-                      <span>Assign Account</span>
-                      <select
-                        value={record.selectedAccountId ?? ''}
-                        onChange={(event) =>
-                          updateNetWorthImportRecord(record.id, {
-                            selectedAccountId: event.target.value || null,
-                            status:
-                              event.target.value && record.detectedBalance !== null && Boolean(record.statementDate)
-                                ? 'ready'
-                                : 'needs_review'
-                          })
-                        }
-                      >
-                        <option value="">Select account</option>
-                        {netWorthImportAccounts.map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Balance</span>
-                      <input
-                        type="number"
-                        value={record.detectedBalance ?? ''}
-                        onChange={(event) => {
-                          const raw = event.target.value;
-                          const parsed = raw === '' ? null : Number(raw);
-                          updateNetWorthImportRecord(record.id, {
-                            detectedBalance: parsed !== null && Number.isFinite(parsed) ? parsed : null,
-                            status:
-                              parsed !== null && Number.isFinite(parsed) && Boolean(record.selectedAccountId) && Boolean(record.statementDate)
-                                ? 'ready'
-                                : 'needs_review'
-                          });
-                        }}
-                      />
-                    </label>
-                    <label>
-                      <span>Date</span>
-                      <input
-                        type="date"
-                        value={record.statementDate}
-                        onChange={(event) =>
-                          updateNetWorthImportRecord(record.id, {
-                            statementDate: event.target.value,
-                            status:
-                              Boolean(event.target.value) && Boolean(record.selectedAccountId) && record.detectedBalance !== null
-                                ? 'ready'
-                                : 'needs_review'
-                          })
-                        }
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={!canApply}
-                      onClick={() => applyImportedRecord(record.id)}
-                    >
-                      Apply
-                    </button>
-                    <label>
-                      <span>Apply Mode</span>
-                      <select
-                        value={record.applyMode ?? 'net_worth_only'}
-                        onChange={(event) =>
-                          updateNetWorthImportRecord(record.id, {
-                            applyMode: event.target.value as NetWorthImportApplyMode
-                          })
-                        }
-                      >
-                        <option value="net_worth_only">Net Worth Only</option>
-                        <option value="net_worth_and_expenses">Net Worth + Expenses</option>
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      className="text-button"
-                      onClick={() => {
-                        setSelectedNetWorthImportId(record.id);
-                        setExpandedNetWorthImportIds([]);
-                        setShowNetWorthImportsModal(true);
-                      }}
-                    >
-                      Open In Popup
-                    </button>
-                  </div>
-                  <div className="subtle">
-                    <p>
-                      File: <strong>{record.fileName}</strong> ({record.fileType.toUpperCase()}) | Status: <strong>{record.status}</strong> | Confidence:{' '}
-                      <strong>{Math.round(record.confidence * 100)}%</strong>
-                    </p>
-                    {record.parseNotes.length > 0 ? <p>Notes: {record.parseNotes.join(' ')}</p> : null}
-                    {record.applied ? <p>Applied on {formatShortDate(record.appliedAt)}.</p> : null}
-                  </div>
-                  <details>
-                    <summary>View File</summary>
-                    {record.fileType === 'csv' ? (
-                      (() => {
-                        const rows = parseCsvPreview(record.previewText || '');
-                        if (rows.length === 0) {
-                          return <pre className="networth-file-preview">No preview available.</pre>;
-                        }
-                        const [headers, ...body] = rows;
-                        return (
-                          <div className="table-wrap expense-import-preview-table">
-                            <table className="purchases-table">
-                              <thead>
-                                <tr>
-                                  {headers.map((header, index) => (
-                                    <th key={`networth-inline-header-${record.id}-${index}`}>{header || `Column ${index + 1}`}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {body.map((row, rowIndex) => (
-                                  <tr key={`networth-inline-row-${record.id}-${rowIndex}`}>
-                                    {headers.map((_, colIndex) => (
-                                      <td key={`networth-inline-cell-${record.id}-${rowIndex}-${colIndex}`}>{row[colIndex] ?? ''}</td>
-                                    ))}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        );
-                      })()
-                    ) : (
-                      <pre className="networth-file-preview">{record.previewText || 'No preview available.'}</pre>
-                    )}
-                  </details>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="subtle">No imported statements yet. Import a CSV or PDF file to stage account updates.</p>
-        )}
-        {showNetWorthImportsModal ? (
-          <div className="expense-modal-backdrop" onClick={() => setShowNetWorthImportsModal(false)}>
-            <div className="expense-imports-modal" onClick={(event) => event.stopPropagation()}>
-              <div className="expense-imports-modal-header">
-                <h3>Net Worth Import Documents</h3>
-                <div className="expense-imports-modal-actions">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => {
-                      const checkedSet = new Set(checkedNetWorthImportIds);
-                      const importableIds = pendingNetWorthImports
-                        .filter(
-                          (record) =>
-                            checkedSet.has(record.id) &&
-                            Boolean(record.selectedAccountId) &&
-                            record.detectedBalance !== null &&
-                            Boolean(record.statementDate)
-                        )
-                        .map((record) => record.id);
-                      if (importableIds.length === 0) {
-                        return;
-                      }
-                      const shouldImport = confirmAction(`Import ${importableIds.length} checked report(s)?`);
-                      if (!shouldImport) {
-                        return;
-                      }
-                      applyImportedRecords(importableIds);
-                    }}
-                    disabled={
-                      pendingNetWorthImports.filter(
-                        (record) =>
-                          checkedNetWorthImportIds.includes(record.id) &&
-                          Boolean(record.selectedAccountId) &&
-                          record.detectedBalance !== null &&
-                          Boolean(record.statementDate)
-                      ).length === 0
-                    }
-                  >
-                    Import Checked
-                  </button>
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => setCheckedNetWorthImportIds(pendingNetWorthImports.map((record) => record.id))}
-                  >
-                    Select All
-                  </button>
-                  <button type="button" className="text-button" onClick={() => setCheckedNetWorthImportIds([])}>
-                    Deselect All
-                  </button>
-                  <button type="button" className="text-button" onClick={() => setShowNetWorthImportsModal(false)}>
-                    Close
-                  </button>
-                </div>
-              </div>
-              <div className="expense-imports-modal-grid">
-                <div className="expense-imports-documents">
-                  {pendingNetWorthImports.length === 0 ? <p className="subtle">No new imported documents yet.</p> : null}
-                  {[...pendingNetWorthImports]
-                    .sort((a, b) => {
-                      const aSelected = a.id === selectedNetWorthImportId ? 1 : 0;
-                      const bSelected = b.id === selectedNetWorthImportId ? 1 : 0;
-                      return bSelected - aSelected;
-                    })
-                    .map((record) => {
-                    const isExpanded = expandedNetWorthImportIds.includes(record.id);
-                    return (
-                      <div key={`nw-import-${record.id}`} className={`expense-import-doc${isExpanded ? ' networth-import-doc-expanded' : ''}`}>
-                        <div className="expense-import-doc-header networth-import-doc-header">
-                          <label className="checkbox-row">
-                            <input
-                              type="checkbox"
-                              checked={checkedNetWorthImportIds.includes(record.id)}
-                              onChange={(event) =>
-                                setCheckedNetWorthImportIds((current) =>
-                                  event.target.checked ? [...new Set([...current, record.id])] : current.filter((id) => id !== record.id)
-                                )
-                              }
-                            />
-                          </label>
-                          <button type="button" className="text-button" onClick={() => toggleExpandedNetWorthImport(record.id)}>
-                            {isExpanded ? 'Collapse' : 'Expand'}
-                          </button>
-                          <strong>{record.fileName}</strong>
-                        </div>
-                        {isExpanded ? (
-                          record.fileType === 'csv' ? (
-                            (() => {
-                              const rows = parseCsvPreview(record.previewText || '');
-                              if (rows.length === 0) {
-                                return <pre className="expense-import-preview">No preview available.</pre>;
-                              }
-                              const [headers, ...body] = rows;
-                              return (
-                                <div className="table-wrap expense-import-preview-table">
-                                  <table className="purchases-table">
-                                    <thead>
-                                      <tr>
-                                        {headers.map((header, index) => (
-                                          <th key={`networth-modal-header-${record.id}-${index}`}>{header || `Column ${index + 1}`}</th>
-                                        ))}
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {body.map((row, rowIndex) => (
-                                        <tr key={`networth-modal-row-${record.id}-${rowIndex}`}>
-                                          {headers.map((_, colIndex) => (
-                                            <td key={`networth-modal-cell-${record.id}-${rowIndex}-${colIndex}`}>{row[colIndex] ?? ''}</td>
-                                          ))}
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              );
-                            })()
-                          ) : (
-                            <pre className="expense-import-preview">{record.previewText || 'No preview available.'}</pre>
-                          )
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="expense-import-details">
-                  {(() => {
-                    const selectedRecord =
-                      (selectedNetWorthImportId ? pendingNetWorthImports.find((record) => record.id === selectedNetWorthImportId) : null) ??
-                      pendingNetWorthImports[0] ??
-                      null;
-                    if (!selectedRecord) {
-                      return <p className="subtle">Import files or folders to configure reports.</p>;
-                    }
-                    const selectedAccountLabel =
-                      netWorthImportAccounts.find((account) => account.id === selectedRecord.selectedAccountId)?.label ?? 'Unmatched';
-                    const canApply =
-                      !selectedRecord.applied &&
-                      Boolean(selectedRecord.selectedAccountId) &&
-                      selectedRecord.detectedBalance !== null &&
-                      Boolean(selectedRecord.statementDate);
-                    return (
-                      <>
-                        <h4>Details</h4>
-                        <p><strong>File:</strong> {selectedRecord.fileName}</p>
-                        <p><strong>Type:</strong> {selectedRecord.fileType.toUpperCase()}</p>
-                        <p><strong>Matched Account:</strong> {selectedAccountLabel}</p>
-                        <label>
-                          <span>Assign Account</span>
-                          <select
-                            value={selectedRecord.selectedAccountId ?? ''}
-                            onChange={(event) =>
-                              updateNetWorthImportRecord(selectedRecord.id, {
-                                selectedAccountId: event.target.value || null,
-                                status:
-                                  event.target.value && selectedRecord.detectedBalance !== null && Boolean(selectedRecord.statementDate)
-                                    ? 'ready'
-                                    : 'needs_review'
-                              })
-                            }
-                          >
-                            <option value="">Select account</option>
-                            {netWorthImportAccounts.map((account) => (
-                              <option key={`modal-${account.id}`} value={account.id}>
-                                {account.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Balance</span>
-                          <input
-                            type="number"
-                            value={selectedRecord.detectedBalance ?? ''}
-                            onChange={(event) => {
-                              const raw = event.target.value;
-                              const parsed = raw === '' ? null : Number(raw);
-                              updateNetWorthImportRecord(selectedRecord.id, {
-                                detectedBalance: parsed !== null && Number.isFinite(parsed) ? parsed : null,
-                                status:
-                                  parsed !== null &&
-                                  Number.isFinite(parsed) &&
-                                  Boolean(selectedRecord.selectedAccountId) &&
-                                  Boolean(selectedRecord.statementDate)
-                                    ? 'ready'
-                                    : 'needs_review'
-                              });
-                            }}
-                          />
-                        </label>
-                        <label>
-                          <span>Date</span>
-                          <input
-                            type="date"
-                            value={selectedRecord.statementDate}
-                            onChange={(event) =>
-                              updateNetWorthImportRecord(selectedRecord.id, {
-                                statementDate: event.target.value,
-                                status:
-                                  Boolean(event.target.value) &&
-                                  Boolean(selectedRecord.selectedAccountId) &&
-                                  selectedRecord.detectedBalance !== null
-                                    ? 'ready'
-                                    : 'needs_review'
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>Status</span>
-                          <select
-                            value={selectedRecord.status}
-                            onChange={(event) =>
-                              updateNetWorthImportRecord(selectedRecord.id, {
-                                status: event.target.value as NetWorthImportRecord['status']
-                              })
-                            }
-                          >
-                            <option value="ready">Ready</option>
-                            <option value="needs_review">Needs Review</option>
-                            <option value="error">Error</option>
-                            <option value="applied">Applied</option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>Apply Mode</span>
-                          <select
-                            value={selectedRecord.applyMode ?? 'net_worth_only'}
-                            onChange={(event) =>
-                              updateNetWorthImportRecord(selectedRecord.id, {
-                                applyMode: event.target.value as NetWorthImportApplyMode
-                              })
-                            }
-                          >
-                            <option value="net_worth_only">Net Worth Only</option>
-                            <option value="net_worth_and_expenses">Net Worth + Expenses</option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>Confidence</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            value={selectedRecord.confidence}
-                            onChange={(event) =>
-                              updateNetWorthImportRecord(selectedRecord.id, {
-                                confidence: Math.min(1, Math.max(0, Number(event.target.value) || 0))
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>Parse Notes (one per line)</span>
-                          <textarea
-                            rows={7}
-                            value={selectedRecord.parseNotes.join('\n')}
-                            onChange={(event) =>
-                              updateNetWorthImportRecord(selectedRecord.id, {
-                                parseNotes: event.target.value
-                                  .split('\n')
-                                  .map((note) => note.trim())
-                                  .filter((note) => note.length > 0)
-                              })
-                            }
-                          />
-                        </label>
-                        <div className="expense-modal-actions">
-                          <button type="button" className="secondary-button" disabled={!canApply} onClick={() => applyImportedRecord(selectedRecord.id)}>
-                            Apply
-                          </button>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
 
         <div className="panel-divider" />
 
@@ -4594,7 +4453,11 @@ const App = () => {
                     ? renderPurchasesTab()
                     : careersSubTab === 'housing'
                       ? renderHousingTab()
-                      : null}
+                      : careersSubTab === 'trajectory'
+                        ? renderTrajectoryTab()
+                        : careersSubTab === 'warnings'
+                          ? renderWarningsTab()
+                          : null}
           </>
         );
       case 'netWorth':
@@ -5049,6 +4912,11 @@ const App = () => {
             {hideResultsPanel ? null : (
               <>
                 <div className="results-card graph-card">
+                  {usesFinancePredictionResults && simulationStartEntry ? (
+                    <p className="simulation-start-note">
+                      Simulating from <strong>{formatShortDate(simulationStartDate)}</strong> using the last saved account balance.
+                    </p>
+                  ) : null}
                   {activeTab === 'netWorth' ? (
                     <>
                       <div className="networth-history-header">
@@ -5069,6 +4937,12 @@ const App = () => {
                       </div>
                       <NetWorthHistoryChart entries={displayedNetWorthHistory} />
                     </>
+                  ) : showTrajectoryComparison ? (
+                    <TrajectoryComparisonChart
+                      currentYears={adjustedYears.length > 0 ? adjustedYears : futureProjection.years}
+                      selected={adjustedSelectedTrajectory}
+                      historyPoints={netWorthHistoryPoints}
+                    />
                   ) : (
                     <>
                       <div className="chart-mode-row">
@@ -5158,15 +5032,8 @@ const App = () => {
                   )}
                 </div>
 
+                {!showTrajectoryComparison && (
                 <div className="results-card table-card">
-                  <label className="checkbox-row" style={{ padding: '0.5rem 1rem 0', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={showRealDollars}
-                      onChange={(e) => setShowRealDollars(e.target.checked)}
-                    />
-                    <span>Display values in current dollars</span>
-                  </label>
                   <label className="checkbox-row">
                     <input
                       type="checkbox"
@@ -5250,6 +5117,7 @@ const App = () => {
                     } : undefined}
                   />
                 </div>
+                )}
               </>
             )}
           </div>
@@ -5275,6 +5143,9 @@ const App = () => {
                     value={timeline.label}
                     onChange={(event) => renameTimeline(timeline.id, event.target.value)}
                   />
+                  <button type="button" className="text-button" onClick={() => duplicateTimeline(timeline.id)}>
+                    Copy
+                  </button>
                   <button type="button" className="text-button danger-text" onClick={() => deleteTimeline(timeline.id)}>
                     Remove
                   </button>

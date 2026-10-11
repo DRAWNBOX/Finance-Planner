@@ -1,10 +1,10 @@
 import { defaultScenario } from './defaultScenario';
-import type { CareerEntry, CreditCard, HousingEntry, LargePurchase, LoanPaymentSource, LongTermPurchase, PurchaseCategory, Scenario, SourceLine, Timeline } from './types';
-import { ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
+import type { CareerEntry, CreditCard, HousingEntry, LargePurchase, LoanPaymentSource, LongTermPurchase, PurchaseCategory, Scenario, SourceLine, Timeline, TrajectorySnapshot } from './types';
+import { addMonthsToYearMonth, ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
 // Removed financeModel imports (functions inlined or simplified)
 
 const APP_TABS = ['options', 'careers', 'netWorth', 'expenses'] as const;
-const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses', 'housing'] as const;
+const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses', 'housing', 'trajectory', 'warnings'] as const;
 export type CareersSubTab = (typeof CAREERS_SUB_TABS)[number];
 const EXPENSES_SUB_TABS = ['planning', 'tracking', 'creditCards'] as const;
 export type ExpensesSubTab = (typeof EXPENSES_SUB_TABS)[number];
@@ -14,6 +14,8 @@ export interface AppUiState {
   selectedCareerId: string;
   careersSubTab: CareersSubTab;
   expensesSubTab: ExpensesSubTab;
+  compareTrajectoryId: string;
+  showRealDollars: boolean;
 }
 
 export interface PersistedAppState {
@@ -27,7 +29,9 @@ const defaultUiState: AppUiState = {
   activeTab: 'careers',
   selectedCareerId: '',
   careersSubTab: 'careers',
-  expensesSubTab: 'planning'
+  expensesSubTab: 'planning',
+  compareTrajectoryId: '',
+  showRealDollars: false
 };
 
 const toNumberOrFallback = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
@@ -160,7 +164,27 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
   };
 };
 
-const normalizeCareerEntries = (entries: CareerEntry[], bankAccountIds: Set<string>) => {
+const ensureUniqueCareerIds = (entries: CareerEntry[]): CareerEntry[] => {
+  const seen = new Set<string>();
+
+  return entries.map((entry) => {
+    let id = entry.id;
+    if (!id || seen.has(id)) {
+      const baseId = id || 'career';
+      let suffix = 1;
+      let candidate = `${baseId}-${suffix}`;
+      while (seen.has(candidate)) {
+        suffix += 1;
+        candidate = `${baseId}-${suffix}`;
+      }
+      id = candidate;
+    }
+    seen.add(id);
+    return id === entry.id ? entry : { ...entry, id };
+  });
+};
+
+const normalizeCareerEntries = (entries: CareerEntry[], bankAccountIds: Set<string>, dateOfBirth: string, currentAge: number) => {
   const normalized: CareerEntry[] = [];
 
   entries.forEach((entry, index) => {
@@ -168,13 +192,17 @@ const normalizeCareerEntries = (entries: CareerEntry[], bankAccountIds: Set<stri
     const previous = normalized[index - 1];
 
     if (base.usePreviousCareerStartAge && previous) {
-      const startAge = previous.endAge;
+      const previousEndYearMonth =
+        previous.endYearMonth || formatYearMonthFromAge(previous.endAge, dateOfBirth, currentAge);
+      const startYearMonth = addMonthsToYearMonth(previousEndYearMonth, 1);
+      const startAge = ageFromYearMonth(startYearMonth, dateOfBirth, currentAge, 18, 110) ?? previous.endAge;
 
       normalized.push({
         ...base,
         useBirthdayBasedStartAge: false,
         startAge,
-        endAge: Math.max(base.endAge, startAge)
+        endAge: Math.max(base.endAge, startAge),
+        startYearMonth
       });
       return;
     }
@@ -182,7 +210,7 @@ const normalizeCareerEntries = (entries: CareerEntry[], bankAccountIds: Set<stri
     normalized.push(base);
   });
 
-  return normalized;
+  return ensureUniqueCareerIds(normalized);
 };
 
 const normalizeActiveTab = (value: unknown): AppUiState['activeTab'] => {
@@ -201,7 +229,7 @@ const normalizeIsoDate = (value: unknown) =>
   typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(value) ? value : '';
 
 const normalizeCareersSubTab = (value: unknown): CareersSubTab => {
-  if (value === 'retirement' || value === 'careers' || value === 'timeline' || value === 'purchasesExpenses') {
+  if (value === 'retirement' || value === 'careers' || value === 'timeline' || value === 'purchasesExpenses' || value === 'housing' || value === 'trajectory' || value === 'warnings') {
     return value;
   }
 
@@ -413,6 +441,8 @@ export const loadAppState = (): PersistedAppState => {
         sellingCostsRate: Math.max(0, toNumberOrFallback(entry.sellingCostsRate, 0)),
         saleProceedsAccountId: typeof entry.saleProceedsAccountId === 'string' ? entry.saleProceedsAccountId : undefined,
         usePreviousEndAsStart: Boolean(entry.usePreviousEndAsStart),
+        linkedCareerStartId: typeof entry.linkedCareerStartId === 'string' && entry.linkedCareerStartId.trim().length > 0 ? entry.linkedCareerStartId : null,
+        linkedCareerEndId: typeof entry.linkedCareerEndId === 'string' && entry.linkedCareerEndId.trim().length > 0 ? entry.linkedCareerEndId : null,
         paymentSource: typeof entry.paymentSource === 'string' ? entry.paymentSource as LoanPaymentSource : 'income',
         taxesInsuranceSource: typeof entry.taxesInsuranceSource === 'string' ? entry.taxesInsuranceSource as LoanPaymentSource : undefined,
         hoaMaintenanceSource: typeof entry.hoaMaintenanceSource === 'string' ? entry.hoaMaintenanceSource as LoanPaymentSource : undefined,
@@ -433,11 +463,64 @@ export const loadAppState = (): PersistedAppState => {
         careerPlan: {
           enabled: rawCareerPlan.enabled !== false,
           entries: Array.isArray(rawCareerPlan.entries)
-            ? normalizeCareerEntries(rawCareerPlan.entries as CareerEntry[], bankAccountIds)
+            ? normalizeCareerEntries(
+                rawCareerPlan.entries as CareerEntry[],
+                bankAccountIds,
+                scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
+                scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
+              )
             : []
         },
         housing: (Array.isArray(raw?.housing) ? raw.housing : []).map((h, i) => normalizeHousing(h, i))
       } satisfies Timeline;
+    };
+
+    const normalizeTrajectorySnapshot = (snapshot: unknown, index: number): TrajectorySnapshot => {
+      const raw = (snapshot ?? {}) as Record<string, unknown>;
+      const numberRecord = (value: unknown): Record<string, number> => {
+        const result: Record<string, number> = {};
+        if (value && typeof value === 'object') {
+          Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => {
+            if (typeof entry === 'number' && Number.isFinite(entry)) {
+              result[key] = entry;
+            }
+          });
+        }
+        return result;
+      };
+      return {
+        id: typeof raw.id === 'string' && raw.id.trim().length > 0 ? raw.id : `trajectory-${index + 1}`,
+        label: typeof raw.label === 'string' && raw.label.trim().length > 0 ? raw.label : `Trajectory ${index + 1}`,
+        createdAt: normalizeIsoDate(raw.createdAt),
+        survivesToEnd: raw.survivesToEnd !== false,
+        depletedAge: typeof raw.depletedAge === 'number' && Number.isFinite(raw.depletedAge) ? raw.depletedAge : null,
+        endAge: Math.max(0, toNumberOrFallback(raw.endAge, 0)),
+        endingBalance: toNumberOrFallback(raw.endingBalance, 0),
+        summary: typeof raw.summary === 'string' ? raw.summary : '',
+        years: (Array.isArray(raw.years) ? raw.years : []).map((year) => {
+          const y = (year ?? {}) as Record<string, unknown>;
+          return {
+            age: toNumberOrFallback(y.age, 0),
+            calendarYear: toNumberOrFallback(y.calendarYear, 0),
+            isBaselineNow: Boolean(y.isBaselineNow),
+            startBalance: toNumberOrFallback(y.startBalance, 0),
+            endBalance: toNumberOrFallback(y.endBalance, 0),
+            salary: toNumberOrFallback(y.salary, 0),
+            careerContribution: toNumberOrFallback(y.careerContribution, 0),
+            contribution: toNumberOrFallback(y.contribution, 0),
+            withdrawal: toNumberOrFallback(y.withdrawal, 0),
+            taxesPaid: toNumberOrFallback(y.taxesPaid, 0),
+            penaltiesPaid: toNumberOrFallback(y.penaltiesPaid, 0),
+            annualReturnRate: toNumberOrFallback(y.annualReturnRate, 0),
+            inflationRate: toNumberOrFallback(y.inflationRate, 0),
+            depleted: Boolean(y.depleted),
+            savingsBalances: numberRecord(y.savingsBalances),
+            accountBalancesById: numberRecord(y.accountBalancesById),
+            creditCardBalancesById: numberRecord(y.creditCardBalancesById),
+            totalCreditCardDebt: toNumberOrFallback(y.totalCreditCardDebt, 0)
+          };
+        })
+      } satisfies TrajectorySnapshot;
     };
 
     return {
@@ -452,7 +535,12 @@ export const loadAppState = (): PersistedAppState => {
           enabled: scenario.careerPlan?.enabled ?? defaultScenario.careerPlan.enabled,
           entries:
             scenario.careerPlan?.entries?.length
-              ? normalizeCareerEntries(scenario.careerPlan.entries, bankAccountIds)
+              ? normalizeCareerEntries(
+                  scenario.careerPlan.entries,
+                  bankAccountIds,
+                  scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
+                  scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
+                )
               : defaultScenario.careerPlan.entries
         },
         netWorth: {
@@ -558,49 +646,6 @@ export const loadAppState = (): PersistedAppState => {
             label: typeof account.label === 'string' && account.label.trim().length > 0 ? account.label : `Account ${index + 1}`,
             balance: Math.max(0, toNumberOrFallback(account.balance, 0))
           })),
-          imports: (scenario.netWorth?.imports ?? defaultScenario.netWorth.imports ?? []).map((record, index) => ({
-            id: typeof record.id === 'string' && record.id.trim().length > 0 ? record.id : `networth-import-${index + 1}`,
-            fileName:
-              typeof record.fileName === 'string' && record.fileName.trim().length > 0
-                ? record.fileName
-                : `import-${index + 1}.csv`,
-            fileType: (record.fileType === 'csv' || record.fileType === 'pdf' ? record.fileType : 'unknown') as
-              | 'csv'
-              | 'pdf'
-              | 'unknown',
-            previewText: typeof record.previewText === 'string' ? record.previewText : '',
-            detectedAccountId: typeof record.detectedAccountId === 'string' && record.detectedAccountId.trim().length > 0 ? record.detectedAccountId : null,
-            detectedBalance:
-              typeof record.detectedBalance === 'number' && Number.isFinite(record.detectedBalance)
-                ? record.detectedBalance
-                : null,
-            statementDate:
-              typeof record.statementDate === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(record.statementDate)
-                ? record.statementDate
-                : '',
-            selectedAccountId:
-              typeof record.selectedAccountId === 'string' && record.selectedAccountId.trim().length > 0 ? record.selectedAccountId : null,
-            status:
-              record.status === 'applied' || record.status === 'ready' || record.status === 'needs_review' || record.status === 'error'
-                ? record.status
-                : 'needs_review',
-            confidence:
-              typeof record.confidence === 'number' && Number.isFinite(record.confidence)
-                ? Math.min(1, Math.max(0, record.confidence))
-                : 0,
-            parseNotes: Array.isArray(record.parseNotes)
-              ? record.parseNotes.filter((note): note is string => typeof note === 'string')
-              : [],
-            applyMode:
-              record.applyMode === 'net_worth_and_expenses' || record.applyMode === 'net_worth_only'
-                ? record.applyMode
-                : 'net_worth_only',
-            applied: Boolean(record.applied),
-            appliedAt:
-              typeof record.appliedAt === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(record.appliedAt)
-                ? record.appliedAt
-                : ''
-          })).filter((record) => record.applied),
           history: (scenario.netWorth?.history ?? defaultScenario.netWorth.history ?? []).map((entry, index) => ({
             id: typeof entry.id === 'string' && entry.id.trim().length > 0 ? entry.id : `networth-history-${index + 1}`,
             date: typeof entry.date === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(entry.date) ? entry.date : '',
@@ -664,6 +709,7 @@ export const loadAppState = (): PersistedAppState => {
         activeTimelineId: (typeof scenario.activeTimelineId === 'string' && scenario.activeTimelineId.trim().length > 0)
           ? scenario.activeTimelineId
           : null,
+        trajectorySnapshots: (Array.isArray(scenario.trajectorySnapshots) ? scenario.trajectorySnapshots : defaultScenario.trajectorySnapshots).map((snapshot: unknown, sIdx: number) => normalizeTrajectorySnapshot(snapshot, sIdx)),
         largePurchases: (scenario.largePurchases ?? defaultScenario.largePurchases).map((purchase, pIdx) => normalizeLargePurchase(purchase, pIdx)),
         longTermPurchases: (scenario.longTermPurchases ?? defaultScenario.longTermPurchases ?? []).map((purchase, index) => normalizeLongTermPurchase(purchase, index)),
         loans: (scenario.loans ?? defaultScenario.loans ?? []).map((loan, index) => normalizeLoan(loan, index)),
@@ -829,7 +875,9 @@ export const loadAppState = (): PersistedAppState => {
         ...ui,
         activeTab: normalizeActiveTab(ui.activeTab),
         careersSubTab: normalizeCareersSubTab(ui.careersSubTab),
-        expensesSubTab: normalizeExpensesSubTab(ui.expensesSubTab)
+        expensesSubTab: normalizeExpensesSubTab(ui.expensesSubTab),
+        compareTrajectoryId: typeof ui.compareTrajectoryId === 'string' ? ui.compareTrajectoryId : '',
+        showRealDollars: Boolean(ui.showRealDollars)
       }
     };
   } catch {

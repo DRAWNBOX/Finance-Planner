@@ -6,9 +6,9 @@
 2. `src/App.tsx` owns app state and builds scenario variants for tabs/graphs.
 3. Projections are computed by `projectScenario` in `src/engine/projection.ts`.
 4. Results render through:
-   - `ChartPanel` (portfolio line/area)
-   - `SavingsStackedChart` (account stacked areas)
-   - `ResultsTable` (year-by-year table)
+   - `ChartPanel` (monthly portfolio line/area + hover)
+   - `SavingsStackedChart` (monthly account stacked areas + per-pool hover)
+   - `ResultsTable` (year-by-year / monthly table)
 5. Net worth history and expenses planning use dedicated UI paths.
 6. State changes are persisted through `saveAppState`.
 
@@ -26,6 +26,6 @@
 ## Tabs and Intent
 
 - `Options`: Date of birth/global options with the same graph, table, and summary as Finances Prediction.
-- `Finances Prediction`: Sub-tabs for Retirement, Careers, Timeline Management, Purchases and expenses, and Loans.
+- `Finances Prediction`: Sub-tabs for Retirement, Careers, Timeline Management, Purchases and expenses, Housing Expenses, Trajectory, and Warnings.
 - `Net Worth`: Account/pool balances, import staging, history, and as-of date baseline.
 - `Expenses`: Full-width expense planning/tracking workspace; graph/results panels are hidden.

@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { createDefaultCareerEntry } from './defaultScenario';
+import { loadAppState } from './storage';
 
 const makeBirthDate = (yearsAgo: number) => {
   const date = new Date();
@@ -63,11 +65,7 @@ describe('App', () => {
   it('persists the global inflation toggle state', () => {
     render(<App />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
 
     const inflationToggle = screen.getByRole('checkbox', { name: 'Enable inflation' });
     expect(inflationToggle).toBeChecked();
@@ -82,58 +80,31 @@ describe('App', () => {
   it('disables inflation-related controls when global inflation is off', () => {
     render(<App />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Social Security' })[0]);
-
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
 
     const inflationToggle = screen.getByRole('checkbox', { name: 'Enable inflation' });
     fireEvent.click(inflationToggle);
 
-    const inflationControl = screen.getByText('Inflation %').closest('label') as HTMLElement;
+    const inflationControl = screen.getByText('Inflation Rate %').closest('label') as HTMLElement;
     const inflationRateInput = within(inflationControl).getByRole('spinbutton');
-    const withdrawalInflation = screen.getByRole('checkbox', { name: 'Adjust expenses for inflation' });
-    const cashflowInflation = screen.getByRole('checkbox', { name: 'Adjust for inflation' });
 
     expect(inflationRateInput).toBeDisabled();
-    expect(withdrawalInflation).toBeDisabled();
-    expect(cashflowInflation).toBeDisabled();
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
   });
 
   it('re-enables inflation controls and preserves checked states', () => {
     render(<App />);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
-
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Social Security' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
 
     const inflationToggle = screen.getByRole('checkbox', { name: 'Enable inflation' });
-    const withdrawalInflation = screen.getByRole('checkbox', { name: 'Adjust expenses for inflation' });
-    const cashflowInflation = screen.getByRole('checkbox', { name: 'Adjust for inflation' });
-
-    expect(withdrawalInflation).toBeChecked();
-    expect(cashflowInflation).toBeChecked();
+    const inflationRateInput = screen.getByRole('spinbutton');
+    expect(inflationRateInput).toHaveValue(2.9);
 
     fireEvent.click(inflationToggle);
     fireEvent.click(inflationToggle);
 
-    const withdrawalInflationAfter = screen.getByRole('checkbox', { name: 'Adjust expenses for inflation' });
-    const cashflowInflationAfter = screen.getByRole('checkbox', { name: 'Adjust for inflation' });
-
-    expect(withdrawalInflationAfter).toBeEnabled();
-    expect(cashflowInflationAfter).toBeEnabled();
-    expect(withdrawalInflationAfter).toBeChecked();
-    expect(cashflowInflationAfter).toBeChecked();
+    expect(inflationRateInput).toBeEnabled();
+    expect(inflationRateInput).toHaveValue(2.9);
   });
 
   it('derives current age from date of birth and persists the option', () => {
@@ -668,6 +639,19 @@ describe('App', () => {
     expect(screen.getByDisplayValue('Large Purchase')).toBeInTheDocument();
   });
 
+  it('shows a chronological, non-draggable timeline with monthly leftover income', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline Management' }));
+
+    expect(screen.getByText('Career and Housing Timeline')).toBeInTheDocument();
+    expect(document.querySelector('.timeline-chip')).not.toHaveAttribute('draggable');
+    expect(screen.getByText('Monthly Income Waterfall')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Leftover' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show full range' })).toBeInTheDocument();
+  });
+
   it('keeps timeline purchases independent from the default set', () => {
     render(<App />);
 
@@ -691,6 +675,25 @@ describe('App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Timeline 1' }));
     expect(screen.getByDisplayValue('Timeline Purchase')).toBeInTheDocument();
+  });
+
+  it('copies an existing timeline from the manage modal', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
+    expect(financeSubTabs).toBeTruthy();
+    const financeSubTabsElement = financeSubTabs as HTMLElement;
+    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Timeline' }));
+    expect(screen.getByRole('button', { name: 'Timeline 1' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Timelines' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    expect(screen.getByDisplayValue('Timeline 1 (copy)')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Timeline 1')).toBeInTheDocument();
   });
 
   it('keeps housing independent across timelines', () => {
@@ -762,9 +765,96 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
     fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
 
-    const usePrevious = screen.getByRole('checkbox', { name: 'Use previous housing end date as start date' });
+    const usePrevious = screen.getByRole('checkbox', { name: 'Use the month after the previous housing end date as the start date' });
     expect(usePrevious).toBeInTheDocument();
     expect(usePrevious).toBeDisabled();
+  });
+
+  const openHousingSubTab = () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs') as HTMLElement;
+    fireEvent.click(within(financeSubTabs).getByRole('button', { name: 'Housing Expenses' }));
+    return financeSubTabs;
+  };
+
+  it('links a housing start date to a selected career', () => {
+    render(<App />);
+    openHousingSubTab();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
+
+    const startYear = screen.getByLabelText('Start Year') as HTMLInputElement;
+    fireEvent.change(startYear, { target: { value: '2030' } });
+    fireEvent.blur(startYear);
+    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2030');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Link start date to a career' }));
+
+    const careerSelect = screen.getByLabelText('Start Career') as HTMLSelectElement;
+    expect(within(careerSelect).getByRole('option', { name: 'Current Career' })).toBeInTheDocument();
+    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2025');
+    expect(screen.getByLabelText('Start Year')).toBeDisabled();
+    expect(screen.getByLabelText('Start Month')).toBeDisabled();
+  });
+
+  it('links a housing end date to a selected career', () => {
+    render(<App />);
+    openHousingSubTab();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
+
+    const endYear = screen.getByLabelText('End Year') as HTMLInputElement;
+    fireEvent.change(endYear, { target: { value: '2035' } });
+    fireEvent.blur(endYear);
+    expect((screen.getByLabelText('End Year') as HTMLInputElement).value).toBe('2035');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Link end date to a career' }));
+
+    expect(screen.getByLabelText('End Career')).toBeInTheDocument();
+    expect((screen.getByLabelText('End Year') as HTMLInputElement).value).toBe('2045');
+    expect(screen.getByLabelText('End Year')).toBeDisabled();
+  });
+
+  it('follows career date changes after linking a housing start date', () => {
+    render(<App />);
+    const financeSubTabs = openHousingSubTab();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Link start date to a career' }));
+    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2025');
+
+    fireEvent.click(within(financeSubTabs).getByRole('button', { name: 'Careers' }));
+    const careerStartYear = screen.getByLabelText('Start Year') as HTMLInputElement;
+    fireEvent.change(careerStartYear, { target: { value: '2028' } });
+    fireEvent.blur(careerStartYear);
+
+    fireEvent.click(within(financeSubTabs).getByRole('button', { name: 'Housing Expenses' }));
+    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2028');
+  });
+
+  it('makes the career start link mutually exclusive with the previous-end chain', () => {
+    render(<App />);
+    openHousingSubTab();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
+    const sellYear = screen.getByLabelText('Sell Year') as HTMLInputElement;
+    fireEvent.change(sellYear, { target: { value: '2030' } });
+    fireEvent.blur(sellYear);
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
+
+    const usePrevious = screen.getByRole('checkbox', { name: 'Use the month after the previous housing end date as the start date' });
+    expect(usePrevious).not.toBeDisabled();
+    fireEvent.click(usePrevious);
+    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2030');
+    expect((screen.getByLabelText('Start Month') as HTMLSelectElement).value).toBe('02');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Link start date to a career' }));
+
+    const usePreviousAfter = screen.getByRole('checkbox', { name: 'Use the month after the previous housing end date as the start date' });
+    expect(usePreviousAfter).toBeDisabled();
+    expect(usePreviousAfter).not.toBeChecked();
+    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2025');
   });
 
   it('maps saved future retirement tab state into Careers', () => {
@@ -1021,7 +1111,7 @@ describe('App', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
     fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
-    fireEvent.click(screen.getByRole('checkbox', { name: /Use previous career end age as this start age/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Use the month after the previous career end/i }));
 
     const startAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
 
@@ -1029,7 +1119,7 @@ describe('App', () => {
     expect(startAgeInput).toBeDisabled();
   });
 
-  it('copies previous career end year-month when using previous career start age', () => {
+  it('uses the month after the previous career end when using previous career start age', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
@@ -1043,13 +1133,16 @@ describe('App', () => {
     fireEvent.change(endMonthInput, { target: { value: '03' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Career 2' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /Use previous career end age as this start age/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Use the month after the previous career end/i }));
 
     const startYearInput = screen.getByLabelText('Start Year');
     const startMonthInput = screen.getByLabelText('Start Month');
 
     expect(startYearInput).toHaveValue('2030');
-    expect(startMonthInput).toHaveValue('03');
+    expect(startMonthInput).toHaveValue('04');
+
+    const startAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
+    expect(startAgeInput).toHaveValue(49);
   });
 
   it('can derive a career start age from birthday and lock the start age input', () => {
@@ -1079,7 +1172,7 @@ describe('App', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Career 2' }));
 
-    const previousCareerCheckbox = screen.getByRole('checkbox', { name: /Use previous career end age as this start age/i });
+    const previousCareerCheckbox = screen.getByRole('checkbox', { name: /Use the month after the previous career end/i });
     const birthdayCheckbox = screen.getByRole('checkbox', { name: /Use current age from birthday/i });
 
     fireEvent.click(previousCareerCheckbox);
@@ -1297,6 +1390,62 @@ describe('App', () => {
     confirmSpy.mockRestore();
   });
 
+  it('honors an explicit id passed to createDefaultCareerEntry', () => {
+    const entry = createDefaultCareerEntry(1, 45, 65, 'career-explicit-id');
+    expect(entry.id).toBe('career-explicit-id');
+    expect(createDefaultCareerEntry(1, 45, 65).id).toBe('career-2-default');
+  });
+
+  it('keeps career ids unique when re-adding after a removal', () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Current Career' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Career' }));
+
+    fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
+
+    const stored = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
+    const ids = (stored.scenario?.careerPlan?.entries ?? []).map((entry: { id: string }) => entry.id) as string[];
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(ids).size).toBe(ids.length);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Career 2' })[0]);
+    fireEvent.change(screen.getByDisplayValue('Career 2'), { target: { value: 'Alpha' } });
+
+    expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Career 2' })).toBeInTheDocument();
+
+    confirmSpy.mockRestore();
+  });
+
+  it('repairs duplicate career ids when loading saved state', () => {
+    window.localStorage.setItem(
+      'finance-planner-state',
+      JSON.stringify({
+        scenario: {
+          careerPlan: {
+            enabled: true,
+            entries: [
+              { id: 'career-2-default', label: 'Career 2', enabled: true, startAge: 50, endAge: 54 },
+              { id: 'career-2-default', label: 'Career 2', enabled: true, startAge: 55, endAge: 59 }
+            ]
+          }
+        },
+        ui: { activeTab: 'careers', selectedCareerId: 'career-2-default' }
+      })
+    );
+
+    const state = loadAppState();
+    const ids = state.scenario.careerPlan.entries.map((entry) => entry.id);
+    expect(ids.length).toBe(2);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it('shows savings tracker controls and can switch to the stacked savings graph', () => {
     render(<App />);
 
@@ -1350,11 +1499,11 @@ describe('App', () => {
 
     const dataRows = within(resultsTable!).getAllByRole('row').slice(1);
     const firstProjectedRowCells = within(dataRows[1]).getAllByRole('cell');
-    const emergencyFund = parseCurrency(firstProjectedRowCells[5].textContent ?? '');
-    const hsa = parseCurrency(firstProjectedRowCells[6].textContent ?? '');
-    const investments = parseCurrency(firstProjectedRowCells[7].textContent ?? '');
-    const retirement401k = parseCurrency(firstProjectedRowCells[8].textContent ?? '');
-    const endBalance = parseCurrency(firstProjectedRowCells[13].textContent ?? '');
+    const emergencyFund = parseCurrency(firstProjectedRowCells[6].textContent ?? '');
+    const hsa = parseCurrency(firstProjectedRowCells[7].textContent ?? '');
+    const investments = parseCurrency(firstProjectedRowCells[8].textContent ?? '');
+    const retirement401k = parseCurrency(firstProjectedRowCells[9].textContent ?? '');
+    const endBalance = parseCurrency(firstProjectedRowCells[14].textContent ?? '');
     const accountSum = emergencyFund + hsa + investments + retirement401k;
 
     expect(Math.abs(endBalance - accountSum)).toBeLessThanOrEqual(3);
@@ -1363,7 +1512,7 @@ describe('App', () => {
     const summaryEndingBalanceMatch = summaryEndingText.match(/\$[0-9,]+/g);
     const summaryEndingBalance = parseCurrency(summaryEndingBalanceMatch?.[summaryEndingBalanceMatch.length - 1] ?? '0');
     const lastRowCells = within(dataRows[dataRows.length - 1]).getAllByRole('cell');
-    const lastTableEndBalance = parseCurrency(lastRowCells[13].textContent ?? '');
+    const lastTableEndBalance = parseCurrency(lastRowCells[14].textContent ?? '');
 
     expect(lastTableEndBalance).toBe(summaryEndingBalance);
   });
@@ -1390,52 +1539,63 @@ describe('App', () => {
     expect(stored).toContain('"asOfDate"');
   });
 
+  it('saves a dated net worth snapshot with current account balances', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
+
+    const bankAccountHeader = screen.getByRole('columnheader', { name: 'Balance' });
+    const bankAccountTable = bankAccountHeader.closest('table') as HTMLTableElement;
+    const emergencyFundInput = bankAccountTable.querySelector(
+      'tbody tr td input[type="text"][value="Emergency Fund"]'
+    ) as HTMLInputElement;
+    const emergencyFundRow = emergencyFundInput.closest('tr') as HTMLTableRowElement;
+    const emergencyFundBalanceInput = within(emergencyFundRow).getAllByRole('spinbutton')[1];
+    fireEvent.change(emergencyFundBalanceInput, { target: { value: '25000' } });
+    fireEvent.blur(emergencyFundBalanceInput);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Account Balance' }));
+
+    const today = new Date().toISOString().slice(0, 10);
+    await waitFor(() => {
+      const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
+      const netWorth = parsed?.scenario?.netWorth ?? {};
+      expect(netWorth.asOfDate).toBe(today);
+      const history = netWorth.history ?? [];
+      expect(history.length).toBeGreaterThan(0);
+      const latest = history[history.length - 1];
+      expect(latest.date).toBe(today);
+      const emergencyFund = (latest.accounts ?? []).find(
+        (account: { id: string }) => account.id === 'emergencyFund-account-default'
+      );
+      expect(emergencyFund?.balance).toBe(25000);
+      expect(latest.totalNetWorth).toBeGreaterThanOrEqual(25000);
+    });
+  });
+
+  it('overwrites the same-day net worth snapshot instead of duplicating it', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
+
+    const saveButton = screen.getByRole('button', { name: 'Save Account Balance' });
+    fireEvent.click(saveButton);
+    fireEvent.click(saveButton);
+
+    const today = new Date().toISOString().slice(0, 10);
+    await waitFor(() => {
+      const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
+      const history = parsed?.scenario?.netWorth?.history ?? [];
+      expect(history).toHaveLength(1);
+      expect(history[0].date).toBe(today);
+    });
+  });
+
   it('hides the legacy add custom account control in net worth', () => {
     render(<App />);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
     expect(screen.queryByRole('button', { name: '+ Add Custom Account' })).not.toBeInTheDocument();
-  });
-
-  it('imports a csv statement, supports account remap, and applies staged balance updates', async () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
-
-    const csv = [
-      'Account Name,Ending Balance,Statement Date',
-      'Brokerage Investments,25000.50,2026-03-31'
-    ].join('\n');
-    const file = new File([csv], 'brokerage.csv', { type: 'text/csv' });
-    const filesInput = screen.getByTestId('networth-import-files-input') as HTMLInputElement;
-    fireEvent.change(filesInput, { target: { files: [file] } });
-
-    await waitFor(() => {
-      expect(screen.getByText(/brokerage\.csv/i)).toBeInTheDocument();
-      expect(screen.getByText(/Statement Date:/i)).toBeInTheDocument();
-    });
-
-    const accountSelect = screen
-      .getAllByRole('combobox')
-      .find((element) => (element as HTMLSelectElement).querySelector('option[value="hsa-account-default"]')) as HTMLSelectElement;
-    const hsaOption = accountSelect.querySelector('option[value="hsa-account-default"]') as HTMLOptionElement;
-    fireEvent.change(accountSelect, { target: { value: hsaOption.value } });
-    expect(screen.getAllByDisplayValue('HSA').length).toBeGreaterThan(0);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Apply Selected' }));
-
-    await waitFor(() => {
-      const netWorthStored = window.localStorage.getItem('finance-planner-state') ?? '';
-      expect(netWorthStored).toContain('"balance":25000.5');
-      expect(netWorthStored).toContain('"statementDate":"2026-03-31"');
-      expect(netWorthStored).toContain('"status":"applied"');
-      expect(netWorthStored).toContain('"history"');
-    });
-
-    const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
-    const history = parsed?.scenario?.netWorth?.history ?? [];
-    expect(history.length).toBeGreaterThan(0);
-    expect(history[history.length - 1].accounts.length).toBeGreaterThanOrEqual(4);
   });
 
   it('shows net worth history chart and range radios up to available history span', () => {
@@ -1633,4 +1793,212 @@ describe('App', () => {
     expect(title).toContain('Monthly income');
     expect(title).toContain('Test Loan');
   });
+
+  it('shows an income usage warning banner when income-funded spending exceeds take-home', async () => {
+    const now = new Date();
+    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    window.localStorage.setItem(
+      'finance-planner-state',
+      JSON.stringify({
+        scenario: {
+          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
+          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
+          portfolio: { currentAssets: 0, equityAllocation: 75, fixedIncomeAllocation: 25, fixedIncomeDuration: 'one_year' },
+          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+          careerPlan: {
+            enabled: true,
+            entries: [{
+              id: 'career-1',
+              label: 'Test Career',
+              enabled: true,
+              usePreviousCareerStartAge: false,
+              useBirthdayBasedStartAge: false,
+              startYearMonth: '',
+              endYearMonth: '',
+              startAge: 45,
+              endAge: 65,
+              annualRaiseRate: 0,
+              savingsRate: 0,
+              employerMatchRate: 0,
+              bonusRate: 0,
+              bonusSavingsRate: 0,
+              emergencyFundContributionRate: 0,
+              hsaContributionRate: 0,
+              investmentsContributionRate: 0,
+              retirement401kContributionRate: 0,
+              emergencyFundSavingsMonthly: false,
+              hsaSavingsMonthly: false,
+              investmentsSavingsMonthly: false,
+              retirement401kSavingsMonthly: false,
+              emergencyFundStartBalanceMode: 'auto',
+              hsaStartBalanceMode: 'auto',
+              investmentsStartBalanceMode: 'auto',
+              retirement401kStartBalanceMode: 'auto',
+              emergencyFundManualStartBalance: 0,
+              hsaManualStartBalance: 0,
+              investmentsManualStartBalance: 0,
+              retirement401kManualStartBalance: 0,
+              sourceLines: [],
+              paycheckInfo: {
+                grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
+                retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
+              },
+              taxInfo: { untaxedBenefits: 0, leftoverIncome: 12000, taxRate: 25, lastEditedField: 'taxRate' }
+            }]
+          },
+          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
+          withdrawal: { mode: 'specified', firstYearAmount: 0, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, firstYearAccountWithdrawals: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, firstYearAccountUseFourPercent: { emergencyFund: false, hsa: false, investments: false, retirement401k: false }, sourceLines: [], inflationAdjusted: true },
+          returnMode: 'manual',
+          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
+          largePurchases: [],
+          longTermPurchases: [{
+            id: 'banner-lt',
+            label: 'Overspend Expense',
+            enabled: true,
+            showOnGraph: true,
+            startYearMonth: currentYearMonth,
+            endMode: 'duration',
+            durationMonths: 6,
+            endYearMonth: '',
+            monthlyAmount: 3000,
+            fundingSource: 'income'
+          }],
+          loans: [],
+          cashflowItems: [],
+          lifeEvents: [],
+          incomeFallbackAccountId: null,
+          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: { groupingMode: 'account', zoomLevel: 1, rowHeight: 56, density: 'comfortable', snapToDay: true, scrubberDate: '2026-05-08', windowStartDate: '2026-05-08', windowEndDate: '2027-05-08', selectedAccountIds: [], selectedPoolIds: [], collapsedTrackIds: [], trackerVisibleAccountIds: [], planningWeekStartDay: 5 } },
+          netWorth: { accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 }] },
+          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
+        },
+        ui: { activeTab: 'careers', selectedCareerId: 'career-1', careersSubTab: 'purchasesExpenses', expensesSubTab: 'planning' }
+      })
+    );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Warnings' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Income usage warnings')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/1 consolidated issue across 6 periods/)).toBeInTheDocument();
+    expect(screen.getByText(/\(6 months\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Overspend Expense/)).toBeInTheDocument();
+  });
+
+  it('shows the Trajectory sub-tab, renders the overlay chart, and persists the sub-tab selection', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Trajectory' }));
+
+    expect(screen.getByText('Trajectory Comparison')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save Current Trajectory' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /trajectory comparison over time/i })).toBeInTheDocument();
+
+    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+    expect(stored).toContain('"careersSubTab":"trajectory"');
+
+    cleanup();
+    render(<App />);
+    expect(screen.getByText('Trajectory Comparison')).toBeInTheDocument();
+  });
+
+  it('saves a named trajectory snapshot, compares metrics, and restores the selection', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Trajectory' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Current Trajectory' }));
+
+    await waitFor(() => {
+      const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
+      const snapshots = parsed?.scenario?.trajectorySnapshots ?? [];
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0].label).toBe('Trajectory 1');
+      expect(snapshots[0].years.length).toBeGreaterThan(0);
+      expect(parsed?.ui?.compareTrajectoryId).toBe(snapshots[0].id);
+    });
+
+    expect(screen.getByText('Metrics vs Trajectory 1')).toBeInTheDocument();
+    expect(screen.getByText('Ending balance')).toBeInTheDocument();
+    expect(screen.getByText(/Account balances at age/)).toBeInTheDocument();
+
+    cleanup();
+    render(<App />);
+    expect(screen.getByDisplayValue('Trajectory 1')).toBeInTheDocument();
+    expect((screen.getByRole('radio', { name: 'Compare' }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('removes a saved trajectory snapshot', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Trajectory' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Current Trajectory' }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Trajectory 1')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => {
+      const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
+      expect(parsed?.scenario?.trajectorySnapshots ?? []).toHaveLength(0);
+    });
+    expect(screen.queryByDisplayValue('Trajectory 1')).not.toBeInTheDocument();
+  });
+
+  it('anchors the simulation to the last saved balance snapshot', () => {
+    window.localStorage.setItem(
+      'finance-planner-state',
+      JSON.stringify({
+        scenario: {
+          netWorth: {
+            accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+            bankAccounts: [
+              { id: 'investments-account-default', label: 'Investments', poolId: 'investments', priority: 0, accountType: 'taxable', balance: 0 }
+            ],
+            asOfDate: '2026-01-15',
+            history: [
+              {
+                id: 'h-1',
+                date: '2026-01-15',
+                accounts: [{ id: 'investments-account-default', label: 'Investments', balance: 123456 }],
+                totalNetWorth: 123456
+              }
+            ]
+          }
+        },
+        ui: { activeTab: 'careers', selectedCareerId: '', careersSubTab: 'careers', expensesSubTab: 'planning' }
+      })
+    );
+
+    render(<App />);
+
+    expect(screen.getByText(/Simulating from/i)).toBeInTheDocument();
+    expect(screen.getByText(/January 15, 2026/i)).toBeInTheDocument();
+    expect(screen.getAllByText('$123,456').length).toBeGreaterThan(0);
+  });
+
+  it('persists the current-dollars display toggle across reloads', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+    const toggle = screen.getByRole('checkbox', { name: 'Display values in current dollars' });
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+
+    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+    expect(stored).toContain('"showRealDollars":true');
+
+    cleanup();
+    render(<App />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+    expect(screen.getByRole('checkbox', { name: 'Display values in current dollars' })).toBeChecked();
+  });
 });
+

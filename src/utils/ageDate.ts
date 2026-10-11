@@ -42,6 +42,18 @@ export const formatYearMonthFromAge = (
   return `${year}-${month}`;
 };
 
+export const addMonthsToYearMonth = (yearMonth: string, months: number) => {
+  const parsed = parseYearMonth(yearMonth);
+  if (!parsed) {
+    return yearMonth;
+  }
+
+  const serial = parsed.year * 12 + (parsed.month - 1) + months;
+  const year = Math.floor(serial / 12);
+  const month = (serial % 12) + 1;
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
+};
+
 export const ageFromYearMonth = (
   yearMonth: string,
   dateOfBirth: string,

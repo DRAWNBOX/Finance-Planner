@@ -131,6 +131,98 @@ select {
   padding: 0.65rem 0.75rem;
 }
 
+.timeline-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.65rem;
+  margin-bottom: 0.8rem;
+}
+
+.timeline-toolbar label {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 8rem;
+  color: #425166;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.timeline-scroll {
+  min-width: 680px;
+  overflow-x: auto;
+  padding-bottom: 0.4rem;
+}
+
+.timeline-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-left: 10rem;
+  color: #718096;
+  font-size: 0.75rem;
+}
+
+.timeline-track {
+  position: relative;
+  min-height: 5.5rem;
+  margin-top: 0.3rem;
+  border-top: 1px solid #dbe4ef;
+  border-bottom: 1px solid #dbe4ef;
+  background: repeating-linear-gradient(90deg, #fff 0, #fff calc(8.333% - 1px), #edf2f8 calc(8.333% - 1px), #edf2f8 8.333%);
+}
+
+.timeline-chip {
+  position: absolute;
+  display: grid;
+  gap: 0.05rem;
+  min-width: 5rem;
+  padding: 0.35rem 0.5rem;
+  overflow: hidden;
+  border: 2px solid;
+  border-radius: 0.5rem;
+  color: #203040;
+  text-align: left;
+  cursor: pointer;
+}
+
+.timeline-chip.active {
+  box-shadow: 0 0 0 3px rgba(43, 95, 226, 0.18);
+}
+
+.timeline-chip strong,
+.timeline-chip small {
+  font-size: 0.7rem;
+}
+
+.timeline-chip span {
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-chart-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.timeline-chart {
+  display: block;
+  min-width: 620px;
+  width: 100%;
+  height: auto;
+}
+
+.timeline-chart-label {
+  fill: #718096;
+  font-size: 11px;
+}
+
+.timeline-waterfall-table {
+  min-width: 900px;
+}
+
 .control-row {
   display: grid;
   gap: 0.25rem;
@@ -407,12 +499,6 @@ select {
   margin: 0;
 }
 
-.networth-import-actions {
-  align-items: center;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-}
-
 .networth-import-list {
   display: flex;
   flex-direction: column;
@@ -440,16 +526,6 @@ select {
   gap: 0.25rem;
 }
 
-.networth-file-preview {
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 13rem;
-  overflow: auto;
-  background: #f1f5fb;
-  padding: 0.55rem;
-  border-radius: 0.4rem;
-}
-
 .networth-history-header h3 {
   margin: 0 0 0.4rem;
   font-size: 1rem;
@@ -461,6 +537,96 @@ select {
   flex-wrap: wrap;
   gap: 0.4rem 0.8rem;
   margin-bottom: 0.45rem;
+}
+
+.simulation-start-note {
+  margin: 0;
+  padding: 0.4rem 0.75rem 0;
+  font-size: 0.85rem;
+  color: #35507a;
+}
+
+.trajectory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.trajectory-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.trajectory-row-none {
+  grid-template-columns: 1fr;
+}
+
+.trajectory-compare-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.trajectory-name-input {
+  min-width: 0;
+}
+
+.trajectory-age-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.4rem 0;
+}
+
+.trajectory-chart-shell {
+  padding: 0.25rem 0.5rem 0.5rem;
+}
+
+.trajectory-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  padding: 0.35rem 0.75rem 0;
+}
+
+.trajectory-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #2a3b57;
+}
+
+.trajectory-legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.trajectory-line-current,
+.trajectory-line-selected,
+.trajectory-line-history {
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.trajectory-line-selected {
+  stroke-dasharray: 7 5;
+}
+
+.trajectory-line-history {
+  stroke-width: 1.5;
+}
+
+.trajectory-history-point {
+  stroke: #ffffff;
+  stroke-width: 1.5;
 }
 
 .career-enable {
@@ -942,6 +1108,90 @@ td:first-child {
   margin: 0 0 0.35rem;
 }
 
+.income-validation-banner {
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #f1d2b7;
+  border-radius: 10px;
+  background: #fff8f0;
+  color: #8b4d1f;
+}
+
+.income-validation-banner:last-child {
+  margin-bottom: 0;
+}
+
+.income-validation-banner.success {
+  border-color: #c8e7cf;
+  background: #edf9ee;
+  color: #215433;
+}
+
+.income-validation-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.income-validation-header span {
+  color: #a9703f;
+  font-size: 0.85rem;
+}
+
+.income-validation-banner.success .income-validation-header span {
+  color: #4a7a5a;
+}
+
+.income-validation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.income-validation-period {
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e7d4c1;
+}
+
+.income-validation-period.invalid {
+  border-color: #e3a6a6;
+  background: #fff5f5;
+  color: #8f2323;
+}
+
+.income-validation-period-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 0.88rem;
+}
+
+.income-validation-items {
+  list-style: none;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+.income-validation-items li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.income-validation-items li span:first-child {
+  color: #647387;
+}
+
 .subtle,
 .allocation-value {
   color: #647387;
@@ -1363,26 +1613,11 @@ td:first-child {
   overflow: hidden;
 }
 
-.networth-import-doc-expanded {
-  border-color: #b9c8e6;
-}
-
 .expense-import-doc-header {
   display: flex;
   align-items: center;
   gap: 0.45rem;
   flex-wrap: wrap;
-}
-
-.networth-import-doc-header {
-  padding: 0.1rem 0.1rem 0.35rem;
-}
-
-.networth-import-doc-header .text-button {
-  border: 1px solid #c9d6eb;
-  border-radius: 0;
-  background: #f2f6fc;
-  padding: 0.2rem 0.45rem;
 }
 
 .expense-import-preview {

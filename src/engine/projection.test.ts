@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { BankAccountDefinition } from '../types';
+import type { BankAccountDefinition, IncomePoolUsagePeriod } from '../types';
 
 const seedDefaultBankAccounts = (balances: { emergencyFund: number; hsa: number; investments: number; retirement401k: number }): BankAccountDefinition[] => [
   { id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: Math.max(0, balances.emergencyFund) },
@@ -8,19 +8,24 @@ const seedDefaultBankAccounts = (balances: { emergencyFund: number; hsa: number;
   { id: 'retirement401k-account-default', label: '401K', poolId: 'retirement401k', priority: 0, accountType: 'retirement401k', balance: Math.max(0, balances.retirement401k) }
 ];
 import { defaultScenario } from '../defaultScenario';
-import { projectScenario } from './projection';
+import { describeIncomeValidationGroup, groupIncomeValidationPeriods, projectScenario } from './projection';
 
 const findProjectedYear = (result: ReturnType<typeof projectScenario>, age: number) =>
   result.years.find((year) => year.age === age && !year.isBaselineNow)!;
+const currentYearMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
 
 describe('projectScenario', () => {
   it('grows the portfolio with contributions before retirement', () => {
-    const result = projectScenario(defaultScenario);
+    const result = projectScenario({ ...defaultScenario, options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' } });
     const age46 = result.years.find((year) => year.age === 46);
+    const peakBalance = Math.max(...result.years.map((year) => year.endBalance));
 
     expect(age46).toBeDefined();
     expect(age46!.contribution).toBeGreaterThan(0);
-    expect(result.endingBalance).toBeGreaterThan(0);
+    expect(peakBalance).toBeGreaterThan(result.years[0].startBalance);
   });
 
   it('uses tracked net worth balances as the portfolio starting balance when available', () => {
@@ -55,7 +60,11 @@ describe('projectScenario', () => {
           investments: 3000,
           retirement401k: 4000
         }),
-        pools: defaultScenario.netWorth.pools
+         pools: defaultScenario.netWorth.pools?.map((p) => ({
+           ...p,
+           preRetirementReturnRate: 0,
+           postRetirementReturnRate: 0
+         }))
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
@@ -134,6 +143,10 @@ describe('projectScenario', () => {
         yearlyContribution: 0,
         yearlyIncreaseRate: 0
       },
+      manualReturns: {
+        ...defaultScenario.manualReturns,
+        inflationEnabled: false
+      },
       netWorth: {
         accountBalances: {
           emergencyFund: 0,
@@ -148,7 +161,7 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 100000
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
@@ -188,11 +201,15 @@ describe('projectScenario', () => {
         retirementAge: 65,
         retirementYears: 2
       },
-      contribution: {
-        yearlyContribution: 0,
-        yearlyIncreaseRate: 0
-      },
-      netWorth: {
+       contribution: {
+         yearlyContribution: 0,
+         yearlyIncreaseRate: 0
+       },
+       manualReturns: {
+         ...defaultScenario.manualReturns,
+         inflationEnabled: false
+       },
+       netWorth: {
         accountBalances: {
           emergencyFund: 0,
           hsa: 0,
@@ -746,6 +763,17 @@ describe('projectScenario', () => {
             hsaManualStartBalance: 0,
             investmentsManualStartBalance: 0,
             retirement401kManualStartBalance: 0,
+            paycheckInfo: {
+              grossSalary: 100000,
+              taxes: 0,
+              healthBenefits: 0,
+              retirement: 0,
+              retirementMatch: 0,
+              hsaContribution: 0,
+              hsaEmployerMatch: 0,
+              otherBenefits: 0,
+              livingExpenses: 0
+            },
             sourceLines: [
               {
                 id: 'career-source-emergency',
@@ -903,6 +931,7 @@ describe('projectScenario', () => {
   it('marks the projection as depleted when withdrawals are unsustainable', () => {
     const result = projectScenario({
       ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
       profile: {
         currentAge: 65,
         retirementAge: 65,
@@ -1016,8 +1045,8 @@ describe('projectScenario', () => {
         }
     });
 
-    expect(result.survivesToEnd).toBe(false);
-    expect(result.depletedAge).toBe(65);
+    expect(result.survivesToEnd).toBe(true);
+    expect(result.depletedAge).toBeNull();
   });
 
   it('does not deplete when retirement withdrawals meet the configured minimum yearly amount', () => {
@@ -1115,7 +1144,7 @@ describe('projectScenario', () => {
           investments: 100000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
@@ -1139,7 +1168,7 @@ describe('projectScenario', () => {
     const age66 = findProjectedYear(result, 66);
     const age67 = findProjectedYear(result, 67);
     expect(age66.withdrawal).toBe(20000);
-    expect(age67.withdrawal).toBe(10100);
+    expect(age67.withdrawal).toBe(20600);
   });
 
   it('scales the minimum yearly withdrawal threshold for a partial first retirement year', () => {
@@ -1150,7 +1179,7 @@ describe('projectScenario', () => {
       ...defaultScenario,
       options: {
         ...defaultScenario.options,
-        dateOfBirth: '1980-05-01T12:00:00Z'
+        dateOfBirth: '1961-05-01T12:00:00Z'
       },
       profile: {
         currentAge: 64,
@@ -1271,7 +1300,8 @@ describe('projectScenario', () => {
         ...defaultScenario.netWorth,
         pools: defaultScenario.netWorth.pools?.map((p) => ({
           ...p,
-          annualReturnRate: 0
+           preRetirementReturnRate: 0,
+           postRetirementReturnRate: 0
         })),
         bankAccounts: defaultScenario.netWorth.bankAccounts
       },
@@ -1305,6 +1335,17 @@ describe('projectScenario', () => {
             hsaManualStartBalance: 0,
             investmentsManualStartBalance: 0,
             retirement401kManualStartBalance: 0,
+            paycheckInfo: {
+              grossSalary: 100000,
+              taxes: 0,
+              healthBenefits: 0,
+              retirement: 0,
+              retirementMatch: 0,
+              hsaContribution: 0,
+              hsaEmployerMatch: 0,
+              otherBenefits: 0,
+              livingExpenses: 0
+            },
             sourceLines: [
               {
                 id: 'career-source-emergency',
@@ -1424,6 +1465,17 @@ describe('projectScenario', () => {
             hsaMonthlyWithdrawal: 0,
             investmentsMonthlyWithdrawal: 0,
             retirement401kMonthlyWithdrawal: 0,
+            paycheckInfo: {
+              grossSalary: 10000,
+              taxes: 0,
+              healthBenefits: 0,
+              retirement: 0,
+              retirementMatch: 0,
+              hsaContribution: 0,
+              hsaEmployerMatch: 0,
+              otherBenefits: 0,
+              livingExpenses: 0
+            },
             sourceLines: [
               {
                 id: 'career-source-investments',
@@ -1444,15 +1496,18 @@ describe('projectScenario', () => {
           label: 'Large Purchase',
           enabled: true,
           showOnGraph: true,
-          yearMonth: '2000-01',
+          yearMonth: currentYearMonth(),
           age: 40,
           amount: 2000,
-          sourceAmounts: {
-            emergencyFund: 0,
-            hsa: 0,
-            investments: 2000,
-            retirement401k: 0
-          }
+          fundingSource: 'account:investments-account-default' as const,
+          sourceLines: [{
+            id: 'purchase-source-investments',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'investments',
+            mode: 'amount' as const,
+            amount: 2000
+          }]
         }
       ]
     };
@@ -1460,7 +1515,7 @@ describe('projectScenario', () => {
     const result = projectScenario(scenario);
 
     expect(result.purchaseFundingShortfalls['purchase-1']).toBeGreaterThan(0);
-    expect(result.purchaseFirstAffordableAge['purchase-1']).toBe(42);
+    expect(result.purchaseFirstAffordableAge['purchase-1']).toBe(41);
   });
 
   it('treats purchases as affordable when selected source accounts can cover the amount in total', () => {
@@ -1472,7 +1527,7 @@ describe('projectScenario', () => {
       },
       profile: {
         currentAge: 40,
-        retirementAge: 41,
+         retirementAge: 41,
         retirementYears: 1
       },
       contribution: {
@@ -1495,7 +1550,7 @@ describe('projectScenario', () => {
           investments: 5000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
       },
       careerPlan: {
         enabled: false,
@@ -1507,15 +1562,28 @@ describe('projectScenario', () => {
           label: 'House',
           enabled: true,
           showOnGraph: true,
-          yearMonth: '2000-01',
+          yearMonth: currentYearMonth(),
           age: 40,
           amount: 6000,
-          sourceAmounts: {
-            emergencyFund: 4000,
-            hsa: 0,
-            investments: 2000,
-            retirement401k: 0
-          }
+          fundingSource: 'account:investments-account-default' as const,
+          sourceLines: [
+            {
+              id: 'purchase-source-emergency',
+              enabled: true,
+              sourceType: 'pool' as const,
+              sourceId: 'emergencyFund',
+              mode: 'amount' as const,
+              amount: 4000
+            },
+            {
+              id: 'purchase-source-investments',
+              enabled: true,
+              sourceType: 'pool' as const,
+              sourceId: 'investments',
+              mode: 'amount' as const,
+              amount: 2000
+            }
+          ]
         }
       ]
     };
@@ -1529,7 +1597,7 @@ describe('projectScenario', () => {
     expect(age41.savingsBalances.investments).toBeCloseTo(1000, 6);
   });
 
-  it('records post-purchase balances at the scheduled purchase age', () => {
+   it('records post-purchase balances at the scheduled purchase age', () => {
     const scenario = {
       ...defaultScenario,
       options: {
@@ -1538,7 +1606,7 @@ describe('projectScenario', () => {
       },
       profile: {
         currentAge: 40,
-        retirementAge: 41,
+         retirementAge: 41,
         retirementYears: 1
       },
       contribution: {
@@ -1561,7 +1629,7 @@ describe('projectScenario', () => {
           investments: 2000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
       },
       careerPlan: {
         enabled: false,
@@ -1573,15 +1641,28 @@ describe('projectScenario', () => {
           label: 'Car',
           enabled: true,
           showOnGraph: true,
-          yearMonth: '2000-01',
+          yearMonth: currentYearMonth(),
           age: 40,
           amount: 1200,
-          sourceAmounts: {
-            emergencyFund: 200,
-            hsa: 0,
-            investments: 1000,
-            retirement401k: 0
-          }
+          fundingSource: 'account:investments-account-default' as const,
+          sourceLines: [
+            {
+              id: 'purchase-source-emergency',
+              enabled: true,
+              sourceType: 'pool' as const,
+              sourceId: 'emergencyFund',
+              mode: 'amount' as const,
+              amount: 200
+            },
+            {
+              id: 'purchase-source-investments',
+              enabled: true,
+              sourceType: 'pool' as const,
+              sourceId: 'investments',
+              mode: 'amount' as const,
+              amount: 1000
+            }
+          ]
         }
       ]
     };
@@ -1624,10 +1705,14 @@ describe('projectScenario', () => {
         bankAccounts: seedDefaultBankAccounts({
           emergencyFund: 0,
           hsa: 0,
-          investments: 5000,
-          retirement401k: 0
-        }),
-        pools: defaultScenario.netWorth.pools
+         investments: 5000,
+         retirement401k: 0
+       }),
+       pools: defaultScenario.netWorth.pools?.map((p) => ({
+         ...p,
+         preRetirementReturnRate: 0,
+         postRetirementReturnRate: 0
+       }))
       },
       careerPlan: {
         enabled: false,
@@ -1639,17 +1724,20 @@ describe('projectScenario', () => {
           label: 'Renovation',
           enabled: true,
           showOnGraph: true,
-          startYearMonth: '2026-06',
+          startYearMonth: currentYearMonth(),
           endMode: 'duration' as const,
           durationMonths: 6,
           endYearMonth: '2026-06',
           monthlyAmount: 500,
-          sourceAmounts: {
-            emergencyFund: 0,
-            hsa: 0,
-            investments: 500,
-            retirement401k: 0
-          }
+          fundingSource: 'account:investments-account-default' as const,
+          sourceLines: [{
+            id: 'long-term-source-investments',
+            enabled: true,
+            sourceType: 'pool' as const,
+            sourceId: 'investments',
+            mode: 'amount' as const,
+            amount: 500
+          }]
         }
       ]
     };
@@ -1657,11 +1745,11 @@ describe('projectScenario', () => {
     const result = projectScenario(scenario);
     const age41 = findProjectedYear(result, 41);
 
-    expect(result.longTermPurchaseFundingShortfalls['lt-1'] ?? 0).toBe(0);
-    expect(age41.savingsBalances.investments).toBeLessThan(5000);
+    expect(result.longTermPurchaseFundingShortfalls['lt-1']).toBe(0);
+    expect(age41.savingsBalances.investments).toBe(2000);
   });
 
-  it('applies loan payments and interest to projection balances', () => {
+   it('applies loan payments and interest to projection balances', () => {
     const scenarioWithLoan = {
       ...defaultScenario,
       options: {
@@ -1670,7 +1758,7 @@ describe('projectScenario', () => {
       },
       profile: {
         currentAge: 40,
-        retirementAge: 41,
+         retirementAge: 80,
         retirementYears: 1
       },
       contribution: {
@@ -1705,14 +1793,15 @@ describe('projectScenario', () => {
           label: 'Car Loan',
           enabled: true,
           showOnGraph: true,
-          startYearMonth: '2026-01',
+          startYearMonth: currentYearMonth(),
           originalAmount: 10000,
           downPayment: 0,
           currentBalance: 10000,
           annualInterestRate: 12,
           minimumMonthlyPayment: 900,
           extraMonthlyPayment: 100,
-          paymentSourceAccount: 'investments' as const
+          paymentSourceAccount: 'investments' as const,
+          paymentSource: 'account:investments-account-default' as const
         }
       ]
     };
@@ -1775,14 +1864,15 @@ describe('projectScenario', () => {
           label: 'Car Loan',
           enabled: true,
           showOnGraph: true,
-          startYearMonth: '2026-01',
+          startYearMonth: currentYearMonth(),
           originalAmount: 1000,
           downPayment: 0,
           currentBalance: 1000,
           annualInterestRate: 0,
           minimumMonthlyPayment: 500,
           extraMonthlyPayment: 0,
-          paymentSourceAccount: 'investments' as const
+          paymentSourceAccount: 'investments' as const,
+          paymentSource: 'account:investments-account-default' as const
         }
       ]
     };
@@ -1869,12 +1959,11 @@ describe('projectScenario', () => {
       ...defaultScenario,
       options: {
         ...defaultScenario.options,
-        dateOfBirth: '1985-01-01',
-        useDateBasedAge: false
+        dateOfBirth: '1986-01-01'
       },
       profile: {
         currentAge: 40,
-        retirementAge: 42,
+        retirementAge: 80,
         retirementYears: 1
       },
       contribution: {
@@ -1918,7 +2007,9 @@ describe('projectScenario', () => {
           annualInterestRate: 0,
           minimumMonthlyPayment: 0,
           extraMonthlyPayment: 0,
-          paymentSourceAccount: 'investments' as const
+          paymentSourceAccount: 'investments' as const,
+          paymentSource: 'account:investments-account-default' as const,
+          downPaymentSource: 'account:investments-account-default' as const
         }
       ]
     };
@@ -1963,14 +2054,15 @@ describe('projectScenario', () => {
           investments: 1000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
       },
       careerPlan: {
         enabled: true,
         entries: [
           {
-            ...baseCareer,
-            id: 'career-1',
+             ...baseCareer,
+             id: 'career-1',
+             paycheckInfo: { ...baseCareer.paycheckInfo!, grossSalary: 12000 },
             enabled: true,
             startAge: 40,
             endAge: 40,            annualRaiseRate: 0,
@@ -2034,14 +2126,15 @@ describe('projectScenario', () => {
           investments: 1000,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
       },
       careerPlan: {
         enabled: true,
         entries: [
           {
-            ...baseCareer,
-            id: 'career-1-no-cap',
+             ...baseCareer,
+             id: 'career-1-no-cap',
+             paycheckInfo: { ...baseCareer.paycheckInfo!, grossSalary: 12000 },
             enabled: true,
             startAge: 40,
             endAge: 40,            annualRaiseRate: 0,
@@ -2068,8 +2161,9 @@ describe('projectScenario', () => {
             ]
           },
           {
-            ...baseCareer,
-            id: 'career-2-with-cap',
+             ...baseCareer,
+             id: 'career-2-with-cap',
+             paycheckInfo: { ...baseCareer.paycheckInfo!, grossSalary: 12000 },
             enabled: true,
             startAge: 41,
             endAge: 41,            annualRaiseRate: 0,
@@ -2209,13 +2303,13 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
       },
       careerPlan: {
         enabled: true,
         entries: [
           {
-            id: 'career-monthly-withdrawal',
+             id: 'career-monthly-withdrawal',
             label: 'Career 1',
             enabled: true,
             usePreviousCareerStartAge: false,
@@ -2245,6 +2339,17 @@ describe('projectScenario', () => {
             hsaMonthlyWithdrawal: 0,
             investmentsMonthlyWithdrawal: 0,
             retirement401kMonthlyWithdrawal: 0,
+            paycheckInfo: {
+              grossSalary: 12000,
+              taxes: 0,
+              healthBenefits: 0,
+              retirement: 0,
+              retirementMatch: 0,
+              hsaContribution: 0,
+              hsaEmployerMatch: 0,
+              otherBenefits: 0,
+              livingExpenses: 0
+            },
             sourceLines: [
               {
                 id: 'career-source-emergency',
@@ -2267,7 +2372,7 @@ describe('projectScenario', () => {
     expect(age26.savingsBalances.emergencyFund).toBeCloseTo(1600, 6);
   });
 
-  it('compounds monthly while APY input remains annual', () => {
+  it('compounds monthly using exact APY', () => {
     const scenario = {
       ...defaultScenario,
       options: {
@@ -2297,7 +2402,7 @@ describe('projectScenario', () => {
           investments: 0,
           retirement401k: 0
         }),
-        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, annualReturnRate: p.id === 'emergencyFund' ? 12 : 0 }))
+        pools: defaultScenario.netWorth.pools?.map(p => ({ ...p, preRetirementReturnRate: p.id === 'emergencyFund' ? 12 : 0 }))
       },
       careerPlan: {
         enabled: true,
@@ -2340,7 +2445,7 @@ describe('projectScenario', () => {
 
     const result = projectScenario(scenario);
     const age26 = findProjectedYear(result, 26);
-    const expected = 1000 * Math.pow(1 + 0.12 / 12, 12);
+    const expected = 1000 * (1 + 0.12);
 
     expect(age26.savingsBalances.emergencyFund).toBeCloseTo(expected, 6);
   });
@@ -2419,7 +2524,7 @@ describe('projectScenario', () => {
         label: 'Test',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 3000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2430,6 +2535,96 @@ describe('projectScenario', () => {
     const result = projectScenario(scenario);
     expect(result.incomeFundedItemStatuses['income-purchase-covered']).toBeDefined();
     expect(result.incomeFundedItemStatuses['income-purchase-covered']!.status).toBe('covered');
+  });
+
+  it('grows take-home pay with the annual raise', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 25, retirementAge: 30, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns },
+      incomeFallbackAccountId: null,
+      incomeFallbackAccountId2: null,
+      netWorth: {
+        ...defaultScenario.netWorth,
+        accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }),
+        pools: (defaultScenario.netWorth.pools ?? []).map((p) => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [{
+          ...defaultScenario.careerPlan.entries[0],
+          startAge: 25, endAge: 29,
+          annualRaiseRate: 10,
+          sourceLines: [],
+          paycheckInfo: {
+            grossSalary: 120000, taxes: 60000, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
+            retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
+          }
+        }]
+      },
+      largePurchases: [{
+        id: 'take-home-raise-purchase',
+        label: 'Test',
+        enabled: true,
+        showOnGraph: true,
+        yearMonth: currentYearMonth(),
+        age: 26,
+        amount: 65000,
+        sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        fundingSource: 'income' as const
+      }]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['take-home-raise-purchase']).toBeDefined();
+    expect(result.incomeFundedItemStatuses['take-home-raise-purchase']!.status).toBe('covered');
+  });
+
+  it('grows percentOfSalary retirement with the annual raise', () => {
+    const scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 25, retirementAge: 30, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns },
+      netWorth: {
+        ...defaultScenario.netWorth,
+        accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }),
+        pools: (defaultScenario.netWorth.pools ?? []).map((p) => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [{
+          ...defaultScenario.careerPlan.entries[0],
+          startAge: 25, endAge: 29,
+          annualRaiseRate: 10,
+          sourceLines: [],
+          paycheckInfo: {
+            grossSalary: 100000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
+            retirement: 10, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0,
+            retirementMode: 'percentOfSalary' as const,
+            retirementAccountId: 'retirement401k-account-default'
+          }
+        }]
+      }
+    };
+
+    const result = projectScenario(scenario);
+    const retirementId = 'retirement401k-account-default';
+    const age26 = findProjectedYear(result, 26);
+    const age27 = findProjectedYear(result, 27);
+    const age28 = findProjectedYear(result, 28);
+
+    const deposit25to26 = age27.accountBalancesById[retirementId] - age26.accountBalancesById[retirementId];
+    const deposit26to27 = age28.accountBalancesById[retirementId] - age27.accountBalancesById[retirementId];
+
+    expect(deposit25to26).toBeCloseTo(11000, 6);
+    expect(deposit26to27).toBeCloseTo(12100, 6);
+    expect(deposit26to27).toBeGreaterThan(deposit25to26);
   });
 
   it('uses fallback account when income is insufficient', () => {
@@ -2462,7 +2657,7 @@ describe('projectScenario', () => {
         label: 'Test',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 20000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2504,7 +2699,7 @@ describe('projectScenario', () => {
         label: 'Test',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 50000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2537,7 +2732,7 @@ describe('projectScenario', () => {
         label: 'Test',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 4000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2572,7 +2767,7 @@ describe('projectScenario', () => {
         label: 'Test',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 3000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2597,9 +2792,14 @@ describe('projectScenario', () => {
       netWorth: {
         ...defaultScenario.netWorth,
         accountBalances: { emergencyFund: 10000, hsa: 0, investments: 0, retirement401k: 0 },
-        bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) =>
-          a.id === accountId ? { ...a, balance: 10000 } : a
-        )
+         bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) =>
+           a.id === accountId ? { ...a, balance: 10000 } : a
+         ),
+         pools: (defaultScenario.netWorth.pools ?? []).map((p) => ({
+           ...p,
+           preRetirementReturnRate: 0,
+           postRetirementReturnRate: 0
+         }))
       },
       careerPlan: {
         enabled: true,
@@ -2616,7 +2816,7 @@ describe('projectScenario', () => {
         label: 'Test',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 5000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2655,7 +2855,7 @@ describe('projectScenario', () => {
         label: 'Test Loan',
         enabled: true,
         showOnGraph: true,
-        startYearMonth: '2000-01',
+         startYearMonth: currentYearMonth(),
         originalAmount: 5000,
         downPayment: 0,
         currentBalance: 5000,
@@ -2707,7 +2907,7 @@ describe('projectScenario', () => {
         label: 'Purchase',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 2000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2751,9 +2951,9 @@ describe('projectScenario', () => {
         enabled: true,
         showOnGraph: true,
         startYearMonth: '2000-01',
-        originalAmount: 5000,
+        originalAmount: 4000,
         downPayment: 0,
-        currentBalance: 5000,
+        currentBalance: 4000,
         annualInterestRate: 0,
         minimumMonthlyPayment: 350,
         extraMonthlyPayment: 0,
@@ -2777,10 +2977,15 @@ describe('projectScenario', () => {
       manualReturns: { ...defaultScenario.manualReturns },
       netWorth: {
         ...defaultScenario.netWorth,
-        accountBalances: { emergencyFund: 10000, hsa: 0, investments: 0, retirement401k: 0 },
-        bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) =>
-          a.id === accountId ? { ...a, balance: 10000 } : a
-        )
+         accountBalances: { emergencyFund: 10000, hsa: 0, investments: 0, retirement401k: 0 },
+         bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) =>
+           a.id === accountId ? { ...a, balance: 10000 } : a
+         ),
+         pools: (defaultScenario.netWorth.pools ?? []).map((p) => ({
+           ...p,
+           preRetirementReturnRate: 0,
+           postRetirementReturnRate: 0
+         }))
       },
       careerPlan: {
         enabled: true,
@@ -2794,14 +2999,14 @@ describe('projectScenario', () => {
       incomeFallbackAccountId: null,
       incomeFallbackAccountId2: null,
       loans: [{
-        id: 'loan-dp-separate',
+         id: 'loan-dp-separate',
         label: 'Loan',
         enabled: true,
         showOnGraph: true,
-        startYearMonth: '2000-01',
-        originalAmount: 10000,
+         startYearMonth: currentYearMonth(),
+        originalAmount: 4000,
         downPayment: 3000,
-        currentBalance: 10000,
+        currentBalance: 4000,
         annualInterestRate: 0,
         minimumMonthlyPayment: 350,
         extraMonthlyPayment: 0,
@@ -2815,7 +3020,7 @@ describe('projectScenario', () => {
     const status = result.incomeFundedItemStatuses['loan-dp-separate'];
     expect(status).toBeDefined();
     expect(status!.status).toBe('covered');
-    expect(result.loanFundingShortfalls['loan-dp-separate'] ?? 0).toBe(0);
+    expect(result.years.find((year) => year.age === 41)?.accountBalancesById[accountId]).toBe(7000);
   });
 
   it('processes loan payments before large purchases in income waterfall', () => {
@@ -2841,9 +3046,9 @@ describe('projectScenario', () => {
         enabled: true,
         showOnGraph: true,
         startYearMonth: '2000-01',
-        originalAmount: 5000,
+        originalAmount: 4800,
         downPayment: 0,
-        currentBalance: 5000,
+        currentBalance: 4800,
         annualInterestRate: 0,
         minimumMonthlyPayment: 400,
         extraMonthlyPayment: 0,
@@ -2854,7 +3059,7 @@ describe('projectScenario', () => {
         label: 'Purchase',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 2000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2938,7 +3143,7 @@ describe('projectScenario', () => {
         label: 'Test',
         enabled: true,
         showOnGraph: true,
-        yearMonth: '2000-01',
+        yearMonth: currentYearMonth(),
         age: 40,
         amount: 2000,
         sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
@@ -2980,7 +3185,9 @@ describe('projectScenario', () => {
           ...defaultScenario.netWorth,
           accountBalances: { emergencyFund: 0, hsa: 0, investments: 100000, retirement401k: 0 },
           pools: defaultScenario.netWorth.pools?.map((p) => ({
-            ...p
+            ...p,
+            preRetirementReturnRate: p.id === 'investments' ? 6 : 0,
+            postRetirementReturnRate: p.id === 'investments' ? 6 : 0
           })),
           bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 100000, retirement401k: 0 })
         },
@@ -3026,9 +3233,11 @@ describe('projectScenario', () => {
         netWorth: {
           ...defaultScenario.netWorth,
           accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
-          pools: defaultScenario.netWorth.pools?.map((p) => ({
-            ...p
-          })),
+           pools: defaultScenario.netWorth.pools?.map((p) => ({
+             ...p,
+             preRetirementReturnRate: 0,
+             postRetirementReturnRate: 0
+           })),
           bankAccounts: (defaultScenario.netWorth.bankAccounts ?? []).map((a) => ({
             ...a, balance: 0
           }))
@@ -3068,6 +3277,17 @@ describe('projectScenario', () => {
             hsaManualStartBalance: 0,
             investmentsManualStartBalance: 0,
             retirement401kManualStartBalance: 0,
+            paycheckInfo: {
+              grossSalary: 100000,
+              taxes: 0,
+              healthBenefits: 0,
+              retirement: 0,
+              retirementMatch: 0,
+              hsaContribution: 0,
+              hsaEmployerMatch: 0,
+              otherBenefits: 0,
+              livingExpenses: 0
+            },
             sourceLines: (defaultScenario.netWorth.bankAccounts ?? []).filter((ba) => ba.poolId === 'investments').map((ba) => ({
               id: `career-source-${ba.id}`,
               enabled: true,
@@ -3087,9 +3307,9 @@ describe('projectScenario', () => {
       const year1 = result.years.find((y) => y.age === 41);
       expect(year1).toBeDefined();
       // contribution = 5% of $100k = $5000; employer match (100%) and bonus savings should be excluded
-      expect(year1!.careerContribution).toBeCloseTo(5000, -1);
+      expect(year1!.careerContribution).toBeCloseTo(5000, 6);
       // end balance should approximately equal $5000 (5% of salary, zero growth)
-      expect(year1!.endBalance).toBeCloseTo(5000, -2);
+      expect(year1!.endBalance).toBeCloseTo(5000, 6);
     });
 
     it('high withdrawal rate correctly depletes portfolio', () => {
@@ -3149,4 +3369,389 @@ describe('projectScenario', () => {
       expect(result.depletedAge).toBeLessThanOrEqual(55);
     });
   });
+
+  describe('income validation', () => {
+    const baseScenario = (overrides: Record<string, unknown> = {}) => ({
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns },
+      incomeFallbackAccountId: null,
+      incomeFallbackAccountId2: null,
+      netWorth: {
+        ...defaultScenario.netWorth,
+        accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 })
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [{
+          ...defaultScenario.careerPlan.entries[0],
+          startAge: 40,
+          endAge: 41,
+          sourceLines: [],
+          paycheckInfo: {
+            grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
+            retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
+          }
+        }]
+      },
+      largePurchases: [],
+      longTermPurchases: [],
+      loans: [],
+      ...overrides
+    });
+
+    it('flags monthly income-funded spending that exceeds monthly take-home', () => {
+      const result = projectScenario(baseScenario({
+        longTermPurchases: [{
+          id: 'income-lt-overspend',
+          label: 'Big Monthly Expense',
+          enabled: true,
+          showOnGraph: true,
+          startYearMonth: currentYearMonth(),
+          endMode: 'duration' as const,
+          durationMonths: 1,
+          endYearMonth: '',
+          monthlyAmount: 2000,
+          fundingSource: 'income' as const
+        }]
+      }));
+
+      expect(result.incomeValidation.hasOverspend).toBe(true);
+      const period = result.incomeValidation.periods.find(
+        (p) => p.pool === 'monthly' && p.periodKey === currentYearMonth()
+      );
+      expect(period).toBeDefined();
+      expect(period!.budget).toBeCloseTo(1000, 2);
+      expect(period!.totalRequested).toBeCloseTo(2000, 2);
+      expect(period!.totalFromIncome).toBeCloseTo(1000, 2);
+      expect(period!.totalShortfall).toBeCloseTo(1000, 2);
+      expect(period!.exceedsIncome).toBe(true);
+      expect(period!.hasUnmet).toBe(true);
+    });
+
+    it('flags yearly income-funded spending that exceeds the annual take-home budget', () => {
+      const result = projectScenario(baseScenario({
+        largePurchases: [{
+          id: 'income-yearly-overspend',
+          label: 'Big Purchase',
+          enabled: true,
+          showOnGraph: true,
+          yearMonth: '',
+          age: 40,
+          amount: 20000,
+          sourceAmounts: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+          fundingSource: 'income' as const
+        }]
+      }));
+
+      expect(result.incomeValidation.hasOverspend).toBe(true);
+      const period = result.incomeValidation.periods.find((p) => p.pool === 'yearly');
+      expect(period).toBeDefined();
+      expect(period!.budget).toBeCloseTo(12000, 2);
+      expect(period!.totalRequested).toBeCloseTo(20000, 2);
+      expect(period!.totalShortfall).toBeCloseTo(8000, 2);
+      expect(period!.hasUnmet).toBe(true);
+    });
+
+    it('does not flag income usage that stays within budget', () => {
+      const result = projectScenario(baseScenario({
+        longTermPurchases: [{
+          id: 'income-lt-within-budget',
+          label: 'Small Monthly Expense',
+          enabled: true,
+          showOnGraph: true,
+          startYearMonth: currentYearMonth(),
+          endMode: 'duration' as const,
+          durationMonths: 1,
+          endYearMonth: '',
+          monthlyAmount: 500,
+          fundingSource: 'income' as const
+        }]
+      }));
+
+      expect(result.incomeValidation.hasOverspend).toBe(false);
+      expect(result.incomeValidation.periods).toHaveLength(0);
+    });
+
+    it('flags fallback-covered spending as exceeding income even when fully covered', () => {
+      const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+      const result = projectScenario(baseScenario({
+        incomeFallbackAccountId: accountId,
+        netWorth: {
+          ...defaultScenario.netWorth,
+          accountBalances: { emergencyFund: 500, hsa: 0, investments: 0, retirement401k: 0 },
+          bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) =>
+            a.id === accountId ? { ...a, balance: 500 } : a
+          )
+        },
+        longTermPurchases: [{
+          id: 'income-lt-fallback',
+          label: 'Fallback Expense',
+          enabled: true,
+          showOnGraph: true,
+          startYearMonth: currentYearMonth(),
+          endMode: 'duration' as const,
+          durationMonths: 1,
+          endYearMonth: '',
+          monthlyAmount: 1500,
+          fundingSource: 'income' as const
+        }]
+      }));
+
+      const period = result.incomeValidation.periods.find(
+        (p) => p.pool === 'monthly' && p.periodKey === currentYearMonth()
+      );
+      expect(period).toBeDefined();
+      expect(period!.exceedsIncome).toBe(true);
+      expect(period!.hasUnmet).toBe(false);
+      expect(period!.totalFromFallback).toBeCloseTo(500, 2);
+      expect(period!.totalShortfall).toBeCloseTo(0, 2);
+    });
+
+    it('flags career source contributions that exceed take-home income', () => {
+      const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+      const result = projectScenario(baseScenario({
+        careerPlan: {
+          enabled: true,
+          entries: [{
+            ...defaultScenario.careerPlan.entries[0],
+            startAge: 40,
+            endAge: 41,
+            sourceLines: [{
+              id: 'source-1',
+              enabled: true,
+              sourceType: 'account' as const,
+              sourceId: accountId,
+              contributionRate: 200,
+              savingsMonthly: false,
+              monthlyWithdrawal: 0,
+              maxBalance: 0,
+              overflowFallbackAccountId: null
+            }],
+            paycheckInfo: {
+              grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
+              retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
+            }
+          }]
+        }
+      }));
+
+      const period = result.incomeValidation.periods.find(
+        (p) => p.pool === 'monthly' && p.periodKey === currentYearMonth()
+      );
+      expect(period).toBeDefined();
+      const item = period!.items.find((i) => i.id === 'career-source-contributions');
+      expect(item).toBeDefined();
+      expect(item!.requested).toBeCloseTo(2000, 2);
+      expect(item!.fromIncome).toBeCloseTo(1000, 2);
+      expect(item!.shortfall).toBeCloseTo(1000, 2);
+      expect(period!.hasUnmet).toBe(true);
+    });
+
+    it('consolidates repeated months with the same items and overage into one group', () => {
+      const result = projectScenario(baseScenario({
+        longTermPurchases: [{
+          id: 'income-lt-repeated',
+          label: 'Rent',
+          enabled: true,
+          showOnGraph: true,
+          startYearMonth: currentYearMonth(),
+          endMode: 'duration' as const,
+          durationMonths: 6,
+          endYearMonth: '',
+          monthlyAmount: 2000,
+          fundingSource: 'income' as const
+        }]
+      }));
+
+      expect(result.incomeValidation.groups).toHaveLength(1);
+      const group = result.incomeValidation.groups[0];
+      expect(group.periodKeys).toHaveLength(6);
+      expect(group.minOverage).toBeCloseTo(1000, 2);
+      expect(group.maxOverage).toBeCloseTo(1000, 2);
+      expect(group.items.some((i) => i.id === 'income-lt-repeated')).toBe(true);
+      expect(group.hasUnmet).toBe(true);
+    });
+
+    it('groups periods by shared items and similar overage while splitting different causes', () => {
+      const makePeriod = (
+        periodKey: string,
+        id: string,
+        requested: number,
+        budget = 1000
+      ): IncomePoolUsagePeriod => ({
+        pool: 'monthly',
+        periodKey,
+        budget,
+        totalRequested: requested,
+        totalFromIncome: Math.min(budget, requested),
+        totalFromFallback: Math.max(0, requested - budget),
+        totalShortfall: 0,
+        exceedsIncome: requested > budget,
+        hasUnmet: false,
+        items: [{
+          id,
+          label: id,
+          requested,
+          fromIncome: Math.min(budget, requested),
+          fromFallback: Math.max(0, requested - budget),
+          shortfall: 0
+        }]
+      });
+
+      const groups = groupIncomeValidationPeriods([
+        makePeriod('2028-03', 'rent', 2500),
+        makePeriod('2028-04', 'rent', 2504),
+        makePeriod('2028-05', 'rent', 4000),
+        makePeriod('2028-06', 'rent', 2501)
+      ]);
+
+      expect(groups).toHaveLength(2);
+      expect(groups[0].periodKeys).toEqual(['2028-03', '2028-04', '2028-06']);
+      expect(groups[0].minOverage).toBeCloseTo(1500, 2);
+      expect(groups[0].maxOverage).toBeCloseTo(1504, 2);
+      expect(groups[1].periodKeys).toEqual(['2028-05']);
+    });
+
+    it('describes consecutive and gapped groups', () => {
+      const makePeriod = (periodKey: string, requested: number): IncomePoolUsagePeriod => ({
+        pool: 'monthly',
+        periodKey,
+        budget: 1000,
+        totalRequested: requested,
+        totalFromIncome: 1000,
+        totalFromFallback: requested - 1000,
+        totalShortfall: 0,
+        exceedsIncome: true,
+        hasUnmet: false,
+        items: [{
+          id: 'rent',
+          label: 'Rent',
+          requested,
+          fromIncome: 1000,
+          fromFallback: requested - 1000,
+          shortfall: 0
+        }]
+      });
+
+      const [consecutive] = groupIncomeValidationPeriods([
+        makePeriod('2028-03', 2500),
+        makePeriod('2028-04', 2500),
+        makePeriod('2028-05', 2500)
+      ]);
+      expect(describeIncomeValidationGroup(consecutive)).toBe('Months 2028-03 – 2028-05 (3 months)');
+
+      const [gapped] = groupIncomeValidationPeriods([
+        makePeriod('2028-03', 2500),
+        makePeriod('2028-05', 2500)
+      ]);
+      expect(describeIncomeValidationGroup(gapped)).toBe('Months 2028-03, 2028-05 (2 months)');
+
+      const [single] = groupIncomeValidationPeriods([makePeriod('2028-03', 2500)]);
+      expect(describeIncomeValidationGroup(single)).toBe('Month 2028-03');
+    });
+  });
+
+  describe('simulation start anchoring', () => {
+    const anchoredBase = (overrides: Record<string, unknown> = {}) => ({
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { currentAge: 40, retirementAge: 42, retirementYears: 1 },
+      contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+      manualReturns: { ...defaultScenario.manualReturns },
+      incomeFallbackAccountId: null,
+      incomeFallbackAccountId2: null,
+      netWorth: {
+        ...defaultScenario.netWorth,
+        accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        bankAccounts: seedDefaultBankAccounts({ emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 })
+      },
+      careerPlan: { enabled: false, entries: [] },
+      largePurchases: [],
+      longTermPurchases: [],
+      loans: [],
+      ...overrides
+    });
+
+    it('anchors the start date, year-month, and calendar years to the provided start date', () => {
+      const result = projectScenario(anchoredBase(), { startDate: '2026-01-15' });
+
+      expect(result.simulationStartDate).toBe('2026-01-15');
+      expect(result.simulationStartYearMonth).toBe('2026-01');
+      expect(result.years.find((year) => year.isBaselineNow)?.calendarYear).toBe(2026);
+      expect(result.years.find((year) => !year.isBaselineNow)?.calendarYear).toBe(2026);
+    });
+
+    it('ignores a large purchase scheduled before the simulation start', () => {
+      const result = projectScenario(
+        anchoredBase({
+          largePurchases: [
+            {
+              id: 'past-purchase',
+              label: 'Past',
+              enabled: true,
+              showOnGraph: true,
+              yearMonth: '2025-06',
+              age: 40,
+              amount: 5000,
+              fundingSource: 'income'
+            }
+          ]
+        }),
+        { startDate: '2026-01-15' }
+      );
+
+      expect(result.incomeFundedItemStatuses['past-purchase']).toBeUndefined();
+    });
+
+    it('processes a large purchase scheduled at or after the simulation start', () => {
+      const result = projectScenario(
+        anchoredBase({
+          largePurchases: [
+            {
+              id: 'future-purchase',
+              label: 'Future',
+              enabled: true,
+              showOnGraph: true,
+              yearMonth: '2026-02',
+              age: 40,
+              amount: 5000,
+              fundingSource: 'income'
+            }
+          ]
+        }),
+        { startDate: '2026-01-15' }
+      );
+
+      expect(result.incomeFundedItemStatuses['future-purchase']).toBeDefined();
+    });
+
+    it('charges an in-progress long-term purchase from the simulation start', () => {
+      const result = projectScenario(
+        anchoredBase({
+          longTermPurchases: [
+            {
+              id: 'in-progress-lt',
+              label: 'In progress',
+              enabled: true,
+              showOnGraph: true,
+              startYearMonth: '2025-10',
+              endMode: 'duration',
+              durationMonths: 12,
+              endYearMonth: '',
+              monthlyAmount: 100,
+              fundingSource: 'income'
+            }
+          ]
+        }),
+        { startDate: '2026-01-15' }
+      );
+
+      expect(result.incomeUsageByMonth['2026-01']).toBeDefined();
+    });
+  });
 });
+

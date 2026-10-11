@@ -23,7 +23,7 @@ const formatShort = (value: string) => {
 export const NetWorthHistoryChart = memo(({ entries }: NetWorthHistoryChartProps) => {
   useRenderCount('NetWorthHistoryChart');
   if (entries.length === 0) {
-    return <p className="subtle">No net worth history yet. Update balances or apply imports to start tracking.</p>;
+    return <p className="subtle">No net worth history yet. Update balances to start tracking.</p>;
   }
 
   const sortedEntries = [...entries].sort((a, b) => a.date.localeCompare(b.date));
