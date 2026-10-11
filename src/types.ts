@@ -38,6 +38,36 @@ export interface ContributionPlan {
 
 export type BalanceInputMode = string;
 
+export type PayFrequency = 'weekly' | 'biweekly' | 'semimonthly' | 'monthly';
+
+export type PaycheckLineKind = 'earning' | 'tax' | 'pretax' | 'posttax' | 'employer';
+
+export type PaycheckDepositBucket = 'retirement' | 'hsa';
+
+export interface PaycheckLine {
+  id: string;
+  label: string;
+  amount: number;
+  mode: 'amount' | 'percentOfGross';
+  rate?: number;
+  hours?: number;
+  ytd?: number;
+  accountId?: string | null;
+  bucket?: PaycheckDepositBucket | null;
+}
+
+export interface PaycheckCategory {
+  id: string;
+  label: string;
+  kind: PaycheckLineKind;
+  lines: PaycheckLine[];
+}
+
+export interface Paycheck {
+  payFrequency: PayFrequency;
+  categories: PaycheckCategory[];
+}
+
 export interface CareerEntry {
   id: string;
   label: string;
@@ -72,6 +102,7 @@ export interface CareerEntry {
   retirement401kMonthlyWithdrawal?: number;
   sourceLines?: CareerSourceLine[];
   paycheckInfo?: PaycheckInfo;
+  paycheck?: Paycheck;
 }
 
 export interface PaycheckInfo {
@@ -128,6 +159,10 @@ export interface CareerSourceLine {
   monthlyWithdrawal: number;
   maxBalance?: number;
   overflowFallbackAccountId?: string | null;
+  mode?: 'percentOfSalary' | 'fixedAmount';
+  fixedAmount?: number;
+  increaseWithPaycheck?: boolean;
+  increaseWithdrawalWithPaycheck?: boolean;
 }
 
 export interface PurchaseCategory {
@@ -314,6 +349,7 @@ export interface TrajectoryYear {
   startBalance: number;
   endBalance: number;
   salary: number;
+  netIncome: number;
   careerContribution: number;
   contribution: number;
   withdrawal: number;
@@ -534,6 +570,7 @@ export interface ProjectionYear {
   periodMonths: number;
   startBalance: number;
   salary: number;
+  netIncome: number;
   careerContribution: number;
   contribution: number;
   careerLabel: string;
@@ -570,6 +607,7 @@ export interface MonthlySnapshot {
   periodMonths: number;
   startBalance: number;
   salary: number;
+  netIncome: number;
   careerContribution: number;
   contribution: number;
   careerLabel: string;
@@ -664,6 +702,7 @@ export interface ProjectionResult {
   housingFundingShortfalls: Record<string, number>;
    creditCardFundingShortfalls: Record<string, number>;
   creditCardBalancesById: Record<string, number>;
+  careerWithdrawalShortfalls: Record<string, number>;
   monthlySnapshots?: MonthlySnapshot[];
   monthlyWaterfall?: MonthlyWaterfallSnapshot[];
 }

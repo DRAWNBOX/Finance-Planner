@@ -52,12 +52,13 @@ This repository supports AI-assisted development. Use this as a fast, practical 
 - Runtime source of truth for account-led math is `accountBalancesById`.
 - Account growth compounds monthly using exact APY: `monthlyRate = Math.pow(1 + rate, 1/12) - 1`, so `(1 + monthlyRate)^12 === 1 + rate` (a stated 6.5% rate yields exactly 6.5% annually).
 - Depletion detection uses `currentLedgerSum <= 0` (ledger-based), not synthetic `rawEndBalance <= 0`.
-- `PaycheckInfo` on `CareerEntry` drives `monthlyTakeHome`:
-  ```
-  monthlyTakeHome = max(0, (salary - taxes - healthBenefits - otherBenefits - retirement - hsaContribution - livingExpenses) / 12)
-  ```
-  `salary` is the raised salary (`grossSalary * (1 + annualRaiseRate)^(age - startAge)`). All fields are yearly. `retirement` and `hsaContribution` are the employee-paid portions (deducted in full). Employer match is deposited separately and NOT deducted from take-home. `percentOfSalary` retirement/HSA (and the `employerMaxMatchPercent` cap) also use the raised `salary`.
-- Retirement and HSA contributions are deposited per-month via `applyAccountDeposit` to their respective accounts. Employer match deposited separately.
+- Careers store a granular `Paycheck` (`CareerEntry.paycheck`) for the paystub editor: `categories` (user-labeled) of `lines` each with `kind` (`earning` | `tax` | `pretax` | `posttax` | `employer`), per-period `amount` (or `percentOfGross`), optional `accountId`/`bucket` (`retirement`/`hsa`) for deposits, and `ytd`. `src/paycheck.ts` `compilePaycheck` flattens it into the engine's flat `PaycheckInfo` using the pay frequency (`weekly` 52 / `biweekly` 26 / `semimonthly` 24 / `monthly` 12).
+- `resolvePaycheckInfo(career)` (in `src/paycheck.ts`) is the single read point: it prefers an explicit `CareerEntry.paycheckInfo`, else compiles `CareerEntry.paycheck`. `storage.ts` keeps them in sync on load (a saved `paycheck` compiles into `paycheckInfo`; a legacy-only `paycheckInfo` synthesizes a `paycheck` via `paycheckFromPaycheckInfo`), and the paycheck editor recompiles `paycheckInfo` on save.
+- The paycheck's **net pay is the engine's income**. `monthlyTakeHome` (may be renamed net income) is `max(0, (salary − taxes − healthBenefits − otherBenefits − retirement − hsaContribution − livingExpenses) / 12)` where every paycheck amount is scaled by `raiseFactor = (1 + annualRaiseRate)^(age − startAge)` (so net grows with the raise, and amount-mode deductions scale too; `percentOf*` modes already scale). `salary` is the raised gross (`grossSalary × raiseFactor`). `retirement`/`hsaContribution` are the employee-paid portions (deducted in full); employer match is deposited separately and NOT deducted from take-home.
+- This income value drives **everything**: the per-month `monthAvailableIncome` pool (credit cards / monthly large + long-term purchases / housing), the yearly budget `availableIncome = monthlyTakeHome × periodMonths` (loans / age-only purchases), the Timeline waterfall `takeHomeIncome`, `incomeUsageByMonth.availableIncome`, fallback triggers, and `incomeValidation` budgets/warnings. `ProjectionYear.netIncome` (annual net) and `MonthlySnapshot.netIncome` (monthly net) expose it; the results table shows "Net income".
+- **Source-line contributions are a percentage of net income** (not gross): `getCareerContribution`, `applySourceContributions`, and `totalSourceContributions` use `monthlyTakeHome` as the percent base; `fixedAmount` lines are per-pay-period and stay flat unless `increaseWithPaycheck` is set, in which case they scale by `raiseFactor`.
+- **Monthly-withdrawal expenses** (`CareerSourceLine.monthlyWithdrawal`, the "Expenses (Monthly Withdrawals by Account)" grid) are **account-funded**: they withdraw each month from the line's account/pool and do **not** reduce income. They scale by `raiseFactor` only when `increaseWithdrawalWithPaycheck` is set. Unfunded amounts accumulate in `ProjectionResult.careerWithdrawalShortfalls` (keyed by account id), surface as a Warnings-tab entry, and mark the account's row red with a tooltip.
+- **Income fallback accounts** (`scenario.incomeFallbackAccountId` / `incomeFallbackAccountId2`) are consumed by `processIncomeWaterfall` for every income-funded item (credit cards, monthly/yearly purchases, housing, loans). `updateScenario` re-validates them against the current bank accounts and clears any that no longer exist (setting a dismissible `incomeFallbackNotice`), so deleting an account cannot leave a dangling fallback.
 - `PaycheckInfo` fields support mode toggles for percentage-based inputs:
   - `retirementMode`: `'amount'` | `'percentOfSalary'`
   - `retirementMatchMode`: `'amount'` | `'percentOfRetirement'`
@@ -66,9 +67,10 @@ This repository supports AI-assisted development. Use this as a fast, practical 
   - `employerHsaDepositMode`: `'amount'` | `'percentOfSalary'`
 - `employerMaxMatchPercent` caps retirement match at a percentage of the raised salary.
 - `employerHsaDeposit` is a separate flat/percentage employer HSA contribution (not tied to employee match).
+- Retirement and HSA contributions are deposited per-month via `applyAccountDeposit` to their respective accounts; employer match/deposit added separately.
 - Credit card payments process monthly in the income waterfall after career contributions, before purchases.
 - Credit card lump sums (`fixedPlusLump` mode) pay off remaining balance in the last month of the 0% intro period.
-- SourceLine contributions (percentage-based savings) are deducted from `monthAvailableIncome`.
+- SourceLine contributions (`mode: 'percentOfSalary'` default, or `'fixedAmount'` per pay period) are deducted from `monthAvailableIncome`.
 - Income-funded credit card balance reductions use actual `ccResult.covered`, not desired `paymentTarget`.
 - `financeModel.ts` contains only active business logic (no migration helpers). All migration code has been removed — this version breaks backward compatibility with pre-2026-05 saved data.
 - Income-usage validation lives in `ProjectionResult.incomeValidation`. Income-funded spends are recorded per pool inside `processIncomeWaterfall` via `recordIncomePoolUsage` (`monthly` = credit cards / monthly large + long-term purchases / housing; `yearly` = loans / age-only purchases). Each `IncomePoolUsagePeriod` carries `exceedsIncome` (`totalRequested > budget`) and `hasUnmet` (`totalShortfall > 0`). Career source-line contributions are recorded manually as the `career-source-contributions` item. This is the single choke point: any new income-funded withdrawal routed through `processIncomeWaterfall` is validated automatically. Warning-only — it never changes projection math. `incomeValidation.groups` consolidates periods with the same cause via `groupIncomeValidationPeriods` (shared item ids + requested amounts + overage, each rounded to the nearest $10 bucket); warnings and the Warnings tab render one box per group.
@@ -113,7 +115,7 @@ For any persisted field addition or shape change:
 - Loan, purchase, housing, and credit card funding shortfall math.
 - Income-pool validation (`incomeValidation`) — two independent budgets (monthly `monthAvailableIncome` vs yearly `availableIncome`); new income-funded withdrawals must route through `processIncomeWaterfall` with the pool context (`monthly`/`yearly`, period key, label, budget) or they won't be validated.
 - Income waterfall (`processIncomeWaterfall`) — per-month processing order: career contributions, credit cards, housing, loans, large purchases, long-term purchases. Each month gets its own `monthAvailableIncome` pool.
-- `PaycheckInfo` formula for `monthlyTakeHome` — all fields yearly; uses the raised `salary`; retirement/HSA match math: employee pays full `retirement`/`hsaContribution`, employer match added separately to accounts.
+- `PaycheckInfo` formula for `monthlyTakeHome` — net pay is the income base; all paycheck amounts scale with `raiseFactor`; retirement/HSA match math: employee pays full `retirement`/`hsaContribution`, employer match added separately to accounts.
 - `MonthlySnapshot` / per-account `accountActivity` recording integrity.
 - Pool-weighted portfolio return rate via `getManualRates`.
 - `fundingSource` normalization (defaults to `'income'` when missing).
@@ -140,8 +142,8 @@ When changing account math, funding, careers, housing, credit cards, or retireme
 
 - `docs/` is the primary onboarding source, but verify file references against `src/components` before editing.
 - Some docs may reference older component names; treat runtime files as source of truth.
-- `gitchanges.md` at the project root tracks all session changes chronologically.
-- `testplanfix.md` at the project root tracks the test fix plan and status.
+- `CHANGES.md` at the project root is the tracked session changelog — **update it before every commit/push**.
+- `gitchanges.md` at the project root tracks all session changes chronologically (gitignored).
 
 ## Change Checklist
 
@@ -149,3 +151,4 @@ When changing account math, funding, careers, housing, credit cards, or retireme
 2. Engine formula changes are covered by/validated with tests.
 3. UI still renders chart/table paths correctly for Options and Finances flows.
 4. `npm run test -- --run` and `npm run build` pass before handoff.
+5. `CHANGES.md` is updated with the session's changes before any commit/push to GitHub.

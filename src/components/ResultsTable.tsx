@@ -24,7 +24,7 @@ export const ResultsTable = memo(({ years, accountColumns, showMonths, monthlySn
           <th>Age</th>
           <th>Career</th>
           <th>Start</th>
-          <th>Salary</th>
+          <th>Net income</th>
           <th>Career Savings</th>
           {accountColumns.map((account) => (
             <th key={`results-account-header-${account.id}`}>{account.label}</th>
@@ -48,7 +48,7 @@ export const ResultsTable = memo(({ years, accountColumns, showMonths, monthlySn
               <td>{isMonthly ? snap.age : yr.age}</td>
               <td>{isMonthly ? snap.careerLabel : yr.careerLabel}</td>
               <td>{formatCurrency(isMonthly ? snap.startBalance : yr.startBalance)}</td>
-              <td>{formatCurrency(isMonthly ? snap.salary : yr.salary)}</td>
+              <td>{formatCurrency(isMonthly ? snap.netIncome : yr.netIncome)}</td>
               <td>{formatCurrency(isMonthly ? snap.careerContribution : yr.careerContribution)}</td>
               {accountColumns.map((account) => (
                 <td key={`results-account-balance-${i}-${account.id}`} title={cellTooltip?.(account.id, row, i)}>

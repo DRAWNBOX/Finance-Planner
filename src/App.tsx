@@ -331,6 +331,7 @@ const deflateTrajectoryYears = (years: TrajectoryYear[], showRealDollars: boolea
       startBalance: d(year.startBalance),
       endBalance: d(year.endBalance),
       salary: d(year.salary),
+      netIncome: d(year.netIncome),
       careerContribution: d(year.careerContribution),
       contribution: d(year.contribution),
       withdrawal: d(year.withdrawal),
@@ -592,6 +593,10 @@ const normalizeCareerSourceLinesForBankAccounts = (
         savingsMonthly: Boolean(source?.savingsMonthly),
         monthlyWithdrawal: Math.max(0, toNumberOrFallback(source?.monthlyWithdrawal, 0)),
         maxBalance: Math.max(0, toNumberOrFallback(source?.maxBalance, 0)),
+        mode: source?.mode === 'fixedAmount' ? ('fixedAmount' as const) : ('percentOfSalary' as const),
+        fixedAmount: Math.max(0, toNumberOrFallback(source?.fixedAmount, 0)),
+        increaseWithPaycheck: Boolean(source?.increaseWithPaycheck),
+        increaseWithdrawalWithPaycheck: Boolean(source?.increaseWithdrawalWithPaycheck),
         overflowFallbackAccountId:
           typeof source?.overflowFallbackAccountId === 'string' &&
           source.overflowFallbackAccountId !== account.id &&
@@ -601,9 +606,15 @@ const normalizeCareerSourceLinesForBankAccounts = (
       };
     });
 };
+const normalizeFallbackId = (value: unknown, accountIds: Set<string>): string | null => {
+  if (typeof value === 'string' && value.trim().length > 0 && accountIds.has(value.trim())) {
+    return value.trim();
+  }
+
+  return null;
+};
 const isLegacyPoolKey = (value: string) =>
   value === 'emergencyFund' || value === 'hsa' || value === 'investments' || value === 'retirement401k';
-
 const App = () => {
   useRenderCount('App');
   const [appState, setAppState] = useState(() => loadAppState());
@@ -631,6 +642,7 @@ const App = () => {
   const [showAddPurchaseModal, setShowAddPurchaseModal] = useState(false);
   const [editingCreditCardId, setEditingCreditCardId] = useState<string | null>(null);
   const [selectedHousingId, setSelectedHousingId] = useState<string>('');
+  const [incomeFallbackNotice, setIncomeFallbackNotice] = useState<string | null>(null);
   const [timelineSelection, setTimelineSelection] = useState<'career' | 'housing'>('career');
   const [timelineStartYear, setTimelineStartYear] = useState<number | null>(null);
   const [timelineEndYear, setTimelineEndYear] = useState<number | null>(null);
@@ -811,6 +823,7 @@ const App = () => {
         ...year,
         startBalance: d(year.startBalance),
         salary: d(year.salary),
+        netIncome: d(year.netIncome),
         careerContribution: d(year.careerContribution),
         contribution: d(year.contribution),
         withdrawal: d(year.withdrawal),
@@ -844,6 +857,7 @@ const App = () => {
         ...snap,
         startBalance: d(snap.startBalance),
         salary: d(snap.salary),
+        netIncome: d(snap.netIncome),
         careerContribution: d(snap.careerContribution),
         contribution: d(snap.contribution),
         withdrawal: d(snap.withdrawal),
@@ -1356,10 +1370,26 @@ const App = () => {
       };
     });
 
+    const fallbackAccountIds = new Set((normalizedNetWorth.bankAccounts ?? []).map((account) => account.id));
+    const normalizedIncomeFallbackId = normalizeFallbackId(nextScenario.incomeFallbackAccountId, fallbackAccountIds);
+    const normalizedIncomeFallbackId2 = normalizeFallbackId(nextScenario.incomeFallbackAccountId2, fallbackAccountIds);
+    const clearedFallbackLabels: string[] = [];
+    if (nextScenario.incomeFallbackAccountId && !normalizedIncomeFallbackId) {
+      clearedFallbackLabels.push('primary');
+    }
+    if (nextScenario.incomeFallbackAccountId2 && !normalizedIncomeFallbackId2) {
+      clearedFallbackLabels.push('secondary');
+    }
+    if (clearedFallbackLabels.length > 0) {
+      setIncomeFallbackNotice(`The ${clearedFallbackLabels.join(' and ')} income fallback account no longer exists and was cleared.`);
+    }
+
     setAppState((currentState) => ({
       ...currentState,
       scenario: {
         ...nextScenario,
+        incomeFallbackAccountId: normalizedIncomeFallbackId,
+        incomeFallbackAccountId2: normalizedIncomeFallbackId2,
         profile: {
           ...nextScenario.profile,
           currentAge: nextScenario.profile.currentAge,
@@ -1633,6 +1663,15 @@ const App = () => {
     sourceLines: career.sourceLines ? career.sourceLines.map((line) => ({ ...line })) : undefined,
     paycheckInfo: career.paycheckInfo
       ? { ...career.paycheckInfo, period: career.paycheckInfo.period ? { ...career.paycheckInfo.period } : undefined }
+      : undefined,
+    paycheck: career.paycheck
+      ? {
+          ...career.paycheck,
+          categories: career.paycheck.categories.map((category) => ({
+            ...category,
+            lines: category.lines.map((line) => ({ ...line }))
+          }))
+        }
       : undefined
   });
 
@@ -1723,6 +1762,7 @@ const App = () => {
       startBalance: year.startBalance,
       endBalance: year.endBalance,
       salary: year.salary,
+      netIncome: year.netIncome,
       careerContribution: year.careerContribution,
       contribution: year.contribution,
       withdrawal: year.withdrawal,
@@ -3072,6 +3112,9 @@ const App = () => {
         currentAge={currentAge}
         incomeFallbackAccountId={scenario.incomeFallbackAccountId}
         incomeFallbackAccountId2={scenario.incomeFallbackAccountId2}
+        incomeFallbackNotice={incomeFallbackNotice}
+        onDismissIncomeFallbackNotice={() => setIncomeFallbackNotice(null)}
+        withdrawalShortfalls={futureProjection.careerWithdrawalShortfalls}
         onChangeIncomeFallbackAccount1={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId: accountId })}
         onChangeIncomeFallbackAccount2={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId2: accountId })}
       />
@@ -4164,7 +4207,7 @@ const App = () => {
           </>}
         </Panel>
 
-        {timelineSelection === 'career' && selectedCareer && <Panel title={`Edit Career: ${selectedCareer.label}`} className="panel-wide"><CareerPlanEditor value={activeCareerPlan} selectedCareerId={selectedCareerId} onSelectCareer={updateSelectedCareerId} onChangeCareer={updateCareer} onDuplicateCareer={duplicateCareer} onReorderCareers={reorderCareers} onAddCareer={addCareer} onRemoveCareer={removeCareer} previewYear={futureProjection.years.find((year) => !year.isBaselineNow) ?? futureProjection.years[0]} bankAccounts={bankAccounts} pools={poolDefinitions} birthdayBasedCareerStartAge={birthdayBasedCareerStartAge} dateOfBirth={scenario.options.dateOfBirth} currentAge={currentAge} incomeFallbackAccountId={scenario.incomeFallbackAccountId} incomeFallbackAccountId2={scenario.incomeFallbackAccountId2} onChangeIncomeFallbackAccount1={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId: accountId })} onChangeIncomeFallbackAccount2={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId2: accountId })} allowReordering={false} /></Panel>}
+        {timelineSelection === 'career' && selectedCareer && <Panel title={`Edit Career: ${selectedCareer.label}`} className="panel-wide"><CareerPlanEditor value={activeCareerPlan} selectedCareerId={selectedCareerId} onSelectCareer={updateSelectedCareerId} onChangeCareer={updateCareer} onDuplicateCareer={duplicateCareer} onReorderCareers={reorderCareers} onAddCareer={addCareer} onRemoveCareer={removeCareer} previewYear={futureProjection.years.find((year) => !year.isBaselineNow) ?? futureProjection.years[0]} bankAccounts={bankAccounts} pools={poolDefinitions} birthdayBasedCareerStartAge={birthdayBasedCareerStartAge} dateOfBirth={scenario.options.dateOfBirth} currentAge={currentAge} incomeFallbackAccountId={scenario.incomeFallbackAccountId} incomeFallbackAccountId2={scenario.incomeFallbackAccountId2} incomeFallbackNotice={incomeFallbackNotice} onDismissIncomeFallbackNotice={() => setIncomeFallbackNotice(null)} withdrawalShortfalls={futureProjection.careerWithdrawalShortfalls} onChangeIncomeFallbackAccount1={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId: accountId })} onChangeIncomeFallbackAccount2={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId2: accountId })} allowReordering={false} /></Panel>}
         {timelineSelection === 'housing' && selectedHousing && <Panel title={`Edit Housing: ${selectedHousing.label}`} className="panel-wide"><HousingEditor housing={activeHousing} selectedHousingId={selectedHousingId} onSelectHousing={setSelectedHousingId} onChangeHousing={(entry) => updateHousing(entry.id, entry)} onReorderHousing={reorderHousing} onAddHousing={addHousing} onDuplicateHousing={duplicateHousing} onRemoveHousing={removeHousing} accountOptions={accountSelectionOptions} orderedBankAccounts={orderedBankAccounts} careerOptions={activeCareerPlan.entries.map((career) => ({ id: career.id, label: career.label }))} allowReordering={false} /></Panel>}
       </>
     );

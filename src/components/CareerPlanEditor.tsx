@@ -1,9 +1,11 @@
 import { memo, useMemo, useState } from 'react';
 import { BufferedNumberInput } from './BufferedNumberInput';
 import { YearMonthInput } from './YearMonthInput';
-import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, PaycheckInfo, PoolDefinition, ProjectionYear } from '../types';
+import { PaycheckEditorModal } from './PaycheckEditorModal';
+import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, Paycheck, PaycheckInfo, PoolDefinition, ProjectionYear } from '../types';
 import { addMonthsToYearMonth, ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
 import { useRenderCount } from '../utils/perfTools';
+import { PAY_FREQUENCY_LABELS, compilePaycheck, getPaycheckTotals, paycheckFromPaycheckInfo, resolvePaycheckInfo } from '../paycheck';
 
 interface CareerPlanEditorProps {
   value: CareerPlan;
@@ -24,6 +26,9 @@ interface CareerPlanEditorProps {
   incomeFallbackAccountId2: string | null | undefined;
   onChangeIncomeFallbackAccount1: (accountId: string | null) => void;
   onChangeIncomeFallbackAccount2: (accountId: string | null) => void;
+  incomeFallbackNotice?: string | null;
+  onDismissIncomeFallbackNotice?: () => void;
+  withdrawalShortfalls?: Record<string, number>;
   allowReordering?: boolean;
 }
 
@@ -31,6 +36,22 @@ const formatCurrency = (value: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
 
 const roundCurrency = (value: number) => Math.round(value * 100) / 100;
+
+const careerAnnualNetIncome = (career: CareerEntry | undefined): number => {
+  const info = resolvePaycheckInfo(career);
+  if (!info) {
+    return 0;
+  }
+
+  const gross = info.grossSalary ?? 0;
+  const retirement = info.retirementMode === 'percentOfSalary' ? gross * (info.retirement ?? 0) / 100 : (info.retirement ?? 0);
+  const hsa = info.hsaContributionMode === 'percentOfSalary' ? gross * (info.hsaContribution ?? 0) / 100 : (info.hsaContribution ?? 0);
+
+  return Math.max(
+    0,
+    gross - (info.taxes ?? 0) - (info.healthBenefits ?? 0) - (info.otherBenefits ?? 0) - retirement - hsa - (info.livingExpenses ?? 0)
+  );
+};
 
 const resolveCareerLineForAccount = (
   career: CareerEntry,
@@ -60,7 +81,11 @@ const resolveCareerLineForAccount = (
     savingsMonthly: false,
     monthlyWithdrawal: 0,
     maxBalance: 0,
-    overflowFallbackAccountId: null
+    overflowFallbackAccountId: null,
+    mode: 'percentOfSalary',
+    fixedAmount: 0,
+    increaseWithPaycheck: false,
+    increaseWithdrawalWithPaycheck: false
   };
 };
 
@@ -83,11 +108,19 @@ export const CareerPlanEditor = memo(({
   incomeFallbackAccountId2,
   onChangeIncomeFallbackAccount1,
   onChangeIncomeFallbackAccount2,
+  incomeFallbackNotice,
+  onDismissIncomeFallbackNotice,
+  withdrawalShortfalls,
   allowReordering = true
 }: CareerPlanEditorProps) => {
   useRenderCount('CareerPlanEditor');
   const selectedCareer = value.entries.find((career) => career.id === selectedCareerId) ?? value.entries[0];
   const [dragCareerId, setDragCareerId] = useState<string | null>(null);
+  const [showPaycheckModal, setShowPaycheckModal] = useState(false);
+  const selectedPaycheck = selectedCareer
+    ? selectedCareer.paycheck ?? paycheckFromPaycheckInfo(selectedCareer.paycheckInfo)
+    : undefined;
+  const selectedPaycheckTotals = selectedPaycheck ? getPaycheckTotals(selectedPaycheck) : undefined;
   const selectedCareerIndex = selectedCareer ? value.entries.findIndex((career) => career.id === selectedCareer.id) : -1;
   const previousCareer = selectedCareerIndex > 0 ? value.entries[selectedCareerIndex - 1] : undefined;
   const previousCareerEndYearMonth = previousCareer
@@ -120,6 +153,15 @@ export const CareerPlanEditor = memo(({
     }
   };
 
+  const handleSavePaycheck = (nextPaycheck: Paycheck) => {
+    if (!selectedCareer) {
+      return;
+    }
+
+    onChangeCareer({ ...selectedCareer, paycheck: nextPaycheck, paycheckInfo: compilePaycheck(nextPaycheck) });
+    setShowPaycheckModal(false);
+  };
+
   const handleCopyFromPrevious = () => {
     if (!previousCareer || !selectedCareer) return;
     if (!window.confirm(`Copy pay settings from "${previousCareer.label}"? This will overwrite current pay settings.`)) return;
@@ -146,13 +188,15 @@ export const CareerPlanEditor = memo(({
       livingExpenses: prev.livingExpenses,
       period: prev.period
     };
+    const nextPaycheckInfo = { ...(selectedCareer.paycheckInfo ?? {} as PaycheckInfo), ...partialPaycheck } as PaycheckInfo;
     onChangeCareer({
       ...selectedCareer,
       annualRaiseRate: previousCareer.annualRaiseRate,
-      paycheckInfo: { ...(selectedCareer.paycheckInfo ?? {} as PaycheckInfo), ...partialPaycheck } as PaycheckInfo
+      paycheckInfo: nextPaycheckInfo,
+      paycheck: paycheckFromPaycheckInfo(nextPaycheckInfo)
     });
   };
-  const previewSalary = selectedCareer.paycheckInfo?.grossSalary ?? 0;
+  const previewNetIncome = previewYear?.netIncome ?? careerAnnualNetIncome(selectedCareer);
   const activeStartAge = selectedStartAge ?? selectedCareer.startAge;
   const periodYears = Math.max(0, selectedCareer.endAge - activeStartAge + 1);
   const periodMonths = periodYears * 12;
@@ -169,7 +213,7 @@ export const CareerPlanEditor = memo(({
   const endYearMonthValue =
     selectedCareer.endYearMonth || formatYearMonthFromAge(selectedCareer.endAge, dateOfBirth, currentAge);
 
-  const annualSavingsFromPercentage = (percentage: number, salary = previewSalary) => Math.round(salary * (percentage / 100));
+  const annualSavingsFromPercentage = (percentage: number, income = previewNetIncome) => Math.round(income * (percentage / 100));
 
   const getLineForAccount = (career: CareerEntry, account: BankAccountDefinition) =>
     resolveCareerLineForAccount(career, account);
@@ -177,7 +221,7 @@ export const CareerPlanEditor = memo(({
   const updateLineForAccount = (
     account: BankAccountDefinition,
     updates: Partial<
-      Pick<CareerSourceLine, 'contributionRate' | 'savingsMonthly' | 'monthlyWithdrawal' | 'enabled' | 'maxBalance' | 'overflowFallbackAccountId'>
+      Pick<CareerSourceLine, 'contributionRate' | 'savingsMonthly' | 'monthlyWithdrawal' | 'enabled' | 'maxBalance' | 'overflowFallbackAccountId' | 'mode' | 'fixedAmount' | 'increaseWithPaycheck' | 'increaseWithdrawalWithPaycheck'>
     >
   ) => {
     const existingLine = getLineForAccount(selectedCareer, account);
@@ -188,7 +232,11 @@ export const CareerPlanEditor = memo(({
       enabled: updates.enabled ?? true,
       sourceType: 'account',
       sourceId: account.id,
+      mode: updates.mode ?? existingLine.mode ?? 'percentOfSalary',
       contributionRate: Math.max(0, updates.contributionRate ?? existingLine.contributionRate),
+      fixedAmount: Math.max(0, updates.fixedAmount ?? existingLine.fixedAmount ?? 0),
+      increaseWithPaycheck: updates.increaseWithPaycheck ?? existingLine.increaseWithPaycheck ?? false,
+      increaseWithdrawalWithPaycheck: updates.increaseWithdrawalWithPaycheck ?? existingLine.increaseWithdrawalWithPaycheck ?? false,
       monthlyWithdrawal: Math.max(0, updates.monthlyWithdrawal ?? existingLine.monthlyWithdrawal),
       maxBalance: Math.max(0, updates.maxBalance ?? existingLine.maxBalance ?? 0),
       overflowFallbackAccountId:
@@ -211,6 +259,25 @@ export const CareerPlanEditor = memo(({
   };
 
   const getCareerPercentage = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).contributionRate;
+
+  const getSourceLineMode = (account: BankAccountDefinition): 'percentOfSalary' | 'fixedAmount' =>
+    getLineForAccount(selectedCareer, account).mode ?? 'percentOfSalary';
+
+  const getSourceLineFixedAmount = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).fixedAmount ?? 0;
+
+  const getSourceLineIncreasesWithPaycheck = (account: BankAccountDefinition) =>
+    Boolean(getLineForAccount(selectedCareer, account).increaseWithPaycheck);
+
+  const getWithdrawalIncreasesWithPaycheck = (account: BankAccountDefinition) =>
+    Boolean(getLineForAccount(selectedCareer, account).increaseWithdrawalWithPaycheck);
+
+  const getWithdrawalShortfall = (account: BankAccountDefinition) => {
+    if (!withdrawalShortfalls) {
+      return 0;
+    }
+    const line = getLineForAccount(selectedCareer, account);
+    return withdrawalShortfalls[line.sourceId ?? account.id] ?? 0;
+  };
 
   const isSavingsMonthly = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).savingsMonthly;
 
@@ -235,7 +302,7 @@ export const CareerPlanEditor = memo(({
     for (let index = 0; index <= targetIndex; index += 1) {
       const career = value.entries[index];
       const months = Math.max(0, career.endAge - career.startAge + 1) * 12;
-      const salary = career.paycheckInfo?.grossSalary ?? 0;
+      const salary = careerAnnualNetIncome(career);
       const nextBalances: Record<string, number> = { ...balances };
 
       orderedBankAccounts.forEach((account) => {
@@ -476,139 +543,46 @@ export const CareerPlanEditor = memo(({
             </label>
           </div>
 
-          <div className="career-grid">
-            <label className="full-span">
-              <span>Income &amp; Deductions</span>
-            </label>
+          <div className="paycheck-summary">
+            <div className="paycheck-summary-header">
+              <strong>Paycheck</strong>
+              <button type="button" className="secondary-button" onClick={() => setShowPaycheckModal(true)}>
+                Configure Paycheck
+              </button>
+            </div>
+            <div className="paycheck-summary-row">
+              <span>Pay frequency</span>
+              <span>{selectedPaycheckTotals ? `${PAY_FREQUENCY_LABELS[selectedPaycheck!.payFrequency]} (${selectedPaycheckTotals.periodsPerYear}/yr)` : '-'}</span>
+            </div>
+            <div className="paycheck-summary-row">
+              <span>Gross / period</span>
+              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.grossPerPeriod) : '-'}</span>
+            </div>
+            <div className="paycheck-summary-row">
+              <span>Annual gross</span>
+              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.grossAnnual) : '-'}</span>
+            </div>
+            <div className="paycheck-summary-row">
+              <span>Taxes</span>
+              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.taxAnnual) : '-'}</span>
+            </div>
+            <div className="paycheck-summary-row">
+              <span>Deductions (pre + post tax)</span>
+              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.pretaxAnnual + selectedPaycheckTotals.posttaxAnnual) : '-'}</span>
+            </div>
+            <div className="paycheck-summary-row">
+              <span>Employer contributions</span>
+              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.employerAnnual) : '-'}</span>
+            </div>
+            <div className="paycheck-summary-row net">
+              <span>Net pay / period</span>
+              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.netPerPeriod) : '-'}</span>
+            </div>
             {previousCareer && (
-              <label className="full-span">
-                <button type="button" className="secondary-button" onClick={handleCopyFromPrevious}>
-                  Copy Pay from Previous
-                </button>
-              </label>
+              <button type="button" className="secondary-button" onClick={handleCopyFromPrevious}>
+                Copy Pay from Previous
+              </button>
             )}
-            {(() => {
-              const pi = selectedCareer.paycheckInfo ?? { grossSalary: 0, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 };
-              const periodDefaults: Record<string, 'monthly' | 'yearly'> = { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'yearly' };
-              const getPeriod = (field: string) => pi.period?.[field] ?? periodDefaults[field] ?? 'yearly';
-              const isMonthly = (field: string) => getPeriod(field) === 'monthly';
-              const displayVal = (field: string, val: number) => isMonthly(field) ? val / 12 : val;
-              const commitVal = (field: string, input: number) => isMonthly(field) ? input * 12 : input;
-              const annualEmployeeSavings = Math.round(pi.grossSalary * (calculatedTotalSavingsRate / 100));
-              const monthlyGross = pi.grossSalary / 12;
-              const monthlyTaxes = pi.taxes / 12;
-              const monthlyHealth = pi.healthBenefits / 12;
-              const monthlyOther = pi.otherBenefits / 12;
-              const effRetirement = pi.retirementMode === 'percentOfSalary' ? pi.grossSalary * (pi.retirement ?? 0) / 100 : (pi.retirement ?? 0);
-              const effRetirementMatch = pi.retirementMatchMode === 'percentOfRetirement' ? effRetirement * (pi.retirementMatch ?? 0) / 100 : (pi.retirementMatch ?? 0);
-              const effHsa = pi.hsaContributionMode === 'percentOfSalary' ? pi.grossSalary * (pi.hsaContribution ?? 0) / 100 : (pi.hsaContribution ?? 0);
-              const effHsaMatch = pi.hsaEmployerMatchMode === 'percentOfHsaContribution' ? effHsa * (pi.hsaEmployerMatch ?? 0) / 100 : (pi.hsaEmployerMatch ?? 0);
-              const takeHome = Math.max(0, monthlyGross - monthlyTaxes - monthlyHealth - monthlyOther - (pi.livingExpenses ?? 0) / 12 - effRetirement / 12 - effHsa / 12);
-
-              const updatePaycheck = (partial: Partial<typeof pi>) => {
-                onChangeCareer({
-                  ...selectedCareer,
-                  paycheckInfo: { ...pi, ...partial }
-                });
-              };
-
-              const renderField = (field: string, label: string, min: number, max: number, step: number, tooltip?: string) => {
-                const val = (pi as unknown as Record<string, number>)[field] ?? 0;
-                const period = getPeriod(field);
-                return (
-                  <label>
-                    <span title={tooltip}>{label} ({period === 'monthly' ? 'Monthly' : 'Yearly'})</span>
-                    <div className="tax-rate-row">
-                      <BufferedNumberInput value={displayVal(field, val)} min={min} max={max} step={step} commitOnChange
-                        onCommit={(next) => updatePaycheck({ [field]: commitVal(field, next) } as Partial<typeof pi>)} />
-                      <button type="button" className={`lock-btn${period === 'monthly' ? ' locked' : ''}`}
-                        onClick={() => updatePaycheck({ period: { ...pi.period, [field]: period === 'monthly' ? 'yearly' : 'monthly' } } as Partial<typeof pi>)}
-                        title={`Display as ${period === 'monthly' ? 'Yearly' : 'Monthly'}`}
-                      >
-                        {period === 'monthly' ? 'M' : 'Y'}
-                      </button>
-                    </div>
-                  </label>
-                );
-              };
-
-              const renderModeField = (field: string, modeField: string, label: string, min: number, max: number, step: number, tooltip?: string, modeTooltip?: string) => {
-                const val = (pi as unknown as Record<string, number>)[field] ?? 0;
-                const mode = ((pi as unknown as Record<string, string>)[modeField]) || 'amount';
-                const period = getPeriod(field);
-                const isPercent = mode !== 'amount';
-                return (
-                  <label>
-                    <span title={tooltip}>{label} ({isPercent ? '%' : period === 'monthly' ? 'Monthly' : 'Yearly'})</span>
-                    <div className="tax-rate-row">
-                      <BufferedNumberInput
-                        value={isPercent ? val : displayVal(field, val)}
-                        min={min} max={isPercent ? 100 : max} step={isPercent ? 0.1 : step} commitOnChange
-                        onCommit={(next) => updatePaycheck({ [field]: isPercent ? next : commitVal(field, next) } as Partial<typeof pi>)}
-                      />
-                      <button type="button" className={`lock-btn${isPercent ? ' locked' : ''}`}
-                        onClick={() => updatePaycheck({ [modeField]: isPercent ? 'amount' : (modeField.startsWith('retirement') && modeField.includes('Match') ? 'percentOfRetirement' : modeField.startsWith('hsa') && modeField.includes('Match') ? 'percentOfHsaContribution' : 'percentOfSalary') } as unknown as Partial<typeof pi>)}
-                        title={modeTooltip ?? (isPercent ? 'Switch to dollar amount' : 'Switch to percentage')}
-                      >
-                        {isPercent ? '%' : '$'}
-                      </button>
-                      {!isPercent && (
-                        <button type="button" className={`lock-btn${period === 'monthly' ? ' locked' : ''}`}
-                          onClick={() => updatePaycheck({ period: { ...pi.period, [field]: period === 'monthly' ? 'yearly' : 'monthly' } } as Partial<typeof pi>)}
-                          title={`Display as ${period === 'monthly' ? 'Yearly' : 'Monthly'}`}
-                        >
-                          {period === 'monthly' ? 'M' : 'Y'}
-                        </button>
-                      )}
-                    </div>
-                  </label>
-                );
-              };
-
-              return (
-                <>
-            {renderField('grossSalary', 'Gross Salary', 0, 10000000, 1000)}
-            {renderField('healthBenefits', 'Health Benefits', 0, 10000000, 100)}
-            {renderField('taxes', 'Taxes', 0, 10000000, 100)}
-            {renderField('otherBenefits', 'Other Benefits', 0, 10000000, 100)}
-            {renderModeField('retirement', 'retirementMode', 'Retirement', 0, 10000000, 100, 'Monthly retirement deposit from income. Match added separately.')}
-            {renderModeField('retirementMatch', 'retirementMatchMode', 'Retirement Match', 0, 10000000, 100, 'Employer contribution to retirement. Added on top of employee contribution.')}
-            {renderField('employerMaxMatchPercent', 'Employer Max Match %', 0, 100, 0.5, 'Maximum % of gross salary your employer will match. Caps the Retirement Match amount.')}
-            <label>
-              <span>Retirement Account</span>
-              <select
-                value={pi.retirementAccountId ?? ''}
-                onChange={(e) => updatePaycheck({ retirementAccountId: e.target.value || undefined })}
-              >
-                <option value="">-</option>
-                {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-              </select>
-            </label>
-            {renderModeField('hsaContribution', 'hsaContributionMode', 'HSA', 0, 10000000, 100, 'Monthly HSA deposit from income. Match added separately.')}
-            {renderModeField('hsaEmployerMatch', 'hsaEmployerMatchMode', 'HSA Match', 0, 10000000, 100, 'Employer contribution to HSA. Added on top of employee contribution.')}
-            {renderModeField('employerHsaDeposit', 'employerHsaDepositMode', 'Employer HSA Deposit', 0, 10000000, 100, 'Flat yearly employer contribution to HSA. Not tied to employee contribution or match.')}
-            <label>
-              <span>HSA Account</span>
-              <select
-                value={pi.hsaAccountId ?? ''}
-                onChange={(e) => updatePaycheck({ hsaAccountId: e.target.value || undefined })}
-              >
-                <option value="">-</option>
-                {orderedBankAccounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-              </select>
-            </label>
-            {renderField('livingExpenses', 'Living Expenses', 0, 2000000, 100)}
-            <label>
-              <span>Take Home Pay (monthly)</span>
-              <BufferedNumberInput value={takeHome} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
-            </label>
-            <label>
-              <span>Monthly Savings</span>
-              <BufferedNumberInput value={annualEmployeeSavings / 12} min={0} max={2000000} step={10} disabled onCommit={() => {}} />
-            </label>
-                </>
-              );
-            })()}
           </div>
 
           <div className="career-savings-grid">
@@ -639,13 +613,49 @@ export const CareerPlanEditor = memo(({
                 </div>
                 <div className="career-savings-cell career-savings-label">{account.label}</div>
                 <div className="career-savings-cell">
-                  <BufferedNumberInput
-                    value={Math.round(getCareerPercentage(account) * 100) / 100}
-                    min={0}
-                    max={100}
-                    step={0.1}
-                    onCommit={(next) => updateLineForAccount(account, { contributionRate: next })}
-                  />
+                  <div className="tax-rate-row">
+                    {getSourceLineMode(account) === 'fixedAmount' ? (
+                      <BufferedNumberInput
+                        value={getSourceLineFixedAmount(account)}
+                        min={0}
+                        max={2000000}
+                        step={25}
+                        onCommit={(next) => updateLineForAccount(account, { fixedAmount: next })}
+                      />
+                    ) : (
+                      <BufferedNumberInput
+                        value={Math.round(getCareerPercentage(account) * 100) / 100}
+                        min={0}
+                        max={100}
+                        step={0.1}
+                        onCommit={(next) => updateLineForAccount(account, { contributionRate: next })}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      className={`lock-btn${getSourceLineMode(account) === 'fixedAmount' ? ' locked' : ''}`}
+                      title={getSourceLineMode(account) === 'fixedAmount' ? 'Fixed amount per pay period' : 'Percent of salary'}
+                      onClick={() =>
+                        updateLineForAccount(account, {
+                          mode: getSourceLineMode(account) === 'fixedAmount' ? 'percentOfSalary' : 'fixedAmount'
+                        })
+                      }
+                    >
+                      {getSourceLineMode(account) === 'fixedAmount' ? '$' : '%'}
+                    </button>
+                    {getSourceLineMode(account) === 'fixedAmount' && (
+                      <button
+                        type="button"
+                        className={`lock-btn${getSourceLineIncreasesWithPaycheck(account) ? ' locked' : ''}`}
+                        title={getSourceLineIncreasesWithPaycheck(account) ? 'Increases with the annual paycheck raise' : 'Fixed amount (does not increase with the raise)'}
+                        aria-label={`Increase with paycheck ${account.label}`}
+                        aria-pressed={getSourceLineIncreasesWithPaycheck(account)}
+                        onClick={() => updateLineForAccount(account, { increaseWithPaycheck: !getSourceLineIncreasesWithPaycheck(account) })}
+                      >
+                        ↑
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="career-savings-cell">
                   <BufferedNumberInput
@@ -655,7 +665,7 @@ export const CareerPlanEditor = memo(({
                     step={100}
                     onCommit={(next) => {
                       const annualSavings = annualSavingsFromInputAmount(account, next);
-                      const derivedPercentage = previewSalary > 0 ? roundCurrency((annualSavings / previewSalary) * 100) : 0;
+                      const derivedPercentage = previewNetIncome > 0 ? roundCurrency((annualSavings / previewNetIncome) * 100) : 0;
                       updateLineForAccount(account, { contributionRate: derivedPercentage });
                     }}
                   />
@@ -702,15 +712,35 @@ export const CareerPlanEditor = memo(({
               <span>Expenses (Monthly Withdrawals by Account)</span>
             </label>
             {orderedBankAccounts.map((account) => (
-              <label key={`expense-${account.id}`}>
+              <label
+                key={`expense-${account.id}`}
+                className={getWithdrawalShortfall(account) > 0.01 ? 'invalid' : undefined}
+                title={
+                  getWithdrawalShortfall(account) > 0.01
+                    ? `This monthly withdrawal exceeds the account balance; ${formatCurrency(getWithdrawalShortfall(account))} was unfunded.`
+                    : undefined
+                }
+              >
                 <span>{account.label} Monthly Withdrawal</span>
-                <BufferedNumberInput
-                  value={getMonthlyWithdrawal(account)}
-                  min={0}
-                  max={1000000}
-                  step={50}
-                  onCommit={(next) => updateLineForAccount(account, { monthlyWithdrawal: next })}
-                />
+                <div className="tax-rate-row">
+                  <BufferedNumberInput
+                    value={getMonthlyWithdrawal(account)}
+                    min={0}
+                    max={1000000}
+                    step={50}
+                    onCommit={(next) => updateLineForAccount(account, { monthlyWithdrawal: next })}
+                  />
+                  <button
+                    type="button"
+                    className={`lock-btn${getWithdrawalIncreasesWithPaycheck(account) ? ' locked' : ''}`}
+                    title={getWithdrawalIncreasesWithPaycheck(account) ? 'Increases with the annual paycheck raise' : 'Fixed amount (does not increase with the raise)'}
+                    aria-label={`Increase withdrawal with paycheck ${account.label}`}
+                    aria-pressed={getWithdrawalIncreasesWithPaycheck(account)}
+                    onClick={() => updateLineForAccount(account, { increaseWithdrawalWithPaycheck: !getWithdrawalIncreasesWithPaycheck(account) })}
+                  >
+                    ↑
+                  </button>
+                </div>
             </label>
             ))}
           </div>
@@ -753,15 +783,24 @@ export const CareerPlanEditor = memo(({
             Used when income-funded purchases or loan payments exceed your available monthly income.
           </p>
 
+          {incomeFallbackNotice && (
+            <p className="fallback-notice" role="status">
+              {incomeFallbackNotice}{' '}
+              <button type="button" className="text-button" onClick={onDismissIncomeFallbackNotice}>
+                Dismiss
+              </button>
+            </p>
+          )}
+
           <div className="career-summary">
             <p>
               Selected timeline: <strong>{selectedStartAge ?? selectedCareer.startAge}</strong> to <strong>{selectedCareer.endAge}</strong>
             </p>
             <p>
-              Starting salary: <strong>{formatCurrency(selectedCareer.paycheckInfo?.grossSalary ?? 0)}</strong>
+              Starting net income: <strong>{formatCurrency(careerAnnualNetIncome(selectedCareer))}</strong>
             </p>
             <p>
-              Preview salary: <strong>{previewYear ? formatCurrency(previewYear.salary) : '$0'}</strong>
+              Preview net income: <strong>{previewYear ? formatCurrency(previewYear.netIncome) : '$0'}</strong>
             </p>
             <p>
               Preview savings from career income: <strong>{previewYear ? formatCurrency(previewYear.careerContribution) : '$0'}</strong>
@@ -778,6 +817,15 @@ export const CareerPlanEditor = memo(({
           </div>
         </>
       ) : null}
+
+      {showPaycheckModal && selectedCareer && selectedPaycheck && (
+        <PaycheckEditorModal
+          paycheck={selectedPaycheck}
+          bankAccounts={bankAccounts}
+          onClose={() => setShowPaycheckModal(false)}
+          onSave={handleSavePaycheck}
+        />
+      )}
     </div>
   );
 });

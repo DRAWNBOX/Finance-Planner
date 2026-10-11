@@ -1,3 +1,41 @@
+# Session Changes — October 11, 2026
+
+## 1. Career Duplicate-ID Fix
+- `createDefaultCareerEntry(index, currentAge, retirementAge, id?)` now accepts an explicit id (defaultScenario.ts)
+- `addCareer` assigns a unique `makeCareerId()` so re-adding after a removal can no longer reuse an existing id (App.tsx)
+- `ensureUniqueCareerIds` deterministic de-duplication applied in `normalizeCareerEntries` (App.tsx) and storage load (storage.ts)
+
+## 2. Paystub Paycheck Model + Modal Editor
+- New `Paycheck` / `PaycheckCategory` / `PaycheckLine` on `CareerEntry.paycheck`: categories of lines by `kind` (earning/tax/pretax/posttax/employer), per-period amount or `percentOfGross`, optional deposit `accountId`/`bucket`, and YTD (types.ts)
+- `src/paycheck.ts`: `compilePaycheck` (frequency 52/26/24/12), `getPaycheckTotals`, `resolvePaycheckInfo`, `createDefaultPaycheck`, `paycheckFromPaycheckInfo`
+- `PaycheckEditorModal.tsx`: pay frequency, earnings (rate/hours/period/YTD), statutory taxes, other deductions, employer benefits; add/remove line items; live totals
+- `CareerPlanEditor` shows a paycheck summary card + "Configure Paycheck" button (replaces the old Income & Deductions grid)
+- Storage auto-migrates: a saved `paycheck` compiles into `paycheckInfo`; a legacy-only `paycheckInfo` synthesizes a `paycheck`
+
+## 3. Paycheck Net Pay Drives Engine Income
+- `monthlyTakeHome` is now the paycheck's net pay, with every paycheck amount scaled by `raiseFactor = (1 + annualRaiseRate)^(age − startAge)` (projection.ts)
+- It drives the monthly income pool, the yearly budget, Timeline take-home, fallback thresholds, and income validation
+- Source-line contributions are a percentage of **net income** (not gross)
+- `netIncome` added to `ProjectionYear` / `MonthlySnapshot` / `TrajectoryYear`; results table "Salary" column replaced with "Net income"; career savings grid + summary compute against net income
+
+## 4. Fixed-Deposit "Increase with Paycheck" Toggle
+- `CareerSourceLine.increaseWithPaycheck` scales fixed `fixedAmount` deposits by the raise (projection.ts)
+- Toggle added to the career savings grid; App + storage normalizers now preserve `mode` / `fixedAmount` / `increaseWithPaycheck` (previously stripped by the App normalizer)
+
+## 5. Monthly-Withdrawal Shortfalls + Growth
+- `ProjectionResult.careerWithdrawalShortfalls` tracks unfunded "Expenses (Monthly Withdrawals by Account)" withdrawals; aggregated engine warning + red row indicator with tooltip
+- `CareerSourceLine.increaseWithdrawalWithPaycheck` optional growth toggle; monthly withdrawals remain account-funded
+
+## 6. Runtime Income-Fallback Validation
+- `updateScenario` re-validates `incomeFallbackAccountId` / `incomeFallbackAccountId2` against the current bank accounts and clears missing ones (App.tsx)
+- Dismissible `incomeFallbackNotice` shown in the Income Fallback Accounts section
+
+## 7. Paycheck Modal Polish
+- Backdrop click no longer closes the paycheck modal
+- Removed the category name input and the add-category controls
+
+---
+
 # Session Changes — June 19, 2026
 
 ## 1. Taxes & Penalties Tracking in Results Table

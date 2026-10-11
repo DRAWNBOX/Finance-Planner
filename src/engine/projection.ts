@@ -10,6 +10,7 @@ import type {
   Scenario,
   SourceLine
 } from '../types';
+import { getPeriodsPerYear, resolvePaycheckInfo } from '../paycheck';
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const toRate = (value: number) => value / 100;
@@ -87,16 +88,36 @@ const getManualRates = (scenario: Scenario, age: number, accounts: LedgerAccount
   return { annualReturnRate, inflationRate };
 };
 
-const getCareerContribution = (salary: number, careerSource: CareerEntry | undefined) => {
-  if (!careerSource || salary <= 0) {
+const getCareerContribution = (annualIncome: number, careerSource: CareerEntry | undefined, raiseFactor = 1) => {
+  if (!careerSource) {
     return 0;
   }
 
   const sourceLines = careerSource.sourceLines ?? [];
-  const contributionRate = sourceLines.reduce((sum, line) => sum + Math.max(0, line.contributionRate), 0);
-  const savingsRate = toRate(contributionRate);
+  const periodsPerYear = getPeriodsPerYear(careerSource.paycheck);
 
-  return salary * savingsRate;
+  return sourceLines.reduce((sum, line) => {
+    if (line.mode === 'fixedAmount') {
+      const scale = line.increaseWithPaycheck ? raiseFactor : 1;
+      return sum + Math.max(0, line.fixedAmount ?? 0) * periodsPerYear * scale;
+    }
+
+    return sum + annualIncome * toRate(Math.max(0, line.contributionRate));
+  }, 0);
+};
+
+const getSourceContributionMonthlyAmount = (
+  line: CareerSourceLine,
+  monthlySalary: number,
+  periodsPerYear: number,
+  raiseFactor = 1
+) => {
+  if (line.mode === 'fixedAmount') {
+    const scale = line.increaseWithPaycheck ? raiseFactor : 1;
+    return Math.max(0, line.fixedAmount ?? 0) * (periodsPerYear / 12) * scale;
+  }
+
+  return Math.max(0, monthlySalary * toRate(Math.max(0, line.contributionRate)));
 };
 
 const parseYearMonthToSerial = (value: string) => {
@@ -229,14 +250,16 @@ const applySourceContributions = (
   salary: number,
   accounts: LedgerAccount[],
   pools: PoolDefinition[],
-  periodFactor: number
+  periodFactor: number,
+  periodsPerYear: number,
+  raiseFactor = 1
 ) => {
   lines.forEach((line) => {
-    if (!line.enabled || line.contributionRate <= 0) {
+    if (!line.enabled) {
       return;
     }
 
-    const amount = Math.max(0, salary * toRate(line.contributionRate) * periodFactor);
+    const amount = Math.max(0, getSourceContributionMonthlyAmount(line, salary, periodsPerYear, raiseFactor) * periodFactor);
     if (amount <= 0) {
       return;
     }
@@ -498,6 +521,7 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
     periodMonths: 0,
     startBalance: startingLedgerSum,
     salary: 0,
+    netIncome: 0,
     careerContribution: 0,
     contribution: 0,
     careerLabel: 'Now',
@@ -535,6 +559,8 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
   const housingPayoffMonths: Record<string, number | null> = {};
   const housingTotalMonthlyCosts: Record<string, number> = {};
   const housingFundingShortfalls: Record<string, number> = {};
+  const careerWithdrawalShortfalls: Record<string, number> = {};
+  const careerWithdrawalLabels: Record<string, string> = {};
   const housingPMIDropMonth: Record<string, number | null> = {};
   const monthlySnapshots: import('../types').MonthlySnapshot[] = [];
   const monthlyWaterfall: import('../types').MonthlyWaterfallSnapshot[] = [];
@@ -667,17 +693,21 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
     const careerEntry = getCareerEntryForAge(scenario, age);
     const jobChange = scenario.lifeEvents.find((event) => event.enabled && event.type === 'job_change' && age >= event.startAge && age <= event.endAge);
     const careerBreakActive = isCareerBreakActive(scenario, age);
+    const pi = resolvePaycheckInfo(careerEntry ?? undefined);
+    const raiseFactor = careerEntry
+      ? Math.pow(1 + toRate(careerEntry.annualRaiseRate), Math.max(0, age - careerEntry.startAge))
+      : 1;
     const salary =
       age < retirementAge && !careerBreakActive
         ? jobChange
           ? jobChange.newSalary * Math.pow(1 + toRate(jobChange.annualSalaryGrowthOverride), Math.max(0, age - jobChange.startAge))
           : careerEntry
-            ? (careerEntry.paycheckInfo?.grossSalary ?? 0) * Math.pow(1 + toRate(careerEntry.annualRaiseRate), Math.max(0, age - careerEntry.startAge))
+            ? (pi?.grossSalary ?? 0) * raiseFactor
             : 0
         : 0;
 
-    const careerContribution = age < retirementAge && !careerBreakActive ? getCareerContribution(salary, careerEntry ?? undefined) * periodFactor : 0;
     const careerSourceLines = (careerEntry?.sourceLines ?? []).filter((line) => line.enabled);
+    const careerPeriodsPerYear = getPeriodsPerYear(careerEntry?.paycheck);
     let yearTaxesPaid = 0;
     let yearPenaltiesPaid = 0;
     let purchaseCashflow = 0;
@@ -686,11 +716,10 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
     let withdrawal = 0;
     let firstYearByLegacy = emptySavings();
 
-    const pi = careerEntry?.paycheckInfo;
     const getYearlyRetirement = () => {
       if (!pi) return 0;
       if (pi.retirementMode === 'percentOfSalary') return salary * (pi.retirement ?? 0) / 100;
-      return (pi.retirement ?? 0);
+      return (pi.retirement ?? 0) * raiseFactor;
     };
     const getYearlyRetirementMatch = () => {
       if (!pi) return 0;
@@ -699,25 +728,47 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
         const maxMatch = salary * (pi.employerMaxMatchPercent ?? 0) / 100;
         return maxMatch > 0 ? Math.min(rawMatch, maxMatch) : rawMatch;
       }
-      return (pi.retirementMatch ?? 0);
+      return (pi.retirementMatch ?? 0) * raiseFactor;
     };
     const getYearlyHsaContribution = () => {
       if (!pi) return 0;
       if (pi.hsaContributionMode === 'percentOfSalary') return salary * (pi.hsaContribution ?? 0) / 100;
-      return (pi.hsaContribution ?? 0);
+      return (pi.hsaContribution ?? 0) * raiseFactor;
     };
     const getYearlyHsaEmployerMatch = () => {
       if (!pi) return 0;
       if (pi.hsaEmployerMatchMode === 'percentOfHsaContribution') return getYearlyHsaContribution() * (pi.hsaEmployerMatch ?? 0) / 100;
-      return (pi.hsaEmployerMatch ?? 0);
+      return (pi.hsaEmployerMatch ?? 0) * raiseFactor;
     };
     const getYearlyEmployerHsaDeposit = () => {
       if (!pi) return 0;
       if (pi.employerHsaDepositMode === 'percentOfSalary') return salary * (pi.employerHsaDeposit ?? 0) / 100;
-      return (pi.employerHsaDeposit ?? 0);
+      return (pi.employerHsaDeposit ?? 0) * raiseFactor;
     };
+    const getYearlyTaxes = () => (pi?.taxes ?? 0) * raiseFactor;
+    const getYearlyBenefits = () => (pi?.healthBenefits ?? 0) * raiseFactor;
+    const getYearlyOtherBenefits = () => (pi?.otherBenefits ?? 0) * raiseFactor;
+    const getYearlyLivingExpenses = () => (pi?.livingExpenses ?? 0) * raiseFactor;
+
+    // Income is the paycheck's net pay: gross minus all employee deductions. All paycheck amounts
+    // grow with the annual raise, so net scales by the same factor.
     const monthlyTakeHome = pi
-      ? Math.max(0, (salary - pi.taxes - pi.healthBenefits - pi.otherBenefits - getYearlyRetirement() - getYearlyHsaContribution() - (pi.livingExpenses ?? 0)) / 12)
+      ? Math.max(
+          0,
+          (salary -
+            getYearlyTaxes() -
+            getYearlyBenefits() -
+            getYearlyOtherBenefits() -
+            getYearlyRetirement() -
+            getYearlyHsaContribution() -
+            getYearlyLivingExpenses()) /
+            12
+        )
+      : 0;
+    const annualTakeHome = monthlyTakeHome * 12;
+
+    const careerContribution = age < retirementAge && !careerBreakActive
+      ? getCareerContribution(annualTakeHome, careerEntry ?? undefined, raiseFactor) * periodFactor
       : 0;
     const monthlyIncomePurchases = new Set<string>();
 
@@ -823,11 +874,11 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
         applyAccountDeposit(pi.hsaAccountId, getYearlyEmployerHsaDeposit() / 12, ledgerAccounts, monthAccountActivity);
       }
 
-      applySourceContributions(careerSourceLines, salary / 12, ledgerAccounts, pools, 1);
+      applySourceContributions(careerSourceLines, monthlyTakeHome, ledgerAccounts, pools, 1, careerPeriodsPerYear, raiseFactor);
 
       const totalSourceContributions = careerSourceLines.reduce((sum, line) => {
-        if (!line.enabled || line.contributionRate <= 0) return sum;
-        return sum + (salary / 12) * (line.contributionRate / 100);
+        if (!line.enabled) return sum;
+        return sum + getSourceContributionMonthlyAmount(line, monthlyTakeHome, careerPeriodsPerYear, raiseFactor);
       }, 0);
       if (totalSourceContributions > 0) {
         careerSavingsDeposits += totalSourceContributions;
@@ -842,21 +893,35 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
           return;
         }
 
+        const requestedWithdrawal = line.monthlyWithdrawal * (line.increaseWithdrawalWithPaycheck ? raiseFactor : 1);
+        if (requestedWithdrawal <= 0) {
+          return;
+        }
+
         const withdrawalSource: SourceLine = {
           id: line.id,
           enabled: true,
           sourceType: line.sourceType,
           sourceId: line.sourceId,
           mode: 'amount',
-          amount: line.monthlyWithdrawal
+          amount: requestedWithdrawal
         };
-        const mwOutcome = applyNetTargetWithdrawal(withdrawalSource, line.monthlyWithdrawal, ledgerAccounts, pools, warnings, {
+        const mwOutcome = applyNetTargetWithdrawal(withdrawalSource, requestedWithdrawal, ledgerAccounts, pools, warnings, {
           age,
           retirementAge
         }, monthAccountActivity);
         careerWithdrawals += mwOutcome.netCash;
         yearTaxesPaid += mwOutcome.taxesPaid;
         yearPenaltiesPaid += mwOutcome.penaltiesPaid;
+
+        const unfunded = Math.max(0, requestedWithdrawal - mwOutcome.netCash);
+        if (unfunded > 0.01) {
+          careerWithdrawalShortfalls[line.sourceId] = (careerWithdrawalShortfalls[line.sourceId] ?? 0) + unfunded;
+          careerWithdrawalLabels[line.sourceId] = careerWithdrawalLabels[line.sourceId]
+            ?? (line.sourceType === 'account'
+              ? (ledgerAccounts.find((account) => account.id === line.sourceId)?.label ?? line.sourceId)
+              : line.sourceId);
+        }
       });
 
       applyCareerAccountCaps(ledgerAccounts, careerSourceLines, warnings);
@@ -1389,6 +1454,7 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
         periodMonths: 1,
         startBalance: monthStartLedgerSum,
         salary: salary / periodMonths,
+        netIncome: monthlyTakeHome,
         careerContribution: careerContribution / periodMonths,
         contribution: 0,
         careerLabel: jobChange?.label ?? careerEntry?.label ?? 'No Career',
@@ -1722,6 +1788,7 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
       periodMonths,
       startBalance: previousLedgerSum,
       salary,
+      netIncome: annualTakeHome,
       careerContribution,
       contribution: totalContribution,
       careerLabel: jobChange?.label ?? careerEntry?.label ?? 'No Career',
@@ -1800,6 +1867,17 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
     }
   });
 
+  Object.entries(careerWithdrawalShortfalls).forEach(([sourceId, amount]) => {
+    if (amount <= 0.01) {
+      return;
+    }
+    const label = careerWithdrawalLabels[sourceId] ?? sourceId;
+    const msg = `Monthly withdrawal for ${label} exceeded the account balance; ${formatCurrency(amount)} was unfunded across the projection.`;
+    if (!warnings.includes(msg)) {
+      warnings.push(msg);
+    }
+  });
+
   const survivesToEnd = depletedAge === null;
   const endingBalance = years.length > 0 ? years[years.length - 1].endBalance : 0;
   const summary = survivesToEnd
@@ -1836,6 +1914,7 @@ export const projectScenario = (scenario: Scenario, options: { startDate?: strin
     housingFundingShortfalls,
     creditCardFundingShortfalls,
     creditCardBalancesById: { ...creditCardBalances },
+    careerWithdrawalShortfalls,
     monthlySnapshots,
     monthlyWaterfall
   };

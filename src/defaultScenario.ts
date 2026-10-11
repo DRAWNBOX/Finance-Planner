@@ -10,6 +10,7 @@ import type {
   Scenario
 } from './types';
 import { formatYearMonthFromAge } from './utils/ageDate';
+import { createDefaultPaycheck } from './paycheck';
 
 const makeItemId = (category: CashflowCategory) => `${category}-default`;
 
@@ -231,7 +232,8 @@ export const createDefaultCareerEntry = (
   return {
     ...base,
     sourceLines: defaultCareerSourceLines.map((line) => ({ ...line })),
-    paycheckInfo: { grossSalary: index === 0 ? 98000 : 110000 + index * 12000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0, retirementMode: 'amount', retirementMatchMode: 'amount', employerMaxMatchPercent: 0, hsaContributionMode: 'amount', hsaEmployerMatchMode: 'amount', employerHsaDeposit: 0, employerHsaDepositMode: 'amount', period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' } }
+    paycheckInfo: { grossSalary: index === 0 ? 98000 : 110000 + index * 12000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0, retirementMode: 'amount', retirementMatchMode: 'amount', employerMaxMatchPercent: 0, hsaContributionMode: 'amount', hsaEmployerMatchMode: 'amount', employerHsaDeposit: 0, employerHsaDepositMode: 'amount', period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' } },
+    paycheck: createDefaultPaycheck(index)
   };
 };
 

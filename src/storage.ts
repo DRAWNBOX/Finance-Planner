@@ -1,6 +1,7 @@
 import { defaultScenario } from './defaultScenario';
-import type { CareerEntry, CreditCard, HousingEntry, LargePurchase, LoanPaymentSource, LongTermPurchase, PurchaseCategory, Scenario, SourceLine, Timeline, TrajectorySnapshot } from './types';
+import type { CareerEntry, CreditCard, HousingEntry, LargePurchase, LoanPaymentSource, LongTermPurchase, PayFrequency, Paycheck, PaycheckCategory, PaycheckInfo, PaycheckLine, PurchaseCategory, Scenario, SourceLine, Timeline, TrajectorySnapshot } from './types';
 import { addMonthsToYearMonth, ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
+import { compilePaycheck, paycheckFromPaycheckInfo } from './paycheck';
 // Removed financeModel imports (functions inlined or simplified)
 
 const APP_TABS = ['options', 'careers', 'netWorth', 'expenses'] as const;
@@ -57,6 +58,112 @@ const derivePurchaseAgeAndYearMonth = (
   return { age, yearMonth };
 };
 
+const normalizePaycheck = (value: unknown): Paycheck | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const rawFrequency = raw.payFrequency;
+  const payFrequency: PayFrequency =
+    rawFrequency === 'weekly' || rawFrequency === 'biweekly' || rawFrequency === 'semimonthly' || rawFrequency === 'monthly'
+      ? rawFrequency
+      : 'monthly';
+
+  const rawCategories = Array.isArray(raw.categories) ? raw.categories : [];
+  const categories: PaycheckCategory[] = rawCategories.map((category, index) => {
+    const rawCategory = (category ?? {}) as Record<string, unknown>;
+    const kind =
+      rawCategory.kind === 'earning' ||
+      rawCategory.kind === 'tax' ||
+      rawCategory.kind === 'pretax' ||
+      rawCategory.kind === 'posttax' ||
+      rawCategory.kind === 'employer'
+        ? rawCategory.kind
+        : 'pretax';
+    const rawLines = Array.isArray(rawCategory.lines) ? rawCategory.lines : [];
+    const lines: PaycheckLine[] = rawLines.map((line, lineIndex) => {
+      const rawLine = (line ?? {}) as Record<string, unknown>;
+      const bucket = rawLine.bucket === 'retirement' || rawLine.bucket === 'hsa' ? rawLine.bucket : null;
+      return {
+        id: typeof rawLine.id === 'string' && rawLine.id ? rawLine.id : `paycheck-line-${kind}-${index}-${lineIndex}`,
+        label: typeof rawLine.label === 'string' && rawLine.label ? rawLine.label : 'Item',
+        amount: toNumberOrFallback(rawLine.amount, 0),
+        mode: rawLine.mode === 'percentOfGross' ? 'percentOfGross' : 'amount',
+        rate: typeof rawLine.rate === 'number' && Number.isFinite(rawLine.rate) ? rawLine.rate : undefined,
+        hours: typeof rawLine.hours === 'number' && Number.isFinite(rawLine.hours) ? rawLine.hours : undefined,
+        ytd: Math.max(0, toNumberOrFallback(rawLine.ytd, 0)),
+        accountId: typeof rawLine.accountId === 'string' && rawLine.accountId ? rawLine.accountId : null,
+        bucket
+      };
+    });
+
+    return {
+      id: typeof rawCategory.id === 'string' && rawCategory.id ? rawCategory.id : `paycheck-category-${kind}-${index}`,
+      label: typeof rawCategory.label === 'string' && rawCategory.label ? rawCategory.label : kind,
+      kind,
+      lines
+    };
+  });
+
+  return { payFrequency, categories };
+};
+
+const normalizeLegacyPaycheckInfo = (entry: CareerEntry): PaycheckInfo => {
+  const pi = (entry as unknown as Record<string, unknown>).paycheckInfo;
+  if (pi && typeof pi === 'object') {
+    return {
+      grossSalary: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).grossSalary, 0)),
+      taxes: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).taxes, 0)),
+      healthBenefits: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).healthBenefits, 0)),
+      retirement: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).retirement, 0)),
+      retirementMatch: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).retirementMatch, 0)),
+      hsaContribution: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).hsaContribution, 0)),
+      hsaEmployerMatch: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).hsaEmployerMatch, 0)),
+      otherBenefits: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).otherBenefits, 0)),
+      retirementAccountId: typeof (pi as Record<string, unknown>).retirementAccountId === 'string'
+        ? (pi as Record<string, unknown>).retirementAccountId as string
+        : undefined,
+      hsaAccountId: typeof (pi as Record<string, unknown>).hsaAccountId === 'string'
+        ? (pi as Record<string, unknown>).hsaAccountId as string
+        : undefined,
+      livingExpenses: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).livingExpenses, 0)),
+      retirementMode: ((pi as Record<string, unknown>).retirementMode === 'amount' || (pi as Record<string, unknown>).retirementMode === 'percentOfSalary') ? (pi as Record<string, unknown>).retirementMode as 'amount' | 'percentOfSalary' : 'amount',
+      retirementMatchMode: ((pi as Record<string, unknown>).retirementMatchMode === 'amount' || (pi as Record<string, unknown>).retirementMatchMode === 'percentOfRetirement') ? (pi as Record<string, unknown>).retirementMatchMode as 'amount' | 'percentOfRetirement' : 'amount',
+      employerMaxMatchPercent: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).employerMaxMatchPercent, 0)),
+      hsaContributionMode: ((pi as Record<string, unknown>).hsaContributionMode === 'amount' || (pi as Record<string, unknown>).hsaContributionMode === 'percentOfSalary') ? (pi as Record<string, unknown>).hsaContributionMode as 'amount' | 'percentOfSalary' : 'amount',
+      hsaEmployerMatchMode: ((pi as Record<string, unknown>).hsaEmployerMatchMode === 'amount' || (pi as Record<string, unknown>).hsaEmployerMatchMode === 'percentOfHsaContribution') ? (pi as Record<string, unknown>).hsaEmployerMatchMode as 'amount' | 'percentOfHsaContribution' : 'amount',
+      employerHsaDeposit: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).employerHsaDeposit, 0)),
+      employerHsaDepositMode: ((pi as Record<string, unknown>).employerHsaDepositMode === 'amount' || (pi as Record<string, unknown>).employerHsaDepositMode === 'percentOfSalary') ? (pi as Record<string, unknown>).employerHsaDepositMode as 'amount' | 'percentOfSalary' : 'amount',
+      period: (pi as Record<string, unknown>).period as Record<string, 'monthly' | 'yearly'> | undefined
+    };
+  }
+  // Migrate legacy taxInfo → paycheckInfo
+  const ti = (entry as unknown as Record<string, unknown>).taxInfo;
+  if (ti && typeof ti === 'object') {
+    const legacyOther = Math.max(0, toNumberOrFallback((ti as Record<string, unknown>).otherExpenses, 0));
+    const legacyLeftover = Math.max(0, toNumberOrFallback((ti as Record<string, unknown>).leftoverIncome, 0));
+    const legacySalary = Math.max(0, toNumberOrFallback((entry as unknown as Record<string, unknown>).startingSalary, 0));
+    return {
+      grossSalary: legacySalary,
+      taxes: Math.max(0, legacySalary - legacyLeftover - legacyOther * 12),
+      healthBenefits: 0,
+      retirement: 0,
+      otherBenefits: 0,
+      livingExpenses: legacyOther,
+      retirementMatch: 0,
+      hsaContribution: 0,
+      hsaEmployerMatch: 0,
+      employerMaxMatchPercent: 0,
+      employerHsaDeposit: 0,
+      employerHsaDepositMode: 'amount' as const,
+      period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' }
+    };
+  }
+  const legacySalary2 = Math.max(0, toNumberOrFallback((entry as unknown as Record<string, unknown>).startingSalary, 0));
+  return { grossSalary: legacySalary2, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0, period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' } };
+};
+
 const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>): CareerEntry => {
   const emergencyFundContributionRate = toNumberOrFallback(entry.emergencyFundContributionRate, 2);
   const hsaContributionRate = toNumberOrFallback(entry.hsaContributionRate, 3);
@@ -66,6 +173,10 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
   const hsaMonthlyWithdrawal = Math.max(0, toNumberOrFallback(entry.hsaMonthlyWithdrawal, 0));
   const investmentsMonthlyWithdrawal = Math.max(0, toNumberOrFallback(entry.investmentsMonthlyWithdrawal, 0));
   const retirement401kMonthlyWithdrawal = Math.max(0, toNumberOrFallback(entry.retirement401kMonthlyWithdrawal, 0));
+  const legacyPaycheckInfo = normalizeLegacyPaycheckInfo(entry);
+  const normalizedPaycheck = normalizePaycheck(entry.paycheck);
+  const effectivePaycheck = normalizedPaycheck ?? paycheckFromPaycheckInfo(legacyPaycheckInfo);
+  const effectivePaycheckInfo = normalizedPaycheck ? compilePaycheck(normalizedPaycheck) : legacyPaycheckInfo;
 
   return {
     ...entry,
@@ -99,6 +210,11 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
     retirement401kMonthlyWithdrawal,
     sourceLines: (entry.sourceLines?.length ? entry.sourceLines : []).map((line) => ({
       ...line,
+      mode: line.mode === 'fixedAmount' ? 'fixedAmount' : 'percentOfSalary',
+      contributionRate: Math.max(0, toNumberOrFallback(line.contributionRate, 0)),
+      fixedAmount: Math.max(0, toNumberOrFallback(line.fixedAmount, 0)),
+      increaseWithPaycheck: Boolean(line.increaseWithPaycheck),
+      increaseWithdrawalWithPaycheck: Boolean(line.increaseWithdrawalWithPaycheck),
       maxBalance: Math.max(0, toNumberOrFallback(line.maxBalance, 0)),
       overflowFallbackAccountId:
         typeof line.overflowFallbackAccountId === 'string' &&
@@ -107,60 +223,8 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
           ? line.overflowFallbackAccountId
           : null
     })),
-    paycheckInfo: (() => {
-      const pi = (entry as unknown as Record<string, unknown>).paycheckInfo;
-      if (pi && typeof pi === 'object') {
-        return {
-          grossSalary: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).grossSalary, 0)),
-          taxes: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).taxes, 0)),
-          healthBenefits: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).healthBenefits, 0)),
-          retirement: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).retirement, 0)),
-          retirementMatch: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).retirementMatch, 0)),
-          hsaContribution: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).hsaContribution, 0)),
-          hsaEmployerMatch: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).hsaEmployerMatch, 0)),
-          otherBenefits: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).otherBenefits, 0)),
-          retirementAccountId: typeof (pi as Record<string, unknown>).retirementAccountId === 'string'
-            ? (pi as Record<string, unknown>).retirementAccountId as string
-            : undefined,
-          hsaAccountId: typeof (pi as Record<string, unknown>).hsaAccountId === 'string'
-            ? (pi as Record<string, unknown>).hsaAccountId as string
-            : undefined,
-          livingExpenses: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).livingExpenses, 0)),
-          retirementMode: ((pi as Record<string, unknown>).retirementMode === 'amount' || (pi as Record<string, unknown>).retirementMode === 'percentOfSalary') ? (pi as Record<string, unknown>).retirementMode as 'amount' | 'percentOfSalary' : 'amount',
-          retirementMatchMode: ((pi as Record<string, unknown>).retirementMatchMode === 'amount' || (pi as Record<string, unknown>).retirementMatchMode === 'percentOfRetirement') ? (pi as Record<string, unknown>).retirementMatchMode as 'amount' | 'percentOfRetirement' : 'amount',
-          employerMaxMatchPercent: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).employerMaxMatchPercent, 0)),
-          hsaContributionMode: ((pi as Record<string, unknown>).hsaContributionMode === 'amount' || (pi as Record<string, unknown>).hsaContributionMode === 'percentOfSalary') ? (pi as Record<string, unknown>).hsaContributionMode as 'amount' | 'percentOfSalary' : 'amount',
-          hsaEmployerMatchMode: ((pi as Record<string, unknown>).hsaEmployerMatchMode === 'amount' || (pi as Record<string, unknown>).hsaEmployerMatchMode === 'percentOfHsaContribution') ? (pi as Record<string, unknown>).hsaEmployerMatchMode as 'amount' | 'percentOfHsaContribution' : 'amount',
-          employerHsaDeposit: Math.max(0, toNumberOrFallback((pi as Record<string, unknown>).employerHsaDeposit, 0)),
-          employerHsaDepositMode: ((pi as Record<string, unknown>).employerHsaDepositMode === 'amount' || (pi as Record<string, unknown>).employerHsaDepositMode === 'percentOfSalary') ? (pi as Record<string, unknown>).employerHsaDepositMode as 'amount' | 'percentOfSalary' : 'amount',
-          period: (pi as Record<string, unknown>).period as Record<string, 'monthly' | 'yearly'> | undefined
-        };
-      }
-      // Migrate legacy taxInfo → paycheckInfo
-      const ti = (entry as unknown as Record<string, unknown>).taxInfo;
-      if (ti && typeof ti === 'object') {
-        const legacyOther = Math.max(0, toNumberOrFallback((ti as Record<string, unknown>).otherExpenses, 0));
-        const legacyLeftover = Math.max(0, toNumberOrFallback((ti as Record<string, unknown>).leftoverIncome, 0));
-        const legacySalary = Math.max(0, toNumberOrFallback((entry as unknown as Record<string, unknown>).startingSalary, 0));
-        return {
-          grossSalary: legacySalary,
-          taxes: Math.max(0, legacySalary - legacyLeftover - legacyOther * 12),
-          healthBenefits: 0,
-          retirement: 0,
-          otherBenefits: 0,
-          livingExpenses: legacyOther,
-          retirementMatch: 0,
-          hsaContribution: 0,
-          hsaEmployerMatch: 0,
-          employerMaxMatchPercent: 0,
-          employerHsaDeposit: 0,
-          employerHsaDepositMode: 'amount' as const,
-          period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' }
-        };
-      }
-      const legacySalary2 = Math.max(0, toNumberOrFallback((entry as unknown as Record<string, unknown>).startingSalary, 0));
-      return { grossSalary: legacySalary2, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0, period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' } };
-    })()
+    paycheckInfo: effectivePaycheckInfo,
+    paycheck: effectivePaycheck
   };
 };
 
@@ -506,6 +570,7 @@ export const loadAppState = (): PersistedAppState => {
             startBalance: toNumberOrFallback(y.startBalance, 0),
             endBalance: toNumberOrFallback(y.endBalance, 0),
             salary: toNumberOrFallback(y.salary, 0),
+            netIncome: toNumberOrFallback(y.netIncome, toNumberOrFallback(y.salary, 0)),
             careerContribution: toNumberOrFallback(y.careerContribution, 0),
             contribution: toNumberOrFallback(y.contribution, 0),
             withdrawal: toNumberOrFallback(y.withdrawal, 0),

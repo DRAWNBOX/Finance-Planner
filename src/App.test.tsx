@@ -34,6 +34,13 @@ describe('App', () => {
     expect(screen.getByRole('columnheader', { name: 'Career' })).toBeInTheDocument();
   });
 
+  it('shows net income as the results-table income column', () => {
+    render(<App />);
+
+    expect(screen.getByRole('columnheader', { name: 'Net income' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Salary' })).not.toBeInTheDocument();
+  });
+
   it('shows the finances prediction graph, table, and summary on Options', () => {
     render(<App />);
 
@@ -1446,6 +1453,30 @@ describe('App', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it('configures paycheck line items in the paycheck modal', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Paycheck' }));
+
+    expect(screen.getByRole('heading', { name: 'Configure Paycheck' })).toBeInTheDocument();
+
+    const statutory = screen.getByText('Statutory').closest('section') as HTMLElement;
+    fireEvent.click(within(statutory).getByRole('button', { name: '+ Item' }));
+
+    const row = within(statutory).getByLabelText(/Line label/).closest('.paycheck-line-row') as HTMLElement;
+    fireEvent.change(within(row).getByLabelText(/Line label/), { target: { value: 'Federal Income Tax' } });
+    fireEvent.change(within(row).getAllByRole('spinbutton')[0], { target: { value: '100' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Paycheck' }));
+
+    const stored = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
+    const paycheck = stored.scenario.careerPlan.entries[0].paycheck;
+    const statutoryCategory = paycheck.categories.find((category: { label: string }) => category.label === 'Statutory');
+    expect(statutoryCategory.lines[0].label).toBe('Federal Income Tax');
+    expect(statutoryCategory.lines[0].amount).toBe(100);
+  });
+
   it('shows savings tracker controls and can switch to the stacked savings graph', () => {
     render(<App />);
 
@@ -1484,6 +1515,83 @@ describe('App', () => {
     const stored = window.localStorage.getItem('finance-planner-state') ?? '';
     expect(stored).toContain('"maxBalance":12345');
     expect(stored).toContain('"overflowFallbackAccountId":"hsa-account-default"');
+  });
+
+  it('toggles a fixed deposit to increase with the paycheck', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+
+    const findEmergencyRow = () => {
+      const label = screen
+        .getAllByText('Emergency Fund')
+        .find((node) => node.classList.contains('career-savings-cell')) as HTMLElement;
+      return label.closest('.career-savings-row') as HTMLElement;
+    };
+
+    fireEvent.click(within(findEmergencyRow()).getByTitle('Percent of salary'));
+
+    fireEvent.click(within(findEmergencyRow()).getByLabelText('Increase with paycheck Emergency Fund'));
+
+    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+    expect(stored).toContain('"mode":"fixedAmount"');
+    expect(stored).toContain('"increaseWithPaycheck":true');
+  });
+
+  it('persists the expenses (monthly withdrawals by account) grid', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+
+    const row = screen.getByText('Emergency Fund Monthly Withdrawal').closest('label') as HTMLElement;
+    const input = within(row).getByRole('spinbutton');
+    fireEvent.change(input, { target: { value: '123' } });
+    fireEvent.blur(input);
+
+    fireEvent.click(within(row).getByLabelText('Increase withdrawal with paycheck Emergency Fund'));
+
+    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+    expect(stored).toContain('"monthlyWithdrawal":123');
+    expect(stored).toContain('"increaseWithdrawalWithPaycheck":true');
+  });
+
+  it('persists the income fallback account selects', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+
+    const primary = screen.getByText('Primary Fallback').closest('label') as HTMLElement;
+    fireEvent.change(within(primary).getByRole('combobox'), { target: { value: 'investments-account-default' } });
+
+    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+    expect(stored).toContain('"incomeFallbackAccountId":"investments-account-default"');
+  });
+
+  it('clears an income fallback when its account is removed and shows a note', () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const primary = screen.getByText('Primary Fallback').closest('label') as HTMLElement;
+    fireEvent.change(within(primary).getByRole('combobox'), { target: { value: 'hsa-account-default' } });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
+    const bankTable = screen
+      .getAllByRole('table')
+      .find((table) => within(table).queryByRole('columnheader', { name: 'Type' })) as HTMLElement;
+    const hsaRow = within(bankTable)
+      .getAllByRole('row')
+      .find((row) => (within(row).queryAllByRole('textbox') as HTMLInputElement[]).some((input) => input.value === 'HSA')) as HTMLElement;
+    fireEvent.click(within(hsaRow).getByRole('button', { name: 'Remove' }));
+
+    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+    expect(stored).not.toContain('"incomeFallbackAccountId":"hsa-account-default"');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    expect(screen.getByText(/income fallback account no longer exists/i)).toBeInTheDocument();
+
+    confirmSpy.mockRestore();
   });
 
   it('keeps careers table balances aligned with the portfolio graph totals', () => {

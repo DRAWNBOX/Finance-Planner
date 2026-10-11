@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { BankAccountDefinition, IncomePoolUsagePeriod } from '../types';
+import type { BankAccountDefinition, IncomePoolUsagePeriod, Scenario } from '../types';
 
 const seedDefaultBankAccounts = (balances: { emergencyFund: number; hsa: number; investments: number; retirement401k: number }): BankAccountDefinition[] => [
   { id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: Math.max(0, balances.emergencyFund) },
@@ -3755,3 +3755,275 @@ describe('projectScenario', () => {
   });
 });
 
+
+describe('paycheck net income as the income source', () => {
+  const makeCareer = (annualRaiseRate: number) => {
+    const base = defaultScenario.careerPlan.entries[0];
+    return {
+      ...base,
+      annualRaiseRate,
+      startAge: 45,
+      endAge: 65,
+      sourceLines: [],
+      paycheckInfo: undefined,
+      paycheck: {
+        payFrequency: 'weekly' as const,
+        categories: [
+          { id: 'cat-earn', label: 'Earnings', kind: 'earning' as const, lines: [{ id: 'earn', label: 'Regular', amount: 1000, mode: 'amount' as const }] },
+          { id: 'cat-tax', label: 'Statutory', kind: 'tax' as const, lines: [{ id: 'tax', label: 'Federal', amount: 100, mode: 'amount' as const }] },
+          {
+            id: 'cat-pretax',
+            label: 'Deductions',
+            kind: 'pretax' as const,
+            lines: [{ id: 'ret', label: '401k', amount: 50, mode: 'amount' as const, accountId: 'retirement401k-account-default', bucket: 'retirement' as const }]
+          }
+        ]
+      }
+    };
+  };
+
+  const scenarioWith = (annualRaiseRate: number) => ({
+    ...defaultScenario,
+    profile: { ...defaultScenario.profile, currentAge: 45, retirementAge: 65 },
+    options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+    careerPlan: { enabled: true, entries: [makeCareer(annualRaiseRate)] }
+  });
+
+  it('uses net pay (gross minus deductions) as the annual income', () => {
+    const result = projectScenario(scenarioWith(0));
+    const years = result.years.filter((year) => !year.isBaselineNow);
+
+    // (1000 - 100 - 50) per week x 52 weeks
+    expect(years[0].netIncome).toBeCloseTo(44200, 4);
+  });
+
+  it('scales net income with the annual raise', () => {
+    const result = projectScenario(scenarioWith(10));
+    const years = result.years.filter((year) => !year.isBaselineNow);
+
+    expect(years[0].netIncome).toBeGreaterThan(0);
+    expect(years[1].netIncome / years[0].netIncome).toBeCloseTo(1.1, 6);
+  });
+});
+
+describe('fixed-amount source-line deposits', () => {
+  const scenarioWithSourceLine = (increaseWithPaycheck: boolean, annualRaiseRate: number) => {
+    const base = defaultScenario.careerPlan.entries[0];
+    return {
+      ...defaultScenario,
+      profile: { ...defaultScenario.profile, currentAge: 45, retirementAge: 65 },
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      careerPlan: {
+        enabled: true,
+        entries: [
+          {
+            ...base,
+            annualRaiseRate,
+            startAge: 45,
+            endAge: 65,
+            paycheckInfo: undefined,
+            paycheck: {
+              payFrequency: 'weekly' as const,
+              categories: [
+                { id: 'cat-earn', label: 'Earnings', kind: 'earning' as const, lines: [{ id: 'earn', label: 'Regular', amount: 1000, mode: 'amount' as const }] }
+              ]
+            },
+            sourceLines: [
+              {
+                id: 'line-1',
+                enabled: true,
+                sourceType: 'account' as const,
+                sourceId: 'investments-account-default',
+                contributionRate: 0,
+                savingsMonthly: false,
+                monthlyWithdrawal: 0,
+                mode: 'fixedAmount' as const,
+                fixedAmount: 100,
+                increaseWithPaycheck
+              }
+            ]
+          }
+        ]
+      }
+    };
+  };
+
+  it('keeps fixed deposits flat across years by default', () => {
+    const result = projectScenario(scenarioWithSourceLine(false, 10));
+    const years = result.years.filter((year) => !year.isBaselineNow);
+    const sample = years[1];
+
+    expect(sample.careerContribution).toBeCloseTo(5200 * (sample.periodMonths / 12), 4);
+  });
+
+  it('scales fixed deposits with the paycheck raise when enabled', () => {
+    const flat = projectScenario(scenarioWithSourceLine(false, 10));
+    const scaled = projectScenario(scenarioWithSourceLine(true, 10));
+    const flatYears = flat.years.filter((year) => !year.isBaselineNow);
+    const scaledYears = scaled.years.filter((year) => !year.isBaselineNow);
+
+    expect(flatYears[1].careerContribution).toBeGreaterThan(0);
+    expect(scaledYears[1].careerContribution / flatYears[1].careerContribution).toBeCloseTo(1.1, 6);
+  });
+});
+
+describe('career monthly withdrawal expenses', () => {
+  const baseWithWithdrawal = (increaseWithdrawalWithPaycheck: boolean, withdrawal: number, accountId: string) => ({
+    ...defaultScenario,
+    options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+    profile: { ...defaultScenario.profile, currentAge: 40, retirementAge: 65 },
+    contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+    netWorth: {
+      ...defaultScenario.netWorth,
+      accountBalances: { emergencyFund: 10000000, hsa: 0, investments: 0, retirement401k: 0 },
+      bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) => (a.id === accountId ? { ...a, balance: 10000000 } : a)),
+      pools: defaultScenario.netWorth.pools?.map((p) => ({ ...p, preRetirementReturnRate: 0, postRetirementReturnRate: 0 }))
+    },
+    careerPlan: {
+      enabled: true,
+      entries: [{
+        ...defaultScenario.careerPlan.entries[0],
+        annualRaiseRate: 10,
+        startAge: 40,
+        endAge: 60,
+        paycheckInfo: { grossSalary: 0, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 },
+        sourceLines: [{
+          id: `line-${accountId}`,
+          enabled: true,
+          sourceType: 'account' as const,
+          sourceId: accountId,
+          contributionRate: 0,
+          savingsMonthly: false,
+          monthlyWithdrawal: withdrawal,
+          increaseWithdrawalWithPaycheck
+        }]
+      }]
+    },
+    incomeFallbackAccountId: null,
+    incomeFallbackAccountId2: null
+  });
+
+  it('records a shortfall when a monthly withdrawal exceeds the account balance', () => {
+    const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+    const scenario = baseWithWithdrawal(false, 200, accountId);
+    scenario.netWorth.bankAccounts = scenario.netWorth.bankAccounts.map((a) => (a.id === accountId ? { ...a, balance: 500 } : a));
+
+    const result = projectScenario(scenario);
+
+    expect(result.careerWithdrawalShortfalls[accountId]).toBeGreaterThan(0);
+    expect((result.warnings ?? []).some((warning) => warning.includes('Monthly withdrawal for'))).toBe(true);
+  });
+
+  it('scales monthly withdrawals with the raise when enabled', () => {
+    const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+    const flat = projectScenario(baseWithWithdrawal(false, 100, accountId));
+    const scaled = projectScenario(baseWithWithdrawal(true, 100, accountId));
+    const sumWithdrawals = (result: ReturnType<typeof projectScenario>) =>
+      (result.monthlyWaterfall ?? []).reduce((sum, month) => sum + month.careerWithdrawals, 0);
+
+    expect(sumWithdrawals(flat)).toBeGreaterThan(0);
+    expect(sumWithdrawals(scaled) / sumWithdrawals(flat)).toBeGreaterThan(1.05);
+  });
+});
+
+describe('income fallback for credit cards and housing', () => {
+  const fallbackScenario = (): { accountId: string; scenario: Scenario } => {
+    const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+    return {
+      accountId,
+      scenario: {
+        ...defaultScenario,
+        options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+        profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
+        contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+        netWorth: {
+          ...defaultScenario.netWorth,
+          accountBalances: { emergencyFund: 1000000, hsa: 0, investments: 0, retirement401k: 0 },
+          bankAccounts: defaultScenario.netWorth.bankAccounts!.map((a) => (a.id === accountId ? { ...a, balance: 1000000 } : a))
+        },
+        careerPlan: {
+          enabled: true,
+          entries: [{
+            ...defaultScenario.careerPlan.entries[0],
+            startAge: 40,
+            endAge: 41,
+            paycheckInfo: { grossSalary: 12000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0 }
+          }]
+        },
+        incomeFallbackAccountId: accountId,
+        incomeFallbackAccountId2: null,
+        creditCards: [],
+        housing: [],
+        largePurchases: [],
+        longTermPurchases: [],
+        loans: []
+      }
+    };
+  };
+
+  it('draws from the fallback account for income-funded credit card payments', () => {
+    const { accountId, scenario } = fallbackScenario();
+    scenario.creditCards = [{
+      id: 'cc-fallback',
+      label: 'Card',
+      enabled: true,
+      currentBalance: 20000,
+      annualInterestRate: 0,
+      introEnabled: false,
+      introEndYearMonth: '',
+      monthlyCharges: 0,
+      paymentMode: 'fixed',
+      fixedPaymentAmount: 20000,
+      minimumPaymentPercent: 0,
+      minimumPaymentFloor: 0,
+      paymentSource: 'income',
+      lumpSumPaymentSource: 'income',
+      paymentDay: 1
+    }];
+
+    const result = projectScenario(scenario);
+    const status = result.incomeFundedItemStatuses['cc-fallback'];
+
+    expect(status).toBeDefined();
+    expect(status!.status).toBe('fallback');
+    expect(status!.fallbackDetails!.some((detail) => detail.accountId === accountId && detail.amount > 0)).toBe(true);
+  });
+
+  it('draws from the fallback account for income-funded housing costs', () => {
+    const { accountId, scenario } = fallbackScenario();
+    scenario.housing = [{
+      id: 'housing-fallback',
+      label: 'Rent',
+      enabled: true,
+      showOnGraph: true,
+      housingType: 'rental',
+      startYearMonth: currentYearMonth(),
+      purchasePrice: 0,
+      downPayment: 0,
+      annualInterestRate: 0,
+      loanTermYears: 0,
+      extraMonthlyPayment: 0,
+      monthlyRent: 5000,
+      endYearMonth: '',
+      propertyTaxYearly: 0,
+      homeInsuranceYearly: 0,
+      hoaMonthly: 0,
+      maintenanceMonthly: 0,
+      pmiMonthly: 0,
+      rentalIncomeMonthly: 0,
+      rentalIncomeAccountId: '',
+      sellYearMonth: '',
+      appreciationRate: 0,
+      sellingCostsRate: 0,
+      saleProceedsAccountId: '',
+      paymentSource: 'income'
+    }];
+
+    const result = projectScenario(scenario);
+    const status = result.incomeFundedItemStatuses['housing-fallback'];
+
+    expect(status).toBeDefined();
+    expect(status!.status).toBe('fallback');
+    expect(status!.fallbackDetails!.some((detail) => detail.accountId === accountId && detail.amount > 0)).toBe(true);
+  });
+});
