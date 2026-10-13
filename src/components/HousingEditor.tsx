@@ -1,8 +1,8 @@
 import { memo, useState } from 'react';
 import { BufferedNumberInput } from './BufferedNumberInput';
-import { YearMonthInput } from './YearMonthInput';
+import { DateOrMarkerInput } from './DateOrMarkerInput';
 import { formatCurrency } from '../engine/projection';
-import type { BankAccountDefinition, HousingEntry } from '../types';
+import type { BankAccountDefinition, DateMarker, HousingEntry } from '../types';
 import { useRenderCount } from '../utils/perfTools';
 
 interface HousingEditorProps {
@@ -17,6 +17,8 @@ interface HousingEditorProps {
   accountOptions: Array<{ value: string; label: string }>;
   orderedBankAccounts: BankAccountDefinition[];
   careerOptions: Array<{ id: string; label: string }>;
+  dateMarkers?: DateMarker[];
+  incomeIndicators?: Record<string, { status: 'warning' | 'invalid'; tooltip: string }>;
   allowReordering?: boolean;
 }
 
@@ -32,6 +34,8 @@ export const HousingEditor = memo(({
   accountOptions,
   orderedBankAccounts,
   careerOptions,
+  dateMarkers = [],
+  incomeIndicators = {},
   allowReordering = true
 }: HousingEditorProps) => {
   useRenderCount('HousingEditor');
@@ -84,25 +88,34 @@ export const HousingEditor = memo(({
   return (
     <div className="housing-editor">
       <div className="career-tabs">
-        {housing.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            className={`career-tab${entry.id === selected?.id ? ' active' : ''}${dragHousingId === entry.id ? ' dragging' : ''}`}
-            draggable={allowReordering}
-            onClick={() => onSelectHousing(entry.id)}
-            onDragStart={() => allowReordering && setDragHousingId(entry.id)}
-            onDragOver={(event) => allowReordering && event.preventDefault()}
-            onDrop={() => {
-              if (allowReordering && dragHousingId) {
-                onReorderHousing(dragHousingId, entry.id);
-              }
-            }}
-            onDragEnd={() => allowReordering && setDragHousingId(null)}
-          >
-            {entry.label}
-          </button>
-        ))}
+        {housing.map((entry) => {
+          const indicator = incomeIndicators[entry.id];
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              className={`career-tab${entry.id === selected?.id ? ' active' : ''}${dragHousingId === entry.id ? ' dragging' : ''}${indicator ? ` ${indicator.status}` : ''}`}
+              title={indicator?.tooltip}
+              draggable={allowReordering}
+              onClick={() => onSelectHousing(entry.id)}
+              onDragStart={() => allowReordering && setDragHousingId(entry.id)}
+              onDragOver={(event) => allowReordering && event.preventDefault()}
+              onDrop={() => {
+                if (allowReordering && dragHousingId) {
+                  onReorderHousing(dragHousingId, entry.id);
+                }
+              }}
+              onDragEnd={() => allowReordering && setDragHousingId(null)}
+            >
+              {entry.label}
+              {indicator ? (
+                <span className="income-indicator-mark" aria-hidden="true">
+                  {indicator.status === 'invalid' ? ' ⚠' : ' •'}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
         <button type="button" className="career-tab add" onClick={() => onAddHousing('mortgage')}>
           + Mortgage
         </button>
@@ -130,6 +143,17 @@ export const HousingEditor = memo(({
             <span>Show flag on graph</span>
           </label>
 
+          {incomeIndicators[selected.id] && (
+            <p
+              className={`income-indicator-note ${incomeIndicators[selected.id].status}`}
+              title={incomeIndicators[selected.id].tooltip}
+            >
+              {incomeIndicators[selected.id].status === 'invalid'
+                ? 'This housing expense exceeds your available income and could not be fully covered.'
+                : 'Part of this housing expense is funded from a fallback account.'}
+            </p>
+          )}
+
           <div className="career-grid">
             <label className="full-span">
               <span>Name</span>
@@ -137,11 +161,21 @@ export const HousingEditor = memo(({
             </label>
             <label>
               <span>Start Year-Month</span>
-              <YearMonthInput
+              <DateOrMarkerInput
                 label="Start"
                 value={selected.startYearMonth}
+                markerId={selected.startMarkerId}
+                markers={dateMarkers}
                 disabled={Boolean(selected.usePreviousEndAsStart) || startLinked}
-                onChange={(next) => onChangeHousing({ ...selected, startYearMonth: next })}
+                onChange={(next, markerId) =>
+                  onChangeHousing({
+                    ...selected,
+                    startYearMonth: next,
+                    startMarkerId: markerId,
+                    usePreviousEndAsStart: markerId ? false : selected.usePreviousEndAsStart,
+                    linkedCareerStartId: markerId ? null : selected.linkedCareerStartId
+                  })
+                }
               />
             </label>
             <label className="full-span checkbox-row">
@@ -152,7 +186,8 @@ export const HousingEditor = memo(({
                 onChange={(e) => onChangeHousing({
                   ...selected,
                   usePreviousEndAsStart: e.target.checked,
-                  linkedCareerStartId: e.target.checked ? null : selected.linkedCareerStartId
+                  linkedCareerStartId: e.target.checked ? null : selected.linkedCareerStartId,
+                  startMarkerId: e.target.checked ? null : selected.startMarkerId
                 })}
               />
               <span>Use the month after the previous housing end date as the start date</span>
@@ -165,7 +200,8 @@ export const HousingEditor = memo(({
                 onChange={(e) => onChangeHousing({
                   ...selected,
                   linkedCareerStartId: e.target.checked ? (selected.linkedCareerStartId ?? careerOptions[0]?.id ?? null) : null,
-                  usePreviousEndAsStart: e.target.checked ? false : selected.usePreviousEndAsStart
+                  usePreviousEndAsStart: e.target.checked ? false : selected.usePreviousEndAsStart,
+                  startMarkerId: e.target.checked ? null : selected.startMarkerId
                 })}
               />
               <span>Link start date to a career</span>
@@ -223,7 +259,21 @@ export const HousingEditor = memo(({
                 </label>
                 <label>
                   <span>Sell Year-Month</span>
-                  <YearMonthInput label="Sell" value={selected.sellYearMonth} disabled={endLinked} onChange={(next) => onChangeHousing({ ...selected, sellYearMonth: next })} />
+                  <DateOrMarkerInput
+                    label="Sell"
+                    value={selected.sellYearMonth}
+                    markerId={selected.sellMarkerId}
+                    markers={dateMarkers}
+                    disabled={endLinked}
+                    onChange={(next, markerId) =>
+                      onChangeHousing({
+                        ...selected,
+                        sellYearMonth: next,
+                        sellMarkerId: markerId,
+                        linkedCareerEndId: markerId ? null : selected.linkedCareerEndId
+                      })
+                    }
+                  />
                 </label>
                 <label>
                   <span>Sale Proceeds Account</span>
@@ -241,7 +291,21 @@ export const HousingEditor = memo(({
                 </label>
                 <label>
                   <span>End Year-Month</span>
-                  <YearMonthInput label="End" value={selected.endYearMonth} disabled={endLinked} onChange={(next) => onChangeHousing({ ...selected, endYearMonth: next })} />
+                  <DateOrMarkerInput
+                    label="End"
+                    value={selected.endYearMonth}
+                    markerId={selected.endMarkerId}
+                    markers={dateMarkers}
+                    disabled={endLinked}
+                    onChange={(next, markerId) =>
+                      onChangeHousing({
+                        ...selected,
+                        endYearMonth: next,
+                        endMarkerId: markerId,
+                        linkedCareerEndId: markerId ? null : selected.linkedCareerEndId
+                      })
+                    }
+                  />
                 </label>
               </>
             )}
@@ -253,7 +317,9 @@ export const HousingEditor = memo(({
                 disabled={!hasCareers}
                 onChange={(e) => onChangeHousing({
                   ...selected,
-                  linkedCareerEndId: e.target.checked ? (selected.linkedCareerEndId ?? careerOptions[0]?.id ?? null) : null
+                  linkedCareerEndId: e.target.checked ? (selected.linkedCareerEndId ?? careerOptions[0]?.id ?? null) : null,
+                  sellMarkerId: e.target.checked ? null : selected.sellMarkerId,
+                  endMarkerId: e.target.checked ? null : selected.endMarkerId
                 })}
               />
               <span>Link end date to a career</span>

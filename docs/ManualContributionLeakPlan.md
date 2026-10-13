@@ -61,4 +61,4 @@ Only add `contribution` to `balance` (and distribute to ledger accounts) during 
 
 ## Status
 
-**Not yet implemented.** Marked for separate handling per user request.
+**Resolved 2026-10-12:** user explicitly chose removal of these standalone controls in favor of career allocations/other-income events (ADR-005). The contribution configuration/defaults/UI and unused scalar calculation are removed; obsolete saved configuration is pruned. The analysis/options above describe historical behavior, not the current implementation.

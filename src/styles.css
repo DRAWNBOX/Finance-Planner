@@ -2017,3 +2017,183 @@ td:first-child {
   font-size: 0.8rem;
   color: #7a5b0b;
 }
+
+/* Date markers + date/marker input */
+.date-or-marker-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.date-or-marker-toggle {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.date-or-marker-option {
+  border: none;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.date-or-marker-option.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.date-or-marker-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.date-or-marker-body {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.date-or-marker-body select {
+  min-width: 8rem;
+}
+
+.date-or-marker-resolved {
+  font-size: 0.75rem;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.date-markers-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.date-markers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.date-marker-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.date-marker-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+}
+
+.date-marker-row label:first-child {
+  flex: 1 1 12rem;
+}
+
+.date-marker-row input[type='text'],
+.date-marker-row input[type='date'] {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+/* Net pay plan selector */
+.pay-plan-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.75rem;
+  margin: 0.1rem 0 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.pay-plan-bar .pay-plan-selector,
+.pay-plan-bar .pay-plan-label,
+.pay-plan-bar .pay-plan-date {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.pay-plan-bar span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+.pay-plan-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.pay-plan-chips .career-tab {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.82rem;
+}
+
+/* Housing income indicators */
+.career-tab.warning {
+  border-color: #e0a800;
+  background: #fff8e1;
+  color: #7a5b0b;
+}
+
+.career-tab.invalid {
+  border-color: #c0392b;
+  background: #fdecea;
+  color: #a02518;
+}
+
+.career-tab.warning.active {
+  background: #e0a800;
+  border-color: #e0a800;
+  color: #fff;
+}
+
+.career-tab.invalid.active {
+  background: #c0392b;
+  border-color: #c0392b;
+  color: #fff;
+}
+
+.income-indicator-mark {
+  font-size: 0.8rem;
+}
+
+.income-indicator-note {
+  grid-column: 1 / -1;
+  margin: -0.1rem 0 0.4rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.income-indicator-note.warning {
+  border: 1px solid #f0c36d;
+  background: #fdf6e3;
+  color: #7a5b0b;
+}
+
+.income-indicator-note.invalid {
+  border: 1px solid #e8a7a0;
+  background: #fdecea;
+  color: #a02518;
+}
+
+.paycheck-summary-row.net.invalid {
+  color: #a02518;
+}

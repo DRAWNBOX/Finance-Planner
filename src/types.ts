@@ -27,13 +27,14 @@ export interface AgeOptions {
   dateOfBirth: string;
 }
 
-export interface PortfolioConfig {
-  currentAssets: number;
+export interface DateMarker {
+  id: string;
+  label: string;
+  date: string;
 }
 
-export interface ContributionPlan {
-  yearlyContribution: number;
-  yearlyIncreaseRate: number;
+export interface PortfolioConfig {
+  currentAssets: number;
 }
 
 export type BalanceInputMode = string;
@@ -68,6 +69,16 @@ export interface Paycheck {
   categories: PaycheckCategory[];
 }
 
+export interface CareerPayPlan {
+  id: string;
+  label: string;
+  effectiveYearMonth: string;
+  effectiveMarkerId?: string | null;
+  paycheck: Paycheck;
+  sourceLines: CareerSourceLine[];
+  annualRaiseRate?: number;
+}
+
 export interface CareerEntry {
   id: string;
   label: string;
@@ -76,6 +87,8 @@ export interface CareerEntry {
   useBirthdayBasedStartAge?: boolean;
   startYearMonth?: string;
   endYearMonth?: string;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
   startAge: number;
   endAge: number;
   annualRaiseRate: number;
@@ -103,6 +116,7 @@ export interface CareerEntry {
   sourceLines?: CareerSourceLine[];
   paycheckInfo?: PaycheckInfo;
   paycheck?: Paycheck;
+  payPlans?: CareerPayPlan[];
 }
 
 export interface PaycheckInfo {
@@ -188,6 +202,7 @@ export interface LargePurchase {
   showOnGraph: boolean;
   flagColor?: string;
   yearMonth: string;
+  yearMonthMarkerId?: string | null;
   age: number;
   amount: number;
   sourceLines?: SourceLine[];
@@ -207,6 +222,8 @@ export interface LongTermPurchase {
   endMode: LongTermPurchaseEndMode;
   durationMonths: number;
   endYearMonth: string;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
   monthlyAmount: number;
   sourceLines?: SourceLine[];
   fundingSource?: 'income' | `account:${string}`;
@@ -222,6 +239,7 @@ export interface Loan {
   showOnGraph: boolean;
   flagColor?: string;
   startYearMonth: string;
+  startMarkerId?: string | null;
   originalAmount: number;
   downPayment: number;
   currentBalance: number;
@@ -243,6 +261,7 @@ export interface CreditCard {
   annualInterestRate: number;
   introEnabled: boolean;
   introEndYearMonth: string;
+  introEndMarkerId?: string | null;
   monthlyCharges: number;
   paymentMode: CreditCardPaymentMode;
   fixedPaymentAmount: number;
@@ -251,6 +270,8 @@ export interface CreditCard {
   paymentSource: 'income' | `account:${string}`;
   lumpSumPaymentSource: 'income' | `account:${string}`;
   paymentDay: number;
+  autopayEndYearMonth?: string;
+  autopayEndMarkerId?: string | null;
   showOnGraph?: boolean;
   flagColor?: string;
 }
@@ -266,6 +287,7 @@ export interface HousingEntry {
 
   housingType: HousingType;
   startYearMonth: string;
+  startMarkerId?: string | null;
 
   purchasePrice: number;
   downPayment: number;
@@ -276,6 +298,7 @@ export interface HousingEntry {
 
   monthlyRent: number;
   endYearMonth: string;
+  endMarkerId?: string | null;
 
   propertyTaxYearly: number;
   homeInsuranceYearly: number;
@@ -287,6 +310,7 @@ export interface HousingEntry {
   rentalIncomeAccountId?: string;
 
   sellYearMonth: string;
+  sellMarkerId?: string | null;
   appreciationRate: number;
   sellingCostsRate: number;
   saleProceedsAccountId?: string;
@@ -407,6 +431,8 @@ export interface ExpenseEntry {
   categoryId?: string | null;
   color?: string;
   fundingSource?: 'income' | `account:${string}`;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
 }
 
 export interface ExpenseCategory {
@@ -439,6 +465,8 @@ export interface RecurringExpenseEvent {
   enabled: boolean;
   color?: string;
   fundingSource?: 'income' | `account:${string}`;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
 }
 
 export interface ExpenseImportSource {
@@ -509,6 +537,8 @@ export interface CashflowItem {
   accountId?: string | null;
   startYearMonth?: string;
   endYearMonth?: string;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
 }
 
 export type LifeEventType =
@@ -535,19 +565,21 @@ export interface LifeEvent {
   accountId?: string | null;
   startYearMonth?: string;
   endYearMonth?: string;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
 }
 
 export interface Scenario {
   profile: PersonProfile;
   options: AgeOptions;
   portfolio: PortfolioConfig;
-  contribution: ContributionPlan;
   careerPlan: CareerPlan;
   netWorth: NetWorthConfig;
   futureRetirement: FutureRetirementPlan;
   withdrawal: WithdrawalPlan;
   manualReturns: ManualReturnModel;
   purchaseCategories: PurchaseCategory[];
+  dateMarkers: DateMarker[];
   timelines: Timeline[];
   activeTimelineId: string | null;
   trajectorySnapshots: TrajectorySnapshot[];

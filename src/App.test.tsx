@@ -54,6 +54,21 @@ describe('App', () => {
     expect(screen.getByText(/Ending balance at age/i).textContent).toBe(financeSummary);
   });
 
+  it('removes standalone contribution controls and prunes their obsolete saved configuration', () => {
+    const state = loadAppState();
+    window.localStorage.setItem('finance-planner-state', JSON.stringify({
+      ...state,
+      scenario: { ...state.scenario, contribution: { yearlyContribution: 17500, yearlyIncreaseRate: 2.9 } }
+    }));
+    render(<App />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+
+    expect(screen.queryByText('Yearly Contribution')).not.toBeInTheDocument();
+    expect(screen.queryByText('Yearly % Increase')).not.toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem('finance-planner-state')!).scenario).not.toHaveProperty('contribution');
+    expect(screen.getByRole('columnheader', { name: 'Career Savings' })).toBeInTheDocument();
+  });
+
   it('shows an inline editor when an add-on checkbox is enabled', () => {
     render(<App />);
 
@@ -1477,6 +1492,29 @@ describe('App', () => {
     expect(statutoryCategory.lines[0].amount).toBe(100);
   });
 
+  it('adds and edits a net pay plan', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+
+    expect(screen.getByRole('tab', { name: 'Initial' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Pay Plan' }));
+
+    const nameInput = screen.getByLabelText('Pay plan name') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: 'Promotion' } });
+
+    const stored = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
+    const plans = stored.scenario.careerPlan.entries[0].payPlans;
+    expect(plans).toHaveLength(1);
+    expect(plans[0].label).toBe('Promotion');
+    expect(plans[0].effectiveYearMonth).toMatch(/^\d{4}-\d{2}$/);
+    expect(plans[0].paycheck).toBeTruthy();
+
+    expect(screen.getByRole('tab', { name: /Promotion/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Initial' })).toHaveAttribute('aria-selected', 'false');
+  });
+
   it('shows savings tracker controls and can switch to the stacked savings graph', () => {
     render(<App />);
 
@@ -1995,6 +2033,304 @@ describe('App', () => {
     expect(screen.getByText(/Overspend Expense/)).toBeInTheDocument();
   });
 
+  it('marks a housing chip when income-funded housing exceeds income', () => {
+    const now = new Date();
+    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    window.localStorage.setItem(
+      'finance-planner-state',
+      JSON.stringify({
+        scenario: {
+          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
+          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
+          portfolio: { currentAssets: 0 },
+          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+          careerPlan: {
+            enabled: true,
+            entries: [{
+              id: 'career-1',
+              label: 'Test Career',
+              enabled: true,
+              usePreviousCareerStartAge: false,
+              useBirthdayBasedStartAge: false,
+              startYearMonth: '',
+              endYearMonth: '',
+              startAge: 45,
+              endAge: 65,
+              annualRaiseRate: 0,
+              savingsRate: 0,
+              emergencyFundContributionRate: 0,
+              hsaContributionRate: 0,
+              investmentsContributionRate: 0,
+              retirement401kContributionRate: 0,
+              emergencyFundSavingsMonthly: false,
+              hsaSavingsMonthly: false,
+              investmentsSavingsMonthly: false,
+              retirement401kSavingsMonthly: false,
+              emergencyFundStartBalanceMode: 'auto',
+              hsaStartBalanceMode: 'auto',
+              investmentsStartBalanceMode: 'auto',
+              retirement401kStartBalanceMode: 'auto',
+              emergencyFundManualStartBalance: 0,
+              hsaManualStartBalance: 0,
+              investmentsManualStartBalance: 0,
+              retirement401kManualStartBalance: 0,
+              sourceLines: [],
+              paycheckInfo: {
+                grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
+                retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
+              }
+            }]
+          },
+          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
+          withdrawal: { mode: 'specified', firstYearAmount: 0, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, sourceLines: [] },
+          returnMode: 'manual',
+          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
+          largePurchases: [],
+          longTermPurchases: [],
+          loans: [],
+          cashflowItems: [],
+          lifeEvents: [],
+          incomeFallbackAccountId: null,
+          housing: [{
+            id: 'housing-1',
+            label: 'Rent',
+            enabled: true,
+            showOnGraph: true,
+            housingType: 'rental',
+            startYearMonth: currentYearMonth,
+            purchasePrice: 0,
+            downPayment: 0,
+            annualInterestRate: 0,
+            loanTermYears: 0,
+            extraMonthlyPayment: 0,
+            monthlyRent: 5000,
+            endYearMonth: '',
+            propertyTaxYearly: 0,
+            homeInsuranceYearly: 0,
+            hoaMonthly: 0,
+            maintenanceMonthly: 0,
+            pmiMonthly: 0,
+            rentalIncomeMonthly: 0,
+            sellYearMonth: '',
+            appreciationRate: 0,
+            sellingCostsRate: 0,
+            paymentSource: 'income'
+          }],
+          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: {} },
+          netWorth: { accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 }] },
+          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
+        },
+        ui: { activeTab: 'careers', selectedCareerId: 'career-1', careersSubTab: 'housing', expensesSubTab: 'planning' }
+      })
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+
+    const chip = screen
+      .getAllByRole('button')
+      .find((button) => button.className.includes('career-tab') && (button.textContent ?? '').startsWith('Rent')) as HTMLElement;
+    expect(chip).toBeTruthy();
+    expect(chip.className).toContain('invalid');
+    expect(chip.getAttribute('title') ?? '').toMatch(/income|fallback|unpaid|available/i);
+  });
+
+  it('marks a credit card row when income-funded payments exceed income', () => {
+    window.localStorage.setItem(
+      'finance-planner-state',
+      JSON.stringify({
+        scenario: {
+          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
+          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
+          portfolio: { currentAssets: 0 },
+          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+          careerPlan: {
+            enabled: true,
+            entries: [{
+              id: 'career-1',
+              label: 'Test Career',
+              enabled: true,
+              usePreviousCareerStartAge: false,
+              useBirthdayBasedStartAge: false,
+              startYearMonth: '',
+              endYearMonth: '',
+              startAge: 45,
+              endAge: 65,
+              annualRaiseRate: 0,
+              savingsRate: 0,
+              emergencyFundContributionRate: 0,
+              hsaContributionRate: 0,
+              investmentsContributionRate: 0,
+              retirement401kContributionRate: 0,
+              emergencyFundSavingsMonthly: false,
+              hsaSavingsMonthly: false,
+              investmentsSavingsMonthly: false,
+              retirement401kSavingsMonthly: false,
+              emergencyFundStartBalanceMode: 'auto',
+              hsaStartBalanceMode: 'auto',
+              investmentsStartBalanceMode: 'auto',
+              retirement401kStartBalanceMode: 'auto',
+              emergencyFundManualStartBalance: 0,
+              hsaManualStartBalance: 0,
+              investmentsManualStartBalance: 0,
+              retirement401kManualStartBalance: 0,
+              sourceLines: [],
+              paycheckInfo: {
+                grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
+                retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
+              }
+            }]
+          },
+          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
+          withdrawal: { mode: 'specified', firstYearAmount: 0, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, sourceLines: [] },
+          returnMode: 'manual',
+          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
+          largePurchases: [],
+          longTermPurchases: [],
+          loans: [],
+          creditCards: [{
+            id: 'cc-autopay',
+            label: 'Test Card',
+            enabled: true,
+            currentBalance: 0,
+            annualInterestRate: 0,
+            introEnabled: false,
+            introEndYearMonth: '',
+            monthlyCharges: 0,
+            paymentMode: 'autopay',
+            fixedPaymentAmount: 5000,
+            minimumPaymentPercent: 0,
+            minimumPaymentFloor: 0,
+            paymentSource: 'income',
+            lumpSumPaymentSource: 'income',
+            paymentDay: 1
+          }],
+          cashflowItems: [],
+          lifeEvents: [],
+          incomeFallbackAccountId: null,
+          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: {} },
+          netWorth: { accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 }] },
+          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
+        },
+        ui: { activeTab: 'expenses', selectedCareerId: 'career-1', careersSubTab: 'careers', expensesSubTab: 'creditCards' }
+      })
+    );
+
+    render(<App />);
+
+    const row = screen.getByDisplayValue('Test Card').closest('tr') as HTMLElement;
+    expect(row.className).toContain('invalid');
+    expect(row.getAttribute('title') ?? '').toMatch(/income|fallback|unpaid|available/i);
+  });
+
+  it('lists a credit card in the income usage warnings', () => {
+    window.localStorage.setItem(
+      'finance-planner-state',
+      JSON.stringify({
+        scenario: {
+          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
+          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
+          portfolio: { currentAssets: 0 },
+          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+          careerPlan: {
+            enabled: true,
+            entries: [{
+              id: 'career-1',
+              label: 'Test Career',
+              enabled: true,
+              usePreviousCareerStartAge: false,
+              useBirthdayBasedStartAge: false,
+              startYearMonth: '',
+              endYearMonth: '',
+              startAge: 45,
+              endAge: 65,
+              annualRaiseRate: 0,
+              savingsRate: 0,
+              emergencyFundContributionRate: 0,
+              hsaContributionRate: 0,
+              investmentsContributionRate: 0,
+              retirement401kContributionRate: 0,
+              emergencyFundSavingsMonthly: false,
+              hsaSavingsMonthly: false,
+              investmentsSavingsMonthly: false,
+              retirement401kSavingsMonthly: false,
+              emergencyFundStartBalanceMode: 'auto',
+              hsaStartBalanceMode: 'auto',
+              investmentsStartBalanceMode: 'auto',
+              retirement401kStartBalanceMode: 'auto',
+              emergencyFundManualStartBalance: 0,
+              hsaManualStartBalance: 0,
+              investmentsManualStartBalance: 0,
+              retirement401kManualStartBalance: 0,
+              sourceLines: [],
+              paycheckInfo: {
+                grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
+                retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
+              }
+            }]
+          },
+          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
+          withdrawal: { mode: 'specified', firstYearAmount: 0, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, sourceLines: [] },
+          returnMode: 'manual',
+          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
+          largePurchases: [],
+          longTermPurchases: [],
+          loans: [],
+          creditCards: [{
+            id: 'cc-autopay',
+            label: 'Test Card',
+            enabled: true,
+            currentBalance: 0,
+            annualInterestRate: 0,
+            introEnabled: false,
+            introEndYearMonth: '',
+            monthlyCharges: 0,
+            paymentMode: 'autopay',
+            fixedPaymentAmount: 5000,
+            minimumPaymentPercent: 0,
+            minimumPaymentFloor: 0,
+            paymentSource: 'income',
+            lumpSumPaymentSource: 'income',
+            paymentDay: 1
+          }],
+          cashflowItems: [],
+          lifeEvents: [],
+          incomeFallbackAccountId: null,
+          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: {} },
+          netWorth: { accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 }] },
+          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
+        },
+        ui: { activeTab: 'careers', selectedCareerId: 'career-1', careersSubTab: 'warnings', expensesSubTab: 'planning' }
+      })
+    );
+
+    render(<App />);
+
+    expect(screen.getByText('Income usage warnings')).toBeInTheDocument();
+    expect(screen.getAllByText('Test Card').length).toBeGreaterThan(0);
+  });
+
+  it('defaults an autopay end date and shows it in the card row', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Expenses' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Credit Cards' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Credit Card' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    const modeLabel = screen.getByText('Payment Mode').closest('label') as HTMLElement;
+    fireEvent.change(within(modeLabel).getByRole('combobox'), { target: { value: 'autopay' } });
+
+    expect(screen.getByText('Autopay Ends')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+    expect(stored).toContain('"paymentMode":"autopay"');
+    expect(stored).toMatch(/"autopayEndYearMonth":"\d{4}-\d{2}"/);
+    expect(screen.getByText(/until \d{4}-\d{2}/)).toBeInTheDocument();
+  });
+
   it('shows the Trajectory sub-tab, renders the overlay chart, and persists the sub-tab selection', () => {
     render(<App />);
 
@@ -2107,6 +2443,58 @@ describe('App', () => {
     render(<App />);
     fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
     expect(screen.getByRole('checkbox', { name: 'Display values in current dollars' })).toBeChecked();
+  });
+
+  it('adds a date marker in a new tab to the right of Warnings', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    const financeSubTabs = screen.getByRole('button', { name: 'Warnings' }).closest('.tabs') as HTMLElement;
+    const subTabLabels = within(financeSubTabs)
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+    expect(subTabLabels[subTabLabels.length - 1]).toBe('Date Markers');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Date Markers' }));
+    expect(screen.getByRole('button', { name: '+ Date Marker' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Date Marker' }));
+    const nameInput = screen.getByDisplayValue('Marker 1');
+    fireEvent.change(nameInput, { target: { value: 'Retirement' } });
+
+    await waitFor(() => {
+      const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+      expect(stored).toContain('"dateMarkers"');
+      expect(stored).toContain('"label":"Retirement"');
+    });
+  });
+
+  it('links a housing start date to a date marker', async () => {
+    const { container } = render(<App />);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Date Markers' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Date Marker' }));
+
+    const markerDateInput = container.querySelector('.date-marker-row input[type="date"]') as HTMLInputElement;
+    expect(markerDateInput).toBeTruthy();
+    fireEvent.change(markerDateInput, { target: { value: '2035-06-01' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Housing Expenses' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
+
+    const startLabel = screen.getByText('Start Year-Month').closest('label') as HTMLElement;
+    fireEvent.click(within(startLabel).getByRole('button', { name: 'Marker' }));
+    const markerSelect = within(startLabel).getByRole('combobox') as HTMLSelectElement;
+    fireEvent.change(markerSelect, { target: { value: markerSelect.options[0].value } });
+
+    expect(within(startLabel).getByText('June 2035')).toBeInTheDocument();
+
+    await waitFor(() => {
+      const stored = window.localStorage.getItem('finance-planner-state') ?? '';
+      expect(stored).toContain('"startMarkerId"');
+      expect(stored).toContain('"startYearMonth":"2035-06"');
+    });
   });
 });
 

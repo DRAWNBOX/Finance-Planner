@@ -9,7 +9,6 @@ import { SavingsStackedChart } from './components/SavingsStackedChart';
 import { TrajectoryComparisonChart } from './components/TrajectoryComparisonChart';
 import { BufferedNumberInput } from './components/BufferedNumberInput';
 import { ExpensesPlanner } from './components/ExpensesPlanner';
-import { YearMonthInput } from './components/YearMonthInput';
 import { HousingEditor } from './components/HousingEditor';
 import { ColorPickerField } from './components/ColorPickerField';
 import {
@@ -28,6 +27,9 @@ import {
 } from './financeModel';
 import { calculateAgeFromBirthDate, describeIncomeValidationGroup, formatCurrency, projectScenario, resolveCurrentAge } from './engine/projection';
 import { addMonthsToYearMonth, ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
+import { makeDateMarkerId, resolveDateMarkers } from './utils/dateMarkers';
+import { DateMarkersEditor } from './components/DateMarkersEditor';
+import { DateOrMarkerInput } from './components/DateOrMarkerInput';
 import { loadAppState, saveAppState, type AppUiState, type CareersSubTab, type ExpensesSubTab } from './storage';
 import type {
   AccountTypePreset,
@@ -67,7 +69,8 @@ const FINANCE_PREDICTION_SUB_TABS: Array<{ id: FinancePredictionSubTab; label: s
   { id: 'purchasesExpenses', label: 'Purchases and expenses' },
   { id: 'housing', label: 'Housing Expenses' },
   { id: 'trajectory', label: 'Trajectory' },
-  { id: 'warnings', label: 'Warnings' }
+  { id: 'warnings', label: 'Warnings' },
+  { id: 'dateMarkers', label: 'Date Markers' }
 ];
 const EXPENSES_SUB_TABS: Array<{ id: ExpensesTab; label: string }> = [
   { id: 'planning', label: 'Expense Planning' },
@@ -154,8 +157,8 @@ const normalizeCareerTimeline = (
   const fallbackEndAge = Math.max(career.startAge, career.endAge);
   const startAge = effectiveStartAge;
   const endAge = endAgeFromCalendar ?? fallbackEndAge;
-  const usePreviousCareerStartAge = Boolean(career.usePreviousCareerStartAge);
-  const useBirthdayBasedStartAge = Boolean(career.useBirthdayBasedStartAge) && !usePreviousCareerStartAge;
+  const usePreviousCareerStartAge = Boolean(career.usePreviousCareerStartAge) && !career.startMarkerId;
+  const useBirthdayBasedStartAge = Boolean(career.useBirthdayBasedStartAge) && !usePreviousCareerStartAge && !career.startMarkerId;
   const normalizedStartAge = useBirthdayBasedStartAge ? birthdayBasedCareerStartAge : startAge;
   const normalizedStartYearMonth =
     useBirthdayBasedStartAge || usePreviousCareerStartAge
@@ -606,6 +609,18 @@ const normalizeCareerSourceLinesForBankAccounts = (
       };
     });
 };
+
+const normalizeCareerPayPlansForBankAccounts = (
+  career: Scenario['careerPlan']['entries'][number],
+  accounts: BankAccountDefinition[]
+) =>
+  (career.payPlans ?? []).map((plan) => ({
+    ...plan,
+    sourceLines: normalizeCareerSourceLinesForBankAccounts(
+      { sourceLines: plan.sourceLines } as Scenario['careerPlan']['entries'][number],
+      accounts
+    )
+  }));
 const normalizeFallbackId = (value: unknown, accountIds: Set<string>): string | null => {
   if (typeof value === 'string' && value.trim().length > 0 && accountIds.has(value.trim())) {
     return value.trim();
@@ -1116,12 +1131,13 @@ const App = () => {
   useEffect(() => {
     const syncedEntries = scenario.careerPlan.entries.map((entry) => ({
       ...entry,
-      sourceLines: normalizeCareerSourceLinesForBankAccounts(entry, bankAccounts)
+      sourceLines: normalizeCareerSourceLinesForBankAccounts(entry, bankAccounts),
+      payPlans: normalizeCareerPayPlansForBankAccounts(entry, bankAccounts)
     }));
     const changed = syncedEntries.some((entry, index) => {
       const current = scenario.careerPlan.entries[index];
-      const currentSignature = JSON.stringify(current?.sourceLines ?? []);
-      const nextSignature = JSON.stringify(entry.sourceLines ?? []);
+      const currentSignature = JSON.stringify({ sourceLines: current?.sourceLines ?? [], payPlans: current?.payPlans ?? [] });
+      const nextSignature = JSON.stringify({ sourceLines: entry.sourceLines ?? [], payPlans: entry.payPlans ?? [] });
       return currentSignature !== nextSignature;
     });
 
@@ -1141,7 +1157,11 @@ const App = () => {
     }));
   }, [bankAccounts, scenario.careerPlan.entries]);
 
-  const updateScenario = (nextScenario: Scenario) => {
+  const updateScenario = (rawScenario: Scenario) => {
+    const nextScenario = resolveDateMarkers(rawScenario, {
+      dateOfBirth: rawScenario.options.dateOfBirth,
+      currentAge: rawScenario.profile.currentAge
+    });
     const resolvedAge = resolveCurrentAge(nextScenario);
     const normalizedBirthdayBasedCareerStartAge = resolveBirthdayBasedCareerStartAge(nextScenario);
     const normalizedCareerEntries = normalizeCareerEntries(
@@ -1246,6 +1266,7 @@ const App = () => {
 
           return Math.floor(derivedAge ?? Math.max(resolvedAge, toNumberOrFallback(purchase.age, resolvedAge)));
         })(),
+        yearMonthMarkerId: purchase.yearMonthMarkerId ?? null,
         amount: Math.max(0, toNumberOrFallback(purchase.amount, 0)),
         sourceLines
       };
@@ -1273,6 +1294,8 @@ const App = () => {
         endMode,
         durationMonths: Math.max(1, Math.floor(toNumberOrFallback(purchase.durationMonths, 12))),
         endYearMonth: normalizeYearMonth(purchase.endYearMonth) || fallbackEndYearMonth,
+        startMarkerId: purchase.startMarkerId ?? null,
+        endMarkerId: purchase.endMarkerId ?? null,
         monthlyAmount: Math.max(0, toNumberOrFallback(purchase.monthlyAmount, 0)),
         sourceLines
       };
@@ -1286,6 +1309,7 @@ const App = () => {
       startYearMonth:
         normalizeYearMonth(loan.startYearMonth) ||
         formatYearMonthFromAge(resolvedAge, nextScenario.options.dateOfBirth, resolvedAge),
+      startMarkerId: loan.startMarkerId ?? null,
       originalAmount: Math.max(0, toNumberOrFallback(loan.originalAmount, 0)),
       downPayment: Math.max(0, toNumberOrFallback(loan.downPayment, 0)),
       currentBalance: Math.max(0, toNumberOrFallback(loan.currentBalance, 0)),
@@ -1305,7 +1329,8 @@ const App = () => {
     });
     const normalizeCareerWithBankTargets = (entry: Scenario['careerPlan']['entries'][number]) => ({
       ...entry,
-      sourceLines: normalizeCareerSourceLinesForBankAccounts(entry, normalizedNetWorth.bankAccounts ?? [])
+      sourceLines: normalizeCareerSourceLinesForBankAccounts(entry, normalizedNetWorth.bankAccounts ?? []),
+      payPlans: normalizeCareerPayPlansForBankAccounts(entry, normalizedNetWorth.bankAccounts ?? [])
     });
     const normalizeHousingChain = (
       entries: Scenario['housing'],
@@ -1322,10 +1347,10 @@ const App = () => {
       entries.forEach((entry) => {
         const previous = result[result.length - 1];
         let nextEntry = entry;
-        const startCareer = entry.linkedCareerStartId ? careerById.get(entry.linkedCareerStartId) : undefined;
+        const startCareer = !entry.startMarkerId && entry.linkedCareerStartId ? careerById.get(entry.linkedCareerStartId) : undefined;
         if (startCareer) {
           nextEntry = { ...nextEntry, startYearMonth: careerStartYearMonth(startCareer) };
-        } else if (entry.usePreviousEndAsStart && previous) {
+        } else if (!entry.startMarkerId && entry.usePreviousEndAsStart && previous) {
           const prevEnd = normalizeYearMonth(
             previous.housingType === 'mortgage' ? previous.sellYearMonth : previous.endYearMonth
           );
@@ -1333,7 +1358,8 @@ const App = () => {
             nextEntry = { ...nextEntry, startYearMonth: addMonthsToYearMonth(prevEnd, 1) };
           }
         }
-        const endCareer = entry.linkedCareerEndId ? careerById.get(entry.linkedCareerEndId) : undefined;
+        const endLinkedByMarker = Boolean(entry.sellMarkerId || entry.endMarkerId);
+        const endCareer = !endLinkedByMarker && entry.linkedCareerEndId ? careerById.get(entry.linkedCareerEndId) : undefined;
         if (endCareer) {
           const linkedEnd = careerEndYearMonth(endCareer);
           nextEntry = nextEntry.housingType === 'mortgage'
@@ -1672,6 +1698,19 @@ const App = () => {
             lines: category.lines.map((line) => ({ ...line }))
           }))
         }
+      : undefined,
+    payPlans: career.payPlans
+      ? career.payPlans.map((plan) => ({
+          ...plan,
+          paycheck: {
+            ...plan.paycheck,
+            categories: plan.paycheck.categories.map((category) => ({
+              ...category,
+              lines: category.lines.map((line) => ({ ...line }))
+            }))
+          },
+          sourceLines: plan.sourceLines.map((line) => ({ ...line }))
+        }))
       : undefined
   });
 
@@ -2448,37 +2487,6 @@ const App = () => {
         </Panel>
       ) : null}
 
-      {!forCareerRetirementItem ? (
-        <Panel title="Contributions">
-          <ControlRow
-            label="Yearly Contribution"
-            value={scenario.contribution.yearlyContribution}
-            min={0}
-            max={100000}
-            step={500}
-            onChange={(value) =>
-              updateScenario({
-                ...scenario,
-                contribution: { ...scenario.contribution, yearlyContribution: value }
-              })
-            }
-          />
-          <ControlRow
-            label="Yearly % Increase"
-            value={scenario.contribution.yearlyIncreaseRate}
-            min={0}
-            max={15}
-            step={0.1}
-            onChange={(value) =>
-              updateScenario({
-                ...scenario,
-                contribution: { ...scenario.contribution, yearlyIncreaseRate: value }
-              })
-            }
-          />
-        </Panel>
-      ) : null}
-
       <Panel title="Retirement Spending" className="panel-wide">
         {(() => {
           const displayedFirstYearTotal = retirementPoolRows.reduce(
@@ -2651,6 +2659,7 @@ const App = () => {
                 dateOfBirth={scenario.options.dateOfBirth}
                 currentAge={currentAge}
                 accounts={bankAccounts.map((account) => ({ id: account.id, label: account.label }))}
+                dateMarkers={scenario.dateMarkers ?? []}
                 onChange={(nextItem) =>
                   updateScenario({
                     ...scenario,
@@ -2873,6 +2882,106 @@ const App = () => {
       </Panel>
     );
   };
+
+  const describeMarkerReferences = (markerId: string): string[] => {
+    const references: string[] = [];
+    const add = (label: string, type: string, ids: Array<string | null | undefined>) => {
+      if (ids.some((id) => id === markerId)) {
+        references.push(`${type}: ${label}`);
+      }
+    };
+
+    const scanCareers = (entries: Scenario['careerPlan']['entries']) => {
+      entries.forEach((entry) => {
+        add(entry.label, 'Career', [entry.startMarkerId, entry.endMarkerId]);
+        (entry.payPlans ?? []).forEach((plan) => add(`${entry.label} – ${plan.label}`, 'Pay plan', [plan.effectiveMarkerId]));
+      });
+    };
+    const scanPurchases = (purchases: Scenario['largePurchases']) => {
+      purchases.forEach((purchase) => add(purchase.label, 'Large purchase', [purchase.yearMonthMarkerId]));
+    };
+    const scanLongTerm = (purchases: Scenario['longTermPurchases']) => {
+      purchases.forEach((purchase) => add(purchase.label, 'Long-term purchase', [purchase.startMarkerId, purchase.endMarkerId]));
+    };
+    const scanLoans = (loans: Scenario['loans']) => {
+      loans.forEach((loan) => add(loan.label, 'Loan', [loan.startMarkerId]));
+    };
+    const scanCreditCards = (cards: Scenario['creditCards']) => {
+      cards.forEach((card) => add(card.label, 'Credit card', [card.introEndMarkerId, card.autopayEndMarkerId]));
+    };
+    const scanHousing = (housing: Scenario['housing']) => {
+      housing.forEach((entry) => add(entry.label, 'Housing', [entry.startMarkerId, entry.endMarkerId, entry.sellMarkerId]));
+    };
+    const scanCashflow = (items: Scenario['cashflowItems']) => {
+      items.forEach((item) => add(item.label, 'Add-on', [item.startMarkerId, item.endMarkerId]));
+    };
+
+    scanCareers(scenario.careerPlan.entries);
+    scanPurchases(scenario.largePurchases);
+    scanLongTerm(scenario.longTermPurchases);
+    scanLoans(scenario.loans);
+    scanCreditCards(scenario.creditCards);
+    scanHousing(scenario.housing);
+    scanCashflow(scenario.cashflowItems);
+    (scenario.lifeEvents ?? []).forEach((event) => add(event.label, 'Life event', [event.startMarkerId, event.endMarkerId]));
+    (scenario.expenses?.entries ?? []).forEach((entry) => add(entry.label, 'Expense', [entry.startMarkerId, entry.endMarkerId]));
+    (scenario.expenses?.recurringEvents ?? []).forEach((event) => add(event.label, 'Recurring event', [event.startMarkerId, event.endMarkerId]));
+
+    (scenario.timelines ?? []).forEach((timeline) => {
+      const prefix = `[${timeline.label}] `;
+      timeline.careerPlan.entries.forEach((entry) => {
+        add(`${prefix}${entry.label}`, 'Career', [entry.startMarkerId, entry.endMarkerId]);
+        (entry.payPlans ?? []).forEach((plan) => add(`${prefix}${entry.label} – ${plan.label}`, 'Pay plan', [plan.effectiveMarkerId]));
+      });
+      timeline.purchases.forEach((purchase) => add(`${prefix}${purchase.label}`, 'Large purchase', [purchase.yearMonthMarkerId]));
+      timeline.longTermPurchases.forEach((purchase) => add(`${prefix}${purchase.label}`, 'Long-term purchase', [purchase.startMarkerId, purchase.endMarkerId]));
+      timeline.loans.forEach((loan) => add(`${prefix}${loan.label}`, 'Loan', [loan.startMarkerId]));
+      timeline.creditCards.forEach((card) => add(`${prefix}${card.label}`, 'Credit card', [card.introEndMarkerId, card.autopayEndMarkerId]));
+      timeline.housing.forEach((entry) => add(`${prefix}${entry.label}`, 'Housing', [entry.startMarkerId, entry.endMarkerId, entry.sellMarkerId]));
+    });
+
+    return references;
+  };
+
+  const renderDateMarkersTab = () => (
+    <Panel title="Date Markers" className="panel-wide">
+      <DateMarkersEditor
+        markers={scenario.dateMarkers ?? []}
+        onAdd={() =>
+          updateScenario({
+            ...scenario,
+            dateMarkers: [
+              ...(scenario.dateMarkers ?? []),
+              { id: makeDateMarkerId(), label: `Marker ${(scenario.dateMarkers ?? []).length + 1}`, date: getTodayIsoDate() }
+            ]
+          })
+        }
+        onChange={(marker) =>
+          updateScenario({
+            ...scenario,
+            dateMarkers: (scenario.dateMarkers ?? []).map((current) => (current.id === marker.id ? marker : current))
+          })
+        }
+        onRemove={(markerId) => {
+          const references = describeMarkerReferences(markerId);
+          if (references.length > 0) {
+            const confirmed = window.confirm(
+              `This marker is used by ${references.length} field${references.length === 1 ? '' : 's'}:\n\n${references.join(
+                '\n'
+              )}\n\nDelete it? References will be cleared and each field will keep its current date.`
+            );
+            if (!confirmed) {
+              return;
+            }
+          }
+          updateScenario({
+            ...scenario,
+            dateMarkers: (scenario.dateMarkers ?? []).filter((marker) => marker.id !== markerId)
+          });
+        }}
+      />
+    </Panel>
+  );
 
   const renderTrajectoryTab = () => {
     const currentDisplayYears: Array<ProjectionYear | TrajectoryYear> =
@@ -3115,6 +3224,7 @@ const App = () => {
         incomeFallbackNotice={incomeFallbackNotice}
         onDismissIncomeFallbackNotice={() => setIncomeFallbackNotice(null)}
         withdrawalShortfalls={futureProjection.careerWithdrawalShortfalls}
+        dateMarkers={scenario.dateMarkers ?? []}
         onChangeIncomeFallbackAccount1={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId: accountId })}
         onChangeIncomeFallbackAccount2={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId2: accountId })}
       />
@@ -3153,6 +3263,70 @@ const App = () => {
       parts.push(`Using fallback: ${detailStrs.join(', ')}`);
     }
     return parts.join('\n');
+  };
+
+  const buildIncomeIndicator = (
+    incomeStatus: ProjectionResult['incomeFundedItemStatuses'][string] | undefined
+  ): { status: 'warning' | 'invalid'; tooltip: string } | undefined => {
+    if (!incomeStatus || incomeStatus.status === 'covered') {
+      return undefined;
+    }
+    const parts: string[] = [];
+    const monthKey = incomeStatus.firstFallbackYearMonth;
+    if (monthKey) {
+      const usage = futureProjection.incomeUsageByMonth[monthKey];
+      parts.push(`${monthKey}: monthly income ${formatCurrency(usage?.availableIncome ?? 0)}`);
+      if (usage) {
+        const requested = usage.items.reduce((sum, item) => sum + item.amount, 0);
+        parts.push(`  income-funded spending: ${formatCurrency(requested)}`);
+      }
+    }
+    if (incomeStatus.shortfallAmount && incomeStatus.shortfallAmount > 0.01) {
+      parts.push(`  Unpaid: ${formatCurrency(incomeStatus.shortfallAmount)}`);
+    }
+    const fallbackTooltip = formatIncomeFallbackTooltip(
+      incomeStatus,
+      futureProjection.incomeUsageByMonth,
+      incomeStatus.fallbackDetails,
+      bankAccounts
+    );
+    if (fallbackTooltip) {
+      parts.push(fallbackTooltip);
+    }
+    const tooltip = parts.join('\n') || (incomeStatus.status === 'shortfall'
+      ? 'Income-funded cost exceeds available income and could not be fully covered.'
+      : 'Funded partly from a fallback account.');
+    return { status: incomeStatus.status === 'shortfall' ? 'invalid' : 'warning', tooltip };
+  };
+
+  const housingIncomeIndicators = (() => {
+    const result: Record<string, { status: 'warning' | 'invalid'; tooltip: string }> = {};
+    activeHousing.forEach((entry) => {
+      const indicator = buildIncomeIndicator(futureProjection.incomeFundedItemStatuses[entry.id]);
+      if (indicator) {
+        result[entry.id] = indicator;
+      }
+    });
+    return result;
+  })();
+
+  const getCreditCardIndicator = (
+    cc: Scenario['creditCards'][number]
+  ): { status: 'warning' | 'invalid'; tooltip: string } | undefined => {
+    const incomeIndicator = buildIncomeIndicator(futureProjection.incomeFundedItemStatuses[cc.id]);
+    if (incomeIndicator) {
+      return incomeIndicator;
+    }
+    const fundingShortfall = futureProjection.creditCardFundingShortfalls[cc.id] ?? 0;
+    if (fundingShortfall > 0.01) {
+      const aid = cc.paymentSource?.startsWith('account:') ? cc.paymentSource.split(':', 2)[1] : null;
+      const account = aid ? bankAccounts.find((a) => a.id === aid) : null;
+      return {
+        status: 'invalid',
+        tooltip: `Payment exceeds the available balance in ${account?.label ?? cc.paymentSource}; ${formatCurrency(fundingShortfall)} unfunded.`
+      };
+    }
+    return undefined;
   };
 
   const formatPurchaseTooltip = (
@@ -3413,20 +3587,23 @@ const App = () => {
                         </select>
                       </td>
                       <td>
-                        <YearMonthInput
+                        <DateOrMarkerInput
                           label="Purchase"
                           value={purchase.yearMonth}
-                          onChange={(nextYearMonth) => {
+                          markerId={purchase.yearMonthMarkerId}
+                          markers={scenario.dateMarkers ?? []}
+                          onChange={(nextYearMonth, markerId) => {
                             const derivedAge = ageFromYearMonth(nextYearMonth, scenario.options.dateOfBirth, currentAge, currentAge, futureEndAge);
 
-                            if (derivedAge === null) {
+                            if (derivedAge === null && !markerId) {
                               return;
                             }
 
                             updateLargePurchase(purchase.id, {
                               ...purchase,
                               yearMonth: nextYearMonth,
-                              age: derivedAge
+                              yearMonthMarkerId: markerId,
+                              age: derivedAge ?? purchase.age
                             });
                           }}
                         />
@@ -3554,10 +3731,12 @@ const App = () => {
                         />
                       </td>
                       <td>
-                        <YearMonthInput
+                        <DateOrMarkerInput
                           label="Long-Term Start"
                           value={purchase.startYearMonth}
-                          onChange={(nextYearMonth) => {
+                          markerId={purchase.startMarkerId}
+                          markers={scenario.dateMarkers ?? []}
+                          onChange={(nextYearMonth, markerId) => {
                             const nextEndYearMonth =
                               purchase.endMode === 'duration'
                                 ? deriveEndYearMonthFromDuration(nextYearMonth, purchase.durationMonths)
@@ -3570,6 +3749,7 @@ const App = () => {
                             updateLongTermPurchase(purchase.id, {
                               ...purchase,
                               startYearMonth: nextYearMonth,
+                              startMarkerId: markerId,
                               endYearMonth: nextEndYearMonth,
                               durationMonths: nextDurationMonths
                             });
@@ -3593,14 +3773,17 @@ const App = () => {
                         />
                       </td>
                       <td>
-                        <YearMonthInput
+                        <DateOrMarkerInput
                           label="Long-Term End"
                           value={purchase.endYearMonth}
-                          onChange={(nextYearMonth) =>
+                          markerId={purchase.endMarkerId}
+                          markers={scenario.dateMarkers ?? []}
+                          onChange={(nextYearMonth, markerId) =>
                             updateLongTermPurchase(purchase.id, {
                               ...purchase,
                               endMode: 'endDate',
                               endYearMonth: nextYearMonth,
+                              endMarkerId: markerId,
                               durationMonths: deriveDurationFromStartAndEnd(purchase.startYearMonth, nextYearMonth)
                             })
                           }
@@ -3752,10 +3935,12 @@ const App = () => {
                         />
                       </td>
                       <td>
-                        <YearMonthInput
+                        <DateOrMarkerInput
                           label="Loan Start"
                           value={loan.startYearMonth}
-                          onChange={(nextYearMonth) => updateLoan(loan.id, { ...loan, startYearMonth: nextYearMonth })}
+                          markerId={loan.startMarkerId}
+                          markers={scenario.dateMarkers ?? []}
+                          onChange={(nextYearMonth, markerId) => updateLoan(loan.id, { ...loan, startYearMonth: nextYearMonth, startMarkerId: markerId })}
                         />
                       </td>
                       <td>
@@ -4086,6 +4271,8 @@ const App = () => {
         accountOptions={accountSelectionOptions}
         orderedBankAccounts={orderedBankAccounts}
         careerOptions={activeCareerPlan.entries.map((career) => ({ id: career.id, label: career.label }))}
+        dateMarkers={scenario.dateMarkers ?? []}
+        incomeIndicators={housingIncomeIndicators}
       />
     </Panel>
   );
@@ -4207,8 +4394,8 @@ const App = () => {
           </>}
         </Panel>
 
-        {timelineSelection === 'career' && selectedCareer && <Panel title={`Edit Career: ${selectedCareer.label}`} className="panel-wide"><CareerPlanEditor value={activeCareerPlan} selectedCareerId={selectedCareerId} onSelectCareer={updateSelectedCareerId} onChangeCareer={updateCareer} onDuplicateCareer={duplicateCareer} onReorderCareers={reorderCareers} onAddCareer={addCareer} onRemoveCareer={removeCareer} previewYear={futureProjection.years.find((year) => !year.isBaselineNow) ?? futureProjection.years[0]} bankAccounts={bankAccounts} pools={poolDefinitions} birthdayBasedCareerStartAge={birthdayBasedCareerStartAge} dateOfBirth={scenario.options.dateOfBirth} currentAge={currentAge} incomeFallbackAccountId={scenario.incomeFallbackAccountId} incomeFallbackAccountId2={scenario.incomeFallbackAccountId2} incomeFallbackNotice={incomeFallbackNotice} onDismissIncomeFallbackNotice={() => setIncomeFallbackNotice(null)} withdrawalShortfalls={futureProjection.careerWithdrawalShortfalls} onChangeIncomeFallbackAccount1={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId: accountId })} onChangeIncomeFallbackAccount2={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId2: accountId })} allowReordering={false} /></Panel>}
-        {timelineSelection === 'housing' && selectedHousing && <Panel title={`Edit Housing: ${selectedHousing.label}`} className="panel-wide"><HousingEditor housing={activeHousing} selectedHousingId={selectedHousingId} onSelectHousing={setSelectedHousingId} onChangeHousing={(entry) => updateHousing(entry.id, entry)} onReorderHousing={reorderHousing} onAddHousing={addHousing} onDuplicateHousing={duplicateHousing} onRemoveHousing={removeHousing} accountOptions={accountSelectionOptions} orderedBankAccounts={orderedBankAccounts} careerOptions={activeCareerPlan.entries.map((career) => ({ id: career.id, label: career.label }))} allowReordering={false} /></Panel>}
+        {timelineSelection === 'career' && selectedCareer && <Panel title={`Edit Career: ${selectedCareer.label}`} className="panel-wide"><CareerPlanEditor value={activeCareerPlan} selectedCareerId={selectedCareerId} onSelectCareer={updateSelectedCareerId} onChangeCareer={updateCareer} onDuplicateCareer={duplicateCareer} onReorderCareers={reorderCareers} onAddCareer={addCareer} onRemoveCareer={removeCareer} previewYear={futureProjection.years.find((year) => !year.isBaselineNow) ?? futureProjection.years[0]} bankAccounts={bankAccounts} pools={poolDefinitions} birthdayBasedCareerStartAge={birthdayBasedCareerStartAge} dateOfBirth={scenario.options.dateOfBirth} currentAge={currentAge} incomeFallbackAccountId={scenario.incomeFallbackAccountId} incomeFallbackAccountId2={scenario.incomeFallbackAccountId2} incomeFallbackNotice={incomeFallbackNotice} onDismissIncomeFallbackNotice={() => setIncomeFallbackNotice(null)} withdrawalShortfalls={futureProjection.careerWithdrawalShortfalls} dateMarkers={scenario.dateMarkers ?? []} onChangeIncomeFallbackAccount1={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId: accountId })} onChangeIncomeFallbackAccount2={(accountId) => updateScenario({ ...scenario, incomeFallbackAccountId2: accountId })} allowReordering={false} /></Panel>}
+        {timelineSelection === 'housing' && selectedHousing && <Panel title={`Edit Housing: ${selectedHousing.label}`} className="panel-wide"><HousingEditor housing={activeHousing} selectedHousingId={selectedHousingId} onSelectHousing={setSelectedHousingId} onChangeHousing={(entry) => updateHousing(entry.id, entry)} onReorderHousing={reorderHousing} onAddHousing={addHousing} onDuplicateHousing={duplicateHousing} onRemoveHousing={removeHousing} accountOptions={accountSelectionOptions} orderedBankAccounts={orderedBankAccounts} careerOptions={activeCareerPlan.entries.map((career) => ({ id: career.id, label: career.label }))} dateMarkers={scenario.dateMarkers ?? []} incomeIndicators={housingIncomeIndicators} allowReordering={false} /></Panel>}
       </>
     );
   };
@@ -4451,15 +4638,8 @@ const App = () => {
         pools={poolDefinitions}
         netWorthHistory={netWorthHistory}
         projectionYears={futureProjection.years as ProjectionYear[]}
-        onChange={(nextExpenses) =>
-          setAppState((currentState) => ({
-            ...currentState,
-            scenario: {
-              ...currentState.scenario,
-              expenses: nextExpenses
-            }
-          }))
-        }
+        dateMarkers={scenario.dateMarkers ?? []}
+        onChange={(nextExpenses) => updateScenario({ ...scenario, expenses: nextExpenses })}
       />
     );
 
@@ -4500,7 +4680,9 @@ const App = () => {
                         ? renderTrajectoryTab()
                         : careersSubTab === 'warnings'
                           ? renderWarningsTab()
-                          : null}
+                          : careersSubTab === 'dateMarkers'
+                            ? renderDateMarkersTab()
+                            : null}
           </>
         );
       case 'netWorth':
@@ -4612,8 +4794,14 @@ const App = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {activeCreditCards.map((cc) => (
-                            <tr key={cc.id} className="purchase-row">
+                          {activeCreditCards.map((cc) => {
+                            const indicator = getCreditCardIndicator(cc);
+                            return (
+                            <tr
+                              key={cc.id}
+                              className={`purchase-row${indicator ? ` ${indicator.status}` : ''}`}
+                              title={indicator?.tooltip}
+                            >
                               <td>
                                 <input
                                   type="checkbox"
@@ -4628,7 +4816,7 @@ const App = () => {
                                   onChange={(e) => updateCreditCard(cc.id, { ...cc, label: e.target.value })}
                                 />
                               </td>
-                              <td>{cc.paymentMode === 'autopay' ? '-' : formatCurrency(cc.currentBalance)}</td>
+                              <td>{cc.paymentMode === 'autopay' ? (cc.autopayEndYearMonth ? `until ${cc.autopayEndYearMonth}` : 'until —') : formatCurrency(cc.currentBalance)}</td>
                               <td>{cc.paymentDay}<sup>th</sup></td>
                               <td>
                                 {cc.paymentMode === 'payInFull' ? 'Full' : cc.paymentMode === 'minimum' ? `${cc.minimumPaymentPercent}%` : formatCurrency(cc.fixedPaymentAmount)}
@@ -4651,7 +4839,8 @@ const App = () => {
                                 </button>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -4720,6 +4909,16 @@ const App = () => {
                       return (
                         <div key={cc.id} className="credit-card-schedule">
                           <h4>{cc.label}</h4>
+                          {(() => {
+                            const indicator = getCreditCardIndicator(cc);
+                            return indicator ? (
+                              <p className={`income-indicator-note ${indicator.status}`} title={indicator.tooltip}>
+                                {indicator.status === 'invalid'
+                                  ? 'Some payments could not be fully funded.'
+                                  : 'Some payments are funded from a fallback account.'}
+                              </p>
+                            ) : null;
+                          })()}
                           <div className="table-wrap">
                             <table className="purchases-table">
                               <thead>
@@ -4790,7 +4989,7 @@ const App = () => {
                           {cc.introEnabled && (
                             <label>
                               <span>0% Ends</span>
-                              <YearMonthInput label="Intro End" value={cc.introEndYearMonth} onChange={(v) => updateCreditCard(cc.id, { ...cc, introEndYearMonth: v })} />
+                              <DateOrMarkerInput label="Intro End" value={cc.introEndYearMonth} markerId={cc.introEndMarkerId} markers={scenario.dateMarkers ?? []} onChange={(v, markerId) => updateCreditCard(cc.id, { ...cc, introEndYearMonth: v, introEndMarkerId: markerId })} />
                             </label>
                           )}
                           <label>
@@ -4807,6 +5006,11 @@ const App = () => {
                               }
                               if (mode === 'autopay') {
                                 updates.currentBalance = 0;
+                                if (!cc.autopayEndYearMonth) {
+                                  const nowDate = new Date();
+                                  const currentYM = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}`;
+                                  updates.autopayEndYearMonth = addMonthsToYearMonth(currentYM, 12);
+                                }
                               }
                               updateCreditCard(cc.id, { ...cc, ...updates });
                             }}>
@@ -4872,10 +5076,23 @@ const App = () => {
                             </>
                           )}
                           {cc.paymentMode === 'autopay' && (
-                            <label>
-                              <span>Monthly Autopay</span>
-                              <BufferedNumberInput value={cc.fixedPaymentAmount} min={0} max={100000} step={10} onCommit={(v) => updateCreditCard(cc.id, { ...cc, fixedPaymentAmount: v })} />
-                            </label>
+                            <>
+                              <label>
+                                <span>Monthly Autopay</span>
+                                <BufferedNumberInput value={cc.fixedPaymentAmount} min={0} max={100000} step={10} onCommit={(v) => updateCreditCard(cc.id, { ...cc, fixedPaymentAmount: v })} />
+                              </label>
+                              <label>
+                                <span>Autopay Ends</span>
+                                <DateOrMarkerInput
+                                  label="Autopay End"
+                                  value={cc.autopayEndYearMonth ?? ''}
+                                  markerId={cc.autopayEndMarkerId}
+                                  markers={scenario.dateMarkers ?? []}
+                                  onChange={(v, markerId) => updateCreditCard(cc.id, { ...cc, autopayEndYearMonth: v, autopayEndMarkerId: markerId })}
+                                />
+                                {!cc.autopayEndYearMonth && <span className="subtle">End date required for autopay.</span>}
+                              </label>
+                            </>
                           )}
                           <label>
                             <span>Pay From</span>

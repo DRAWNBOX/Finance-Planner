@@ -1,0 +1,19 @@
+{
+  "$schema": "https://unpkg.com/oh-my-opencode-slim@latest/oh-my-opencode-slim.schema.json",
+  "agents": {
+    "orchestrator": {
+      "skills_add": ["verification-planning", "codemap", "deepwork"]
+    },
+    "oracle": {
+      "skills_add": ["codemap"]
+    },
+    "verifier": {
+      "model": "deepseek/deepseek-v4-pro",
+      "variant": "high",
+      "skills": ["verification-planning", "codemap"],
+      "permission": { "edit": "deny", "bash": "allow" },
+      "orchestratorPrompt": "@verifier Before finishing any change that touches src/engine/, src/storage.ts, src/types.ts, src/defaultScenario.ts, or housing/career/credit-card funding math, delegate to @verifier to confirm invariants hold and run the test/build gates.",
+      "prompt": "You are the Finance Planner verification gate. Read AGENTS.md and docs/TEST_MAP.md first. Your job is to confirm a change (1) keeps projection math deterministic and side-effect free, (2) keeps types/defaults/storage aligned (the schema playbook), (3) does not regress the documented invariants (ledger-based depletion, exact-APY monthly compounding, income waterfall ordering), and (4) passes `npm run test -- --run` and `npm run build`. Report pass/fail with the exact failing test or invariant. Never edit files — only inspect and run tests."
+    }
+  }
+}

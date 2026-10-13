@@ -1,4 +1,52 @@
+# Session Changes — October 13, 2026
+
+## 1. README Architecture & Feature Inventory
+- Added three Mermaid diagrams to `README.md`: **code architecture** (module dependencies),
+  **money-flow architecture** (per-month engine flow), and **GUI architecture**
+  (tabs/sub-tabs/components), each with a "reading the diagram" note.
+- Added an **Existing Features** section (grouped by area) and a **Known Bugs & Issues**
+  section (confirmed / suspected defects / documentation drift) with runtime file references,
+  grounded in `src/` and the `refactor/` audits.
+- Corrected the GUI diagram's Expense Tracking route to the placeholder view
+  (`src/App.tsx:4768`), which does not use `ExpensesPlanner`.
+- Verification: docs-only change; test suite unchanged at 207/208 (pre-existing loan-row
+  failure recorded in `refactor/testing_correctness_audit.md`); build passed.
+
+---
+
+# Session Changes — October 12, 2026
+
+## Standalone Manual Contribution Removal (Approved)
+- Removed Yearly Contribution / Yearly % Increase controls, `ContributionPlan`, `Scenario.contribution`, defaults, and the unposted annual contribution/scalar fallback calculation.
+- Load/save prune obsolete standalone contribution configuration without converting it into income. Career savings allocations and cashflow/life-event income remain the contribution paths.
+- Added storage/UI coverage for removal/pruning; updated current characterization expectations while archiving original Pre-Step 0 snapshots under `refactor/fixtures/projection.pre-refactor.snap`.
+- ADR-005 and feature F21/R03 now record approved removal; remaining architecture proposals stay pending review.
+- Verification: full suite 207/208 passed (same pre-existing loan-row highlighting failure); all new UI/storage/characterization tests passed, build and whitespace checks passed.
+
+## 1. Money Flow Documentation
+- New `docs/MONEY_FLOW.md`: a Mermaid block diagram of how money moves through the engine (sources → reservoirs → routing → destinations) with a blocks-to-code legend and notes on the two-reservoir model (income pools vs `ledgerAccounts`)
+- Linked from `docs/INDEX.md` ("Start Here")
+
+---
+
 # Session Changes — October 11, 2026
+
+## Date-Based Career Selection (Phase 1 of PLAN_DATE_BASED_CAREERS.md)
+- `projection.ts` now selects the active career **per month by date** (`getCareerEntryForMonth` + `careerBoundarySerial`) instead of per age-year (`getCareerEntryForAge` stays only as the year-label/legacy fallback). Fixes overlapping careers at the same age but different months misattributing income, source-line deposits, and the monthly income budget.
+- Month loop uses a per-month `monthCareer` for the paycheck, net-pay plan, source lines, raise base, salary, and negative-net-pay label; monthly snapshot/waterfall `careerLabel` follows the month.
+- `careerEndSavingsBalances` now records at each career's **end month** (explicit `endYearMonth`, else the age-derived last month) rather than the year-scoped `age === endAge` check, so overlapping ages no longer misfire.
+- Tests: engine test with two careers overlapping at age 27 but split across months asserts per-month net income/take-home and per-career end balances; existing tests unchanged.
+
+## 8. Date Markers
+- New `DateMarker` (`id`, `label`, `date`) on `Scenario.dateMarkers`; configured in a new "Date Markers" sub-tab to the right of Warnings
+- Every editable year-month field gained an optional companion `*MarkerId` (`CareerEntry`, `LargePurchase`, `LongTermPurchase`, `Loan`, `CreditCard`, `HousingEntry`, `CashflowItem`, `LifeEvent`) and every editable full-date field on `ExpenseEntry` / `RecurringExpenseEvent`
+- `src/utils/dateMarkers.ts`: `resolveDateMarkers` overwrites each literal from its marker (year-month fields use `date.slice(0,7)`, expense fields use the full date), derives age-coupled fields (careers/add-ons/life events) from the resolved month, and clears dangling references while keeping the last literal
+- Resolution runs at the top of `updateScenario` (before career/housing chaining) and after load in `storage.ts`, so changing a marker moves every referencing field together
+- Housing chaining honors markers with highest priority (`startMarkerId` > career link > previous-end; end markers > career end link)
+- New `DateOrMarkerInput` (Date/Marker mode toggle) replaces all `YearMonthInput` call sites (App purchases/long-term/loan/credit-card, `CareerPlanEditor`, `CashflowItemEditor`, `HousingEditor`) and the expense entry/recurring/one-time date inputs; choosing a marker clears conflicting chain flags
+- New `DateMarkersEditor` component + `renderDateMarkersTab`; deleting a referenced marker warns with the referencing fields and clears references on confirm
+- Storage: `dateMarkers` normalizer (`DateMarker`), marker-id normalization for every collection, and post-load marker resolution; also fixed `normalizeExpensesSubTab` to accept `'creditCards'`
+- Tests: `src/utils/dateMarkers.test.ts` (resolution, cascade, age coupling, dangling cleanup, no-op) + App tests for the tab and a housing start linked to a marker
 
 ## 1. Career Duplicate-ID Fix
 - `createDefaultCareerEntry(index, currentAge, retirementAge, id?)` now accepts an explicit id (defaultScenario.ts)
@@ -33,6 +81,39 @@
 ## 7. Paycheck Modal Polish
 - Backdrop click no longer closes the paycheck modal
 - Removed the category name input and the add-category controls
+
+## 8. Net Pay Plans (per-career dated pay changes)
+- New `CareerPayPlan` (`id`, `label`, `effectiveYearMonth`, `effectiveMarkerId`, full `paycheck` + `sourceLines`, optional `annualRaiseRate`) on `CareerEntry.payPlans`; the career's own paycheck/sourceLines are the Initial plan (types.ts)
+- Editor: a "Net pay plan" **chip selector** below the "Estimate income from this career" checkbox with add/remove/rename and a `DateOrMarkerInput` effective date; the paycheck modal and the savings/expenses grids edit the selected plan (CareerPlanEditor.tsx)
+- Engine resolves the active plan **per month** (`resolveActiveCareerPayPlan`) so income, deposits, and monthly withdrawals switch at the exact effective month; a plan's salary grows by the career raise from its effective date (projection.ts)
+- `src/paycheck.ts`: `clonePaycheck`, `cloneSourceLines`, `createCareerPayPlan`
+- Date markers: `resolveDateMarkers` resolves each plan's `effectiveMarkerId` → `effectiveYearMonth` (base + timelines); `describeMarkerReferences` lists plan references (utils/dateMarkers.ts, App.tsx)
+- Storage normalizes `payPlans` (paycheck + sourceLines); `cloneCareer` and the App source-line normalizer handle plans (storage.ts, App.tsx)
+
+## 9. Income Verification Warnings
+- Engine warns when a paycheck/plan's deductions exceed its gross pay (net pay would be negative and is treated as `$0`) — per career/plan, surfaced in the Warnings tab (projection.ts)
+- Housing chips now show yellow (fallback) / red (shortfall) income indicators with a tooltip (and a note in the editor), mirroring purchases/loans; income-funded housing usage was already recorded in `incomeValidation` (HousingEditor.tsx, App.tsx, styles.css)
+- Career paycheck summary marks "Net pay / period" red with a hint when deductions exceed gross (CareerPlanEditor.tsx)
+- Confirmed: income-funded purchases/housing draw from the active net-pay plan's monthly net pay, and the pool is clamped at 0 (never negative)
+
+## 10. Credit Card Income Verification
+- Autopay income-funded credit card payments now record `incomeFundedItemStatuses` (fallback/shortfall), matching the fixed/minimum/pay-in-full/fixedPlusLump modes (projection.ts)
+- Credit-card list rows show a yellow (fallback) / red (shortfall) indicator with a tooltip, and account-funded cards surface `creditCardFundingShortfalls`; the Payment Schedule Projection shows a per-card income notice (App.tsx)
+- Account-funded credit-card funding shortfalls now also emit an engine warning, so credit cards appear in the Warnings tab in every payment mode (projection.ts)
+- Income-funded credit cards were already included in the income-usage warnings calculation (`incomeValidation`), which the Warnings tab renders
+
+## 11. Credit Card Autopay End Date
+- `CreditCard.autopayEndYearMonth` + `autopayEndMarkerId`: autopay now pays through and including the end month and stops after (types.ts, projection.ts)
+- Storage normalizes the new fields; date markers resolve `autopayEndMarkerId` → `autopayEndYearMonth` and `describeMarkerReferences` lists it (storage.ts, utils/dateMarkers.ts, App.tsx)
+- Editor: an "Autopay Ends" `DateOrMarkerInput` (required; auto-filled to current month + 12 when switching a card to autopay) and the card row shows `until YYYY-MM` (App.tsx)
+
+## 12. Summed Housing Expense in Income Warnings
+- Income-funded housing (down payment + P&I/rent, taxes & insurance, HOA/maintenance, PMI) is now drawn from income in a single `processIncomeWaterfall` call per housing entry per month, so the Warnings tab lists one summed "housing expense" line instead of each sub-item separately (projection.ts)
+
+## 13. Depletion Detection Only on Actual $0
+- Removed the hard-coded `$100k` net-worth floor heuristic; `depleted` is now `currentLedgerSum <= 0` only, so "runs out of money at age X" (and the ending balance) reflect the real ledger (projection.ts)
+- `withdrawal < requiredMinimumWithdrawalForPeriod` is now a Warnings-tab entry instead of a depletion trigger (projection.ts)
+- Fixes the reported case where the summary said "runs out at 54" while the graph/table still showed positive balances
 
 ---
 

@@ -1,8 +1,8 @@
 import { memo } from 'react';
-import type { CashflowItem } from '../types';
+import type { CashflowItem, DateMarker } from '../types';
 import { ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
 import { useRenderCount } from '../utils/perfTools';
-import { YearMonthInput } from './YearMonthInput';
+import { DateOrMarkerInput } from './DateOrMarkerInput';
 
 interface CashflowItemEditorProps {
   item: CashflowItem;
@@ -10,6 +10,7 @@ interface CashflowItemEditorProps {
   dateOfBirth: string;
   currentAge: number;
   accounts: Array<{ id: string; label: string }>;
+  dateMarkers?: DateMarker[];
   onChange: (item: CashflowItem) => void;
   onRemove: (id: string) => void;
 }
@@ -22,6 +23,7 @@ export const CashflowItemEditor = memo(({
   dateOfBirth,
   currentAge,
   accounts,
+  dateMarkers = [],
   onChange,
   onRemove
 }: CashflowItemEditorProps) => {
@@ -77,21 +79,24 @@ export const CashflowItemEditor = memo(({
       </label>
       <label>
         <span>{item.cadence === 'one_time' ? 'Year-Month' : 'Start (Year-Month)'}</span>
-        <YearMonthInput
+        <DateOrMarkerInput
           label={item.cadence === 'one_time' ? 'Age' : 'Start'}
           value={item.startYearMonth ?? formatYearMonthFromAge(item.startAge, dateOfBirth, currentAge)}
-          onChange={(nextValue) => {
-            const derivedAge = ageFromYearMonth(nextValue, dateOfBirth, currentAge, 18, retirementEndAge);
+          markerId={item.startMarkerId}
+          markers={dateMarkers}
+          onChange={(next, markerId) => {
+            const derivedAge = ageFromYearMonth(next, dateOfBirth, currentAge, 18, retirementEndAge);
 
-            if (derivedAge === null) {
+            if (derivedAge === null && !markerId) {
               return;
             }
 
             onChange({
               ...item,
-              startAge: derivedAge,
-              startYearMonth: nextValue,
-              endAge: item.cadence === 'one_time' ? derivedAge : Math.max(item.endAge, derivedAge)
+              startAge: derivedAge ?? item.startAge,
+              startYearMonth: next,
+              startMarkerId: markerId,
+              endAge: item.cadence === 'one_time' ? derivedAge ?? item.endAge : Math.max(item.endAge, derivedAge ?? item.startAge)
             });
           }}
         />
@@ -110,23 +115,25 @@ export const CashflowItemEditor = memo(({
           </label>
           <label>
             <span>End (Year-Month)</span>
-            <YearMonthInput
+            <DateOrMarkerInput
               label="End"
               value={item.endYearMonth ?? formatYearMonthFromAge(item.endAge, dateOfBirth, currentAge)}
-              onChange={(nextValue) => {
+              markerId={item.endMarkerId}
+              markers={dateMarkers}
+              onChange={(next, markerId) => {
                 const derivedAge = ageFromYearMonth(
-                  nextValue,
+                  next,
                   dateOfBirth,
                   currentAge,
                   item.startAge,
                   retirementEndAge
                 );
 
-                if (derivedAge === null) {
+                if (derivedAge === null && !markerId) {
                   return;
                 }
 
-                onChange({ ...item, endAge: derivedAge, endYearMonth: nextValue });
+                onChange({ ...item, endAge: derivedAge ?? item.endAge, endYearMonth: next, endMarkerId: markerId });
               }}
             />
           </label>

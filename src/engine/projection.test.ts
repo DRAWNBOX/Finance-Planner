@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { BankAccountDefinition, IncomePoolUsagePeriod, Scenario } from '../types';
+import type { BankAccountDefinition, CareerEntry, IncomePoolUsagePeriod, Paycheck, Scenario } from '../types';
 
 const seedDefaultBankAccounts = (balances: { emergencyFund: number; hsa: number; investments: number; retirement401k: number }): BankAccountDefinition[] => [
   { id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: Math.max(0, balances.emergencyFund) },
@@ -7,7 +7,7 @@ const seedDefaultBankAccounts = (balances: { emergencyFund: number; hsa: number;
   { id: 'investments-account-default', label: 'Investments', poolId: 'investments', priority: 0, accountType: 'taxable', balance: Math.max(0, balances.investments) },
   { id: 'retirement401k-account-default', label: '401K', poolId: 'retirement401k', priority: 0, accountType: 'retirement401k', balance: Math.max(0, balances.retirement401k) }
 ];
-import { defaultScenario } from '../defaultScenario';
+import { createDefaultCareerEntry, defaultScenario } from '../defaultScenario';
 import { describeIncomeValidationGroup, groupIncomeValidationPeriods, projectScenario } from './projection';
 
 const findProjectedYear = (result: ReturnType<typeof projectScenario>, age: number) =>
@@ -941,10 +941,6 @@ describe('projectScenario', () => {
         ...defaultScenario.portfolio,
         currentAssets: 10000
       },
-      contribution: {
-        yearlyContribution: 0,
-        yearlyIncreaseRate: 0
-      },
       withdrawal: {
         mode: 'specified',
         firstYearAmount: 50000,
@@ -986,10 +982,6 @@ describe('projectScenario', () => {
         ...defaultScenario.portfolio,
         currentAssets: 0
       },
-      contribution: {
-        yearlyContribution: 0,
-        yearlyIncreaseRate: 0
-      },
       withdrawal: {
         mode: 'specified',
         firstYearAmount: 50000,
@@ -1014,10 +1006,6 @@ describe('projectScenario', () => {
       portfolio: {
         ...defaultScenario.portfolio,
         currentAssets: 0
-      },
-      contribution: {
-        yearlyContribution: 0,
-        yearlyIncreaseRate: 0
       },
       manualReturns: {
         ...defaultScenario.manualReturns,
@@ -1060,10 +1048,6 @@ describe('projectScenario', () => {
       portfolio: {
         ...defaultScenario.portfolio,
         currentAssets: 0
-      },
-      contribution: {
-        yearlyContribution: 0,
-        yearlyIncreaseRate: 0
       },
       manualReturns: {
         ...defaultScenario.manualReturns,
@@ -1122,10 +1106,6 @@ describe('projectScenario', () => {
         ...defaultScenario.portfolio,
         currentAssets: 0
       },
-      contribution: {
-        yearlyContribution: 0,
-        yearlyIncreaseRate: 0
-      },
       manualReturns: {
         ...defaultScenario.manualReturns,
         inflationEnabled: true,
@@ -1164,7 +1144,8 @@ describe('projectScenario', () => {
       }
     });
 
-    expect(result.depletedAge).toBe(66);
+    expect(result.survivesToEnd).toBe(true);
+    expect(result.depletedAge).toBeNull();
     const age66 = findProjectedYear(result, 66);
     const age67 = findProjectedYear(result, 67);
     expect(age66.withdrawal).toBe(20000);
@@ -1281,7 +1262,9 @@ describe('projectScenario', () => {
 
     expect(meetsMinimum.survivesToEnd).toBe(true);
     expect(meetsMinimum.depletedAge).toBeNull();
-    expect(missesMinimum.depletedAge).toBe(64);
+    expect(missesMinimum.survivesToEnd).toBe(true);
+    expect(missesMinimum.depletedAge).toBeNull();
+    expect((missesMinimum.warnings ?? []).some((warning) => warning.includes('below the configured minimum'))).toBe(true);
   });
 
   it('tracks savings accounts and records per-career end balances', () => {
@@ -1395,6 +1378,83 @@ describe('projectScenario', () => {
     expect(age43.savingsBalances.emergencyFund).toBeCloseTo(3000, 6);
     expect(age43.savingsBalances.retirement401k).toBeCloseTo(3000, 6);
     expect(result.careerEndSavingsBalances['career-1'].investments).toBeCloseTo(3000, 6);
+  });
+
+  it('selects the active career per month by date when age ranges overlap', () => {
+    const buildCareer = (index: number, id: string, label: string, grossSalary: number): CareerEntry => {
+      const base = createDefaultCareerEntry(index, 25, 60, id);
+      return {
+        ...base,
+        label,
+        annualRaiseRate: 0,
+        paycheckInfo: { ...base.paycheckInfo!, grossSalary, taxes: 0 },
+        sourceLines: []
+      };
+    };
+
+    const careerA: CareerEntry = {
+      ...buildCareer(0, 'career-a', 'Career A', 12000),
+      startYearMonth: '2027-01',
+      endYearMonth: '2029-04',
+      startAge: 25,
+      endAge: 27
+    };
+    const careerB: CareerEntry = {
+      ...buildCareer(1, 'career-b', 'Career B', 60000),
+      startYearMonth: '2029-05',
+      endYearMonth: '2030-12',
+      startAge: 27,
+      endAge: 53
+    };
+
+    const scenario: Scenario = {
+      ...defaultScenario,
+      options: {
+        ...defaultScenario.options,
+        dateOfBirth: 'invalid-date'
+      },
+      profile: {
+        currentAge: 25,
+        retirementAge: 60,
+        retirementYears: 1
+      },
+      portfolio: {
+        ...defaultScenario.portfolio,
+        currentAssets: 0
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [careerA, careerB]
+      },
+      withdrawal: {
+        ...defaultScenario.withdrawal,
+        sourceLines: []
+      }
+    };
+
+    const result = projectScenario(scenario, { startDate: '2027-01-01' });
+    const snapshots = result.monthlySnapshots ?? [];
+    const snapshot = (yearMonth: string) => {
+      const [year, month] = yearMonth.split('-').map(Number);
+      return snapshots.find((s) => s.calendarYear === year && s.calendarMonth === month)!;
+    };
+
+    // Age 25/26 years use career A.
+    expect(snapshot('2027-06').careerLabel).toBe('Career A');
+    expect(snapshot('2027-06').netIncome).toBeCloseTo(1000, 6);
+    expect(snapshot('2028-06').careerLabel).toBe('Career A');
+
+    // Age-27 year (2029) is where the age ranges overlap: A must win through its end month.
+    expect(snapshot('2029-02').careerLabel).toBe('Career A');
+    expect(snapshot('2029-02').netIncome).toBeCloseTo(1000, 6);
+
+    // After the date boundary, career B takes over even though the age-year is unchanged.
+    expect(snapshot('2029-06').careerLabel).toBe('Career B');
+    expect(snapshot('2029-06').netIncome).toBeCloseTo(5000, 6);
+    expect(snapshot('2030-06').careerLabel).toBe('Career B');
+
+    // End balances recorded at each career's end month.
+    expect(Object.keys(result.careerEndSavingsBalances).sort()).toEqual(['career-a', 'career-b']);
   });
 
   it('returns the first future age when a non-viable purchase becomes affordable', () => {
@@ -3935,7 +3995,6 @@ describe('income fallback for credit cards and housing', () => {
         ...defaultScenario,
         options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
         profile: { currentAge: 40, retirementAge: 41, retirementYears: 1 },
-        contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
         netWorth: {
           ...defaultScenario.netWorth,
           accountBalances: { emergencyFund: 1000000, hsa: 0, investments: 0, retirement401k: 0 },
@@ -4025,5 +4084,441 @@ describe('income fallback for credit cards and housing', () => {
     expect(status).toBeDefined();
     expect(status!.status).toBe('fallback');
     expect(status!.fallbackDetails!.some((detail) => detail.accountId === accountId && detail.amount > 0)).toBe(true);
+  });
+});
+
+describe('net pay plans', () => {
+  const makeMonthlyPaycheck = (perMonth: number): Paycheck => ({
+    payFrequency: 'monthly',
+    categories: [
+      { id: 'cat-earn', label: 'Earnings', kind: 'earning', lines: [{ id: 'earn', label: 'Regular', amount: perMonth, mode: 'amount' }] }
+    ]
+  });
+
+  const planScenario = (): Scenario => ({
+    ...defaultScenario,
+    options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+    profile: { ...defaultScenario.profile, currentAge: 40, retirementAge: 65, retirementYears: 25 },
+    careerPlan: {
+      enabled: true,
+      entries: [
+        {
+          ...defaultScenario.careerPlan.entries[0],
+          annualRaiseRate: 0,
+          startAge: 40,
+          endAge: 65,
+          paycheckInfo: undefined,
+          paycheck: makeMonthlyPaycheck(1000),
+          sourceLines: [],
+          payPlans: [
+            {
+              id: 'plan-1',
+              label: 'Raise',
+              effectiveYearMonth: '2026-07',
+              paycheck: makeMonthlyPaycheck(2000),
+              sourceLines: []
+            }
+          ]
+        }
+      ]
+    }
+  });
+
+  it('switches income at the plan effective month', () => {
+    const result = projectScenario(planScenario(), { startDate: '2026-01-15' });
+    const before = result.monthlyWaterfall!.find((month) => month.calendarYear === 2026 && month.calendarMonth === 6);
+    const after = result.monthlyWaterfall!.find((month) => month.calendarYear === 2026 && month.calendarMonth === 7);
+
+    expect(before).toBeDefined();
+    expect(after).toBeDefined();
+    expect(before!.takeHomeIncome).toBeCloseTo(1000, 4);
+    expect(after!.takeHomeIncome).toBeCloseTo(2000, 4);
+  });
+});
+
+describe('income verification from net pay', () => {
+  const makePaycheck = (earning: number, tax: number): Paycheck => ({
+    payFrequency: 'monthly',
+    categories: [
+      { id: 'cat-earn', label: 'Earnings', kind: 'earning', lines: [{ id: 'earn', label: 'Regular', amount: earning, mode: 'amount' }] },
+      { id: 'cat-tax', label: 'Statutory', kind: 'tax', lines: [{ id: 'tax', label: 'Tax', amount: tax, mode: 'amount' }] }
+    ]
+  });
+
+  const baseScenario = (paycheck: Paycheck) => ({
+    ...defaultScenario,
+    options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+    profile: { ...defaultScenario.profile, currentAge: 40, retirementAge: 65, retirementYears: 25 },
+    contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
+    incomeFallbackAccountId: null,
+    incomeFallbackAccountId2: null,
+    careerPlan: {
+      enabled: true,
+      entries: [
+        {
+          ...defaultScenario.careerPlan.entries[0],
+          annualRaiseRate: 0,
+          startAge: 40,
+          endAge: 65,
+          paycheckInfo: undefined,
+          paycheck,
+          sourceLines: []
+        }
+      ]
+    }
+  });
+
+  it('warns when paycheck deductions exceed gross pay (negative net pay)', () => {
+    const result = projectScenario(baseScenario(makePaycheck(1000, 2000)));
+    const firstYear = result.years.find((year) => !year.isBaselineNow)!;
+
+    expect(firstYear.netIncome).toBe(0);
+    expect((result.warnings ?? []).some((warning) => warning.includes('paycheck deductions exceed gross pay'))).toBe(true);
+  });
+
+  it('funds income purchases from the month net pay', () => {
+    const scenario = {
+      ...baseScenario(makePaycheck(1000, 0)),
+      largePurchases: [
+        {
+          id: 'income-exact',
+          label: 'Exact',
+          enabled: true,
+          showOnGraph: true,
+          yearMonth: currentYearMonth(),
+          age: 40,
+          amount: 1000,
+          fundingSource: 'income' as const
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['income-exact']!.status).toBe('covered');
+  });
+
+  it('never lets income go negative when spending exceeds net pay', () => {
+    const scenario = {
+      ...baseScenario(makePaycheck(1000, 0)),
+      largePurchases: [
+        {
+          id: 'income-over',
+          label: 'Over',
+          enabled: true,
+          showOnGraph: true,
+          yearMonth: currentYearMonth(),
+          age: 40,
+          amount: 5000,
+          fundingSource: 'income' as const
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['income-over']!.status).toBe('shortfall');
+    const monthKey = currentYearMonth();
+    expect(result.incomeUsageByMonth[monthKey]?.availableIncome ?? 0).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('credit card income verification', () => {
+  const buildScenario = (fallbackId: string | null): Scenario => ({
+    ...defaultScenario,
+    options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+    profile: { ...defaultScenario.profile, currentAge: 40, retirementAge: 65, retirementYears: 25 },
+    incomeFallbackAccountId: fallbackId,
+    incomeFallbackAccountId2: null,
+    careerPlan: {
+      enabled: true,
+      entries: [
+        {
+          ...defaultScenario.careerPlan.entries[0],
+          annualRaiseRate: 0,
+          startAge: 40,
+          endAge: 65,
+          paycheckInfo: undefined,
+          paycheck: {
+            payFrequency: 'monthly',
+            categories: [
+              { id: 'cat-earn', label: 'Earnings', kind: 'earning', lines: [{ id: 'earn', label: 'Regular', amount: 1000, mode: 'amount' }] }
+            ]
+          },
+          sourceLines: []
+        }
+      ]
+    },
+    creditCards: [
+      {
+        id: 'cc-autopay',
+        label: 'Card',
+        enabled: true,
+        currentBalance: 0,
+        annualInterestRate: 0,
+        introEnabled: false,
+        introEndYearMonth: '',
+        monthlyCharges: 0,
+        paymentMode: 'autopay',
+        fixedPaymentAmount: 5000,
+        minimumPaymentPercent: 0,
+        minimumPaymentFloor: 0,
+        paymentSource: 'income',
+        lumpSumPaymentSource: 'income',
+        paymentDay: 1
+      }
+    ]
+  });
+
+  it('records a shortfall for income-funded autopay', () => {
+    const result = projectScenario(buildScenario(null));
+    expect(result.incomeFundedItemStatuses['cc-autopay']?.status).toBe('shortfall');
+    const monthlyPeriod = result.incomeValidation.periods.find((period) => period.pool === 'monthly');
+    expect(monthlyPeriod?.items.some((item) => item.id === 'cc-autopay')).toBe(true);
+  });
+
+  it('records a fallback for income-funded autopay when a fallback account is configured', () => {
+    const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+    const scenario = buildScenario(accountId);
+    scenario.profile = { ...scenario.profile, currentAge: 40, retirementAge: 41, retirementYears: 1 };
+    scenario.netWorth = {
+      ...defaultScenario.netWorth,
+      accountBalances: { emergencyFund: 10000000, hsa: 0, investments: 0, retirement401k: 0 },
+      bankAccounts: defaultScenario.netWorth.bankAccounts!.map((account) => (account.id === accountId ? { ...account, balance: 10000000 } : account))
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.incomeFundedItemStatuses['cc-autopay']?.status).toBe('fallback');
+  });
+});
+
+describe('account-funded credit card warnings', () => {
+  it('warns when an account-funded credit card payment cannot be funded', () => {
+    const accountId = defaultScenario.netWorth.bankAccounts![0].id;
+    const scenario: Scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { ...defaultScenario.profile, currentAge: 40, retirementAge: 41, retirementYears: 1 },
+      incomeFallbackAccountId: null,
+      incomeFallbackAccountId2: null,
+      netWorth: {
+        ...defaultScenario.netWorth,
+        accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
+        bankAccounts: defaultScenario.netWorth.bankAccounts!.map((account) => (account.id === accountId ? { ...account, balance: 0 } : account))
+      },
+      careerPlan: {
+        enabled: true,
+        entries: [
+          {
+            ...defaultScenario.careerPlan.entries[0],
+            annualRaiseRate: 0,
+            startAge: 40,
+            endAge: 41,
+            paycheckInfo: undefined,
+            paycheck: {
+              payFrequency: 'monthly',
+              categories: [
+                { id: 'cat-earn', label: 'Earnings', kind: 'earning', lines: [{ id: 'earn', label: 'Regular', amount: 1000, mode: 'amount' }] }
+              ]
+            },
+            sourceLines: []
+          }
+        ]
+      },
+      creditCards: [
+        {
+          id: 'cc-account',
+          label: 'Account Card',
+          enabled: true,
+          currentBalance: 1000,
+          annualInterestRate: 0,
+          introEnabled: false,
+          introEndYearMonth: '',
+          monthlyCharges: 0,
+          paymentMode: 'fixed',
+          fixedPaymentAmount: 1000,
+          minimumPaymentPercent: 0,
+          minimumPaymentFloor: 0,
+          paymentSource: `account:${accountId}` as `account:${string}`,
+          lumpSumPaymentSource: 'income',
+          paymentDay: 1
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    expect(result.creditCardFundingShortfalls['cc-account']).toBeGreaterThan(0);
+    expect((result.warnings ?? []).some((warning) => warning.includes('Credit card Account Card'))).toBe(true);
+  });
+});
+
+describe('autopay end date', () => {
+  const makeScenario = (end: string): Scenario => ({
+    ...defaultScenario,
+    options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+    profile: { ...defaultScenario.profile, currentAge: 40, retirementAge: 41, retirementYears: 1 },
+    incomeFallbackAccountId: null,
+    incomeFallbackAccountId2: null,
+    careerPlan: {
+      enabled: true,
+      entries: [
+        {
+          ...defaultScenario.careerPlan.entries[0],
+          annualRaiseRate: 0,
+          startAge: 40,
+          endAge: 41,
+          paycheckInfo: undefined,
+          paycheck: {
+            payFrequency: 'monthly',
+            categories: [
+              { id: 'cat-earn', label: 'Earnings', kind: 'earning', lines: [{ id: 'earn', label: 'Regular', amount: 1000, mode: 'amount' }] }
+            ]
+          },
+          sourceLines: []
+        }
+      ]
+    },
+    creditCards: [
+      {
+        id: 'cc-autopay',
+        label: 'Card',
+        enabled: true,
+        currentBalance: 0,
+        annualInterestRate: 0,
+        introEnabled: false,
+        introEndYearMonth: '',
+        monthlyCharges: 0,
+        paymentMode: 'autopay',
+        fixedPaymentAmount: 100,
+        minimumPaymentPercent: 0,
+        minimumPaymentFloor: 0,
+        paymentSource: 'income',
+        lumpSumPaymentSource: 'income',
+        paymentDay: 1,
+        autopayEndYearMonth: end
+      }
+    ]
+  });
+
+  it('pays through the inclusive end month and stops after', () => {
+    const result = projectScenario(makeScenario('2026-06'), { startDate: '2026-01-15' });
+    expect(result.incomeUsageByMonth['2026-06']?.items.some((item) => item.id === 'cc-autopay')).toBe(true);
+    expect(result.incomeUsageByMonth['2026-07']?.items.some((item) => item.id === 'cc-autopay') ?? false).toBe(false);
+  });
+
+  it('keeps paying when the end date is blank', () => {
+    const result = projectScenario(makeScenario(''), { startDate: '2026-01-15' });
+    expect(result.incomeUsageByMonth['2026-07']?.items.some((item) => item.id === 'cc-autopay')).toBe(true);
+  });
+});
+
+describe('housing income validation aggregation', () => {
+  it('reports one summed housing item per month instead of per sub-item', () => {
+    const scenario: Scenario = {
+      ...defaultScenario,
+      options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+      profile: { ...defaultScenario.profile, currentAge: 40, retirementAge: 41, retirementYears: 1 },
+      incomeFallbackAccountId: null,
+      incomeFallbackAccountId2: null,
+      careerPlan: {
+        enabled: true,
+        entries: [
+          {
+            ...defaultScenario.careerPlan.entries[0],
+            annualRaiseRate: 0,
+            startAge: 40,
+            endAge: 41,
+            paycheckInfo: undefined,
+            paycheck: {
+              payFrequency: 'monthly',
+              categories: [
+                { id: 'cat-earn', label: 'Earnings', kind: 'earning', lines: [{ id: 'earn', label: 'Regular', amount: 1000, mode: 'amount' }] }
+              ]
+            },
+            sourceLines: []
+          }
+        ]
+      },
+      housing: [
+        {
+          id: 'housing-x',
+          label: 'Rent',
+          enabled: true,
+          showOnGraph: true,
+          housingType: 'rental',
+          startYearMonth: currentYearMonth(),
+          purchasePrice: 0,
+          downPayment: 0,
+          annualInterestRate: 0,
+          loanTermYears: 0,
+          extraMonthlyPayment: 0,
+          monthlyRent: 2000,
+          endYearMonth: '',
+          propertyTaxYearly: 12000,
+          homeInsuranceYearly: 6000,
+          hoaMonthly: 500,
+          maintenanceMonthly: 0,
+          pmiMonthly: 0,
+          rentalIncomeMonthly: 0,
+          sellYearMonth: '',
+          appreciationRate: 0,
+          sellingCostsRate: 0,
+          paymentSource: 'income'
+        }
+      ]
+    };
+
+    const result = projectScenario(scenario);
+    const period = result.incomeValidation.periods.find((candidate) => candidate.pool === 'monthly');
+    const housingItems = period!.items.filter((item) => item.id === 'housing-x');
+
+    expect(housingItems).toHaveLength(1);
+    // rent 2000 + tax/insurance 1500 + hoa 500
+    expect(housingItems[0].requested).toBeCloseTo(4000, 4);
+  });
+});
+
+describe('retirement depletion (actual ledger)', () => {
+  const base = (accounts: { emergencyFund: number }, withdrawalAmount: number, minimumYearlyWithdrawal = 0): Scenario => ({
+    ...defaultScenario,
+    options: { ...defaultScenario.options, dateOfBirth: 'invalid-date' },
+    profile: { ...defaultScenario.profile, currentAge: 54, retirementAge: 54, retirementYears: 30 },
+    portfolio: { ...defaultScenario.portfolio, currentAssets: 0 },
+    netWorth: {
+      accountBalances: { emergencyFund: accounts.emergencyFund, hsa: 0, investments: 0, retirement401k: 0 },
+      asOfDate: '',
+      bankAccounts: seedDefaultBankAccounts({ emergencyFund: accounts.emergencyFund, hsa: 0, investments: 0, retirement401k: 0 }),
+      pools: defaultScenario.netWorth.pools
+    },
+    withdrawal: {
+      ...defaultScenario.withdrawal,
+      firstYearAmount: withdrawalAmount,
+      minimumYearlyWithdrawal,
+      sourceLines: [
+        {
+          id: 'withdrawal-source-1',
+          enabled: true,
+          sourceType: 'pool',
+          sourceId: 'emergencyFund',
+          mode: 'amount',
+          amount: withdrawalAmount,
+          syncWithRetirementAge: true
+        }
+      ]
+    }
+  });
+
+  it('does not mark depletion when net worth is positive but below the old $100k floor', () => {
+    const result = projectScenario(base({ emergencyFund: 90000 }, 1000));
+
+    expect(result.survivesToEnd).toBe(true);
+    expect(result.depletedAge).toBeNull();
+    expect(result.years[result.years.length - 1].endBalance).toBeGreaterThan(0);
+  });
+
+  it('still marks depletion at the age the ledger actually reaches zero', () => {
+    const result = projectScenario(base({ emergencyFund: 50000 }, 50000));
+
+    expect(result.survivesToEnd).toBe(false);
+    expect(result.depletedAge).not.toBeNull();
+    expect(result.depletedAge).toBeGreaterThanOrEqual(54);
   });
 });

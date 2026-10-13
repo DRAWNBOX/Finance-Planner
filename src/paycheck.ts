@@ -1,4 +1,6 @@
 import type {
+  CareerPayPlan,
+  CareerSourceLine,
   PayFrequency,
   Paycheck,
   PaycheckCategory,
@@ -7,6 +9,33 @@ import type {
   PaycheckLine,
   PaycheckLineKind
 } from './types';
+
+export const clonePaycheck = (paycheck: Paycheck): Paycheck => ({
+  ...paycheck,
+  categories: paycheck.categories.map((category) => ({
+    ...category,
+    lines: category.lines.map((line) => ({ ...line }))
+  }))
+});
+
+export const cloneSourceLines = (lines: CareerSourceLine[]): CareerSourceLine[] => lines.map((line) => ({ ...line }));
+
+let payPlanSeed = 0;
+const makePayPlanId = () => `pay-plan-${Date.now().toString(36)}-${(payPlanSeed += 1).toString(36)}`;
+
+export const createCareerPayPlan = (
+  label: string,
+  effectiveYearMonth: string,
+  paycheck: Paycheck,
+  sourceLines: CareerSourceLine[]
+): CareerPayPlan => ({
+  id: makePayPlanId(),
+  label,
+  effectiveYearMonth,
+  effectiveMarkerId: null,
+  paycheck: clonePaycheck(paycheck),
+  sourceLines: cloneSourceLines(sourceLines)
+});
 
 export const PAY_FREQUENCY_PERIODS: Record<PayFrequency, number> = {
   weekly: 52,

@@ -233,7 +233,8 @@ export const createDefaultCareerEntry = (
     ...base,
     sourceLines: defaultCareerSourceLines.map((line) => ({ ...line })),
     paycheckInfo: { grossSalary: index === 0 ? 98000 : 110000 + index * 12000, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0, retirementMode: 'amount', retirementMatchMode: 'amount', employerMaxMatchPercent: 0, hsaContributionMode: 'amount', hsaEmployerMatchMode: 'amount', employerHsaDeposit: 0, employerHsaDepositMode: 'amount', period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' } },
-    paycheck: createDefaultPaycheck(index)
+    paycheck: createDefaultPaycheck(index),
+    payPlans: []
   };
 };
 
@@ -336,6 +337,8 @@ export const createDefaultCreditCard = (): CreditCard => ({
   paymentSource: 'income',
   lumpSumPaymentSource: 'income',
   paymentDay: 15,
+  autopayEndYearMonth: '',
+  autopayEndMarkerId: null,
   showOnGraph: false
 });
 
@@ -410,10 +413,6 @@ export const defaultScenario: Scenario = {
   portfolio: {
     currentAssets: 500000
   },
-  contribution: {
-    yearlyContribution: 17500,
-    yearlyIncreaseRate: 2.9
-  },
   careerPlan: {
     enabled: true,
     entries: [createDefaultCareerEntry(0, 45, 65)]
@@ -464,6 +463,7 @@ export const defaultScenario: Scenario = {
     inflationRate: 2.9
   },
   purchaseCategories: [],
+  dateMarkers: [],
   timelines: [],
   activeTimelineId: null,
   trajectorySnapshots: [],

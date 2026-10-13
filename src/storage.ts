@@ -1,11 +1,12 @@
 import { defaultScenario } from './defaultScenario';
-import type { CareerEntry, CreditCard, HousingEntry, LargePurchase, LoanPaymentSource, LongTermPurchase, PayFrequency, Paycheck, PaycheckCategory, PaycheckInfo, PaycheckLine, PurchaseCategory, Scenario, SourceLine, Timeline, TrajectorySnapshot } from './types';
+import type { CareerEntry, CareerPayPlan, CareerSourceLine, CreditCard, DateMarker, HousingEntry, LargePurchase, LoanPaymentSource, LongTermPurchase, PayFrequency, Paycheck, PaycheckCategory, PaycheckInfo, PaycheckLine, PurchaseCategory, Scenario, SourceLine, Timeline, TrajectorySnapshot } from './types';
 import { addMonthsToYearMonth, ageFromYearMonth, formatYearMonthFromAge } from './utils/ageDate';
+import { normalizeMarkerDate, resolveDateMarkers } from './utils/dateMarkers';
 import { compilePaycheck, paycheckFromPaycheckInfo } from './paycheck';
 // Removed financeModel imports (functions inlined or simplified)
 
 const APP_TABS = ['options', 'careers', 'netWorth', 'expenses'] as const;
-const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses', 'housing', 'trajectory', 'warnings'] as const;
+const CAREERS_SUB_TABS = ['retirement', 'careers', 'timeline', 'purchasesExpenses', 'housing', 'trajectory', 'warnings', 'dateMarkers'] as const;
 export type CareersSubTab = (typeof CAREERS_SUB_TABS)[number];
 const EXPENSES_SUB_TABS = ['planning', 'tracking', 'creditCards'] as const;
 export type ExpensesSubTab = (typeof EXPENSES_SUB_TABS)[number];
@@ -43,6 +44,9 @@ const normalizeYearMonth = (value: unknown) => {
 
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : '';
 };
+
+const normalizeMarkerId = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 
 const derivePurchaseAgeAndYearMonth = (
   purchase: { age?: unknown; yearMonth?: unknown },
@@ -164,6 +168,25 @@ const normalizeLegacyPaycheckInfo = (entry: CareerEntry): PaycheckInfo => {
   return { grossSalary: legacySalary2, taxes: 0, healthBenefits: 0, retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0, otherBenefits: 0, livingExpenses: 0, period: { grossSalary: 'yearly', taxes: 'yearly', healthBenefits: 'yearly', retirement: 'yearly', retirementMatch: 'yearly', hsaContribution: 'yearly', hsaEmployerMatch: 'yearly', otherBenefits: 'yearly', livingExpenses: 'monthly' } };
 };
 
+const normalizeCareerSourceLines = (lines: unknown, bankAccountIds: Set<string>): CareerSourceLine[] => {
+  const rawLines = Array.isArray(lines) ? (lines as CareerSourceLine[]) : [];
+  return rawLines.map((line) => ({
+    ...line,
+    mode: line.mode === 'fixedAmount' ? 'fixedAmount' : 'percentOfSalary',
+    contributionRate: Math.max(0, toNumberOrFallback(line.contributionRate, 0)),
+    fixedAmount: Math.max(0, toNumberOrFallback(line.fixedAmount, 0)),
+    increaseWithPaycheck: Boolean(line.increaseWithPaycheck),
+    increaseWithdrawalWithPaycheck: Boolean(line.increaseWithdrawalWithPaycheck),
+    maxBalance: Math.max(0, toNumberOrFallback(line.maxBalance, 0)),
+    overflowFallbackAccountId:
+      typeof line.overflowFallbackAccountId === 'string' &&
+      line.overflowFallbackAccountId !== line.sourceId &&
+      bankAccountIds.has(line.overflowFallbackAccountId)
+        ? line.overflowFallbackAccountId
+        : null
+  }));
+};
+
 const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>): CareerEntry => {
   const emergencyFundContributionRate = toNumberOrFallback(entry.emergencyFundContributionRate, 2);
   const hsaContributionRate = toNumberOrFallback(entry.hsaContributionRate, 3);
@@ -180,10 +203,12 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
 
   return {
     ...entry,
-    usePreviousCareerStartAge: Boolean(entry.usePreviousCareerStartAge),
-    useBirthdayBasedStartAge: Boolean(entry.useBirthdayBasedStartAge) && !Boolean(entry.usePreviousCareerStartAge),
+    usePreviousCareerStartAge: Boolean(entry.usePreviousCareerStartAge) && !entry.startMarkerId,
+    useBirthdayBasedStartAge: Boolean(entry.useBirthdayBasedStartAge) && !Boolean(entry.usePreviousCareerStartAge) && !entry.startMarkerId,
     startYearMonth: normalizeYearMonth(entry.startYearMonth),
     endYearMonth: normalizeYearMonth(entry.endYearMonth),
+    startMarkerId: normalizeMarkerId(entry.startMarkerId),
+    endMarkerId: normalizeMarkerId(entry.endMarkerId),
     startAge: Math.min(entry.startAge, entry.endAge),
     endAge: Math.max(entry.startAge, entry.endAge),
     emergencyFundContributionRate,
@@ -208,23 +233,24 @@ const normalizeCareerTimeline = (entry: CareerEntry, bankAccountIds: Set<string>
     hsaMonthlyWithdrawal,
     investmentsMonthlyWithdrawal,
     retirement401kMonthlyWithdrawal,
-    sourceLines: (entry.sourceLines?.length ? entry.sourceLines : []).map((line) => ({
-      ...line,
-      mode: line.mode === 'fixedAmount' ? 'fixedAmount' : 'percentOfSalary',
-      contributionRate: Math.max(0, toNumberOrFallback(line.contributionRate, 0)),
-      fixedAmount: Math.max(0, toNumberOrFallback(line.fixedAmount, 0)),
-      increaseWithPaycheck: Boolean(line.increaseWithPaycheck),
-      increaseWithdrawalWithPaycheck: Boolean(line.increaseWithdrawalWithPaycheck),
-      maxBalance: Math.max(0, toNumberOrFallback(line.maxBalance, 0)),
-      overflowFallbackAccountId:
-        typeof line.overflowFallbackAccountId === 'string' &&
-        line.overflowFallbackAccountId !== line.sourceId &&
-        bankAccountIds.has(line.overflowFallbackAccountId)
-          ? line.overflowFallbackAccountId
-          : null
-    })),
+    sourceLines: normalizeCareerSourceLines(entry.sourceLines, bankAccountIds),
     paycheckInfo: effectivePaycheckInfo,
-    paycheck: effectivePaycheck
+    paycheck: effectivePaycheck,
+    payPlans: (Array.isArray(entry.payPlans) ? entry.payPlans : []).map((plan, index): CareerPayPlan => {
+      const rawPlan = (plan ?? {}) as unknown as Record<string, unknown>;
+      return {
+        id: typeof rawPlan.id === 'string' && rawPlan.id ? rawPlan.id : `pay-plan-${index + 1}`,
+        label: typeof rawPlan.label === 'string' && rawPlan.label ? rawPlan.label : `Plan ${index + 1}`,
+        effectiveYearMonth: normalizeYearMonth(rawPlan.effectiveYearMonth),
+        effectiveMarkerId: typeof rawPlan.effectiveMarkerId === 'string' && rawPlan.effectiveMarkerId ? rawPlan.effectiveMarkerId : null,
+        paycheck: normalizePaycheck(rawPlan.paycheck) ?? effectivePaycheck,
+        sourceLines: normalizeCareerSourceLines(rawPlan.sourceLines, bankAccountIds),
+        annualRaiseRate:
+          typeof rawPlan.annualRaiseRate === 'number' && Number.isFinite(rawPlan.annualRaiseRate)
+            ? rawPlan.annualRaiseRate
+            : undefined
+      };
+    })
   };
 };
 
@@ -293,7 +319,7 @@ const normalizeIsoDate = (value: unknown) =>
   typeof value === 'string' && /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(value) ? value : '';
 
 const normalizeCareersSubTab = (value: unknown): CareersSubTab => {
-  if (value === 'retirement' || value === 'careers' || value === 'timeline' || value === 'purchasesExpenses' || value === 'housing' || value === 'trajectory' || value === 'warnings') {
+  if (value === 'retirement' || value === 'careers' || value === 'timeline' || value === 'purchasesExpenses' || value === 'housing' || value === 'trajectory' || value === 'warnings' || value === 'dateMarkers') {
     return value;
   }
 
@@ -313,7 +339,7 @@ const normalizeCareersSubTab = (value: unknown): CareersSubTab => {
 };
 
 const normalizeExpensesSubTab = (value: unknown): ExpensesSubTab => {
-  if (value === 'planning' || value === 'tracking') {
+  if (value === 'planning' || value === 'tracking' || value === 'creditCards') {
     return value;
   }
 
@@ -339,7 +365,7 @@ export const loadAppState = (): PersistedAppState => {
     }
 
     const parsed = JSON.parse(raw) as Partial<PersistedAppState> & Partial<Scenario>;
-    const scenario = parsed.scenario ?? parsed;
+    const { contribution: _obsoleteContribution, ...scenario } = (parsed.scenario ?? parsed) as Partial<Scenario> & { contribution?: unknown };
     const ui = parsed.ui ?? defaultUiState;
     const bankAccountIds = new Set(
       (scenario.netWorth?.bankAccounts ?? defaultScenario.netWorth.bankAccounts ?? [])
@@ -368,6 +394,7 @@ export const loadAppState = (): PersistedAppState => {
           scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
           scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
         ),
+        yearMonthMarkerId: normalizeMarkerId(rawSaved?.yearMonthMarkerId),
         amount: Math.max(0, toNumberOrFallback(rawSaved?.amount, 0)),
         fundingSource: (typeof rawSaved?.fundingSource === 'string' && rawSaved.fundingSource) ? rawSaved.fundingSource as LargePurchase['fundingSource'] : 'income',
         categoryId: typeof rawSaved?.categoryId === 'string' && rawSaved.categoryId.trim().length > 0 ? rawSaved.categoryId : null,
@@ -404,6 +431,8 @@ export const loadAppState = (): PersistedAppState => {
         endMode,
         durationMonths,
         endYearMonth,
+        startMarkerId: normalizeMarkerId(p.startMarkerId),
+        endMarkerId: normalizeMarkerId(p.endMarkerId),
         monthlyAmount: Math.max(0, toNumberOrFallback(p.monthlyAmount, 0)),
         fundingSource: (typeof rawSaved.fundingSource === 'string' && rawSaved.fundingSource) ? rawSaved.fundingSource as LongTermPurchase['fundingSource'] : 'income',
         sourceLines: savedLines.length > 0
@@ -427,6 +456,7 @@ export const loadAppState = (): PersistedAppState => {
             scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
             scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
           ),
+        startMarkerId: normalizeMarkerId(l.startMarkerId),
         originalAmount: Math.max(0, toNumberOrFallback(l.originalAmount, 0)),
         downPayment: Math.max(0, toNumberOrFallback(l.downPayment, 0)),
         currentBalance: Math.max(0, toNumberOrFallback(l.currentBalance, 0)),
@@ -456,6 +486,7 @@ export const loadAppState = (): PersistedAppState => {
         annualInterestRate: toNumberOrFallback(raw.annualInterestRate as number, 24.99),
         introEnabled: Boolean(raw.introEnabled),
         introEndYearMonth: normalizeYearMonth(raw.introEndYearMonth as string | undefined) || '',
+        introEndMarkerId: normalizeMarkerId(raw.introEndMarkerId),
         monthlyCharges: Math.max(0, toNumberOrFallback(raw.monthlyCharges as number, 0)),
         paymentMode: raw.paymentMode === 'fixed' || raw.paymentMode === 'payInFull' || raw.paymentMode === 'minimum' || raw.paymentMode === 'fixedPlusLump' || raw.paymentMode === 'autopay' ? raw.paymentMode as CreditCard['paymentMode'] : 'minimum',
         fixedPaymentAmount: Math.max(0, toNumberOrFallback(raw.fixedPaymentAmount as number, 100)),
@@ -464,6 +495,8 @@ export const loadAppState = (): PersistedAppState => {
         paymentSource: typeof raw.paymentSource === 'string' && raw.paymentSource.length > 0 ? raw.paymentSource as CreditCard['paymentSource'] : 'income',
         lumpSumPaymentSource: typeof raw.lumpSumPaymentSource === 'string' && raw.lumpSumPaymentSource.length > 0 ? raw.lumpSumPaymentSource as CreditCard['lumpSumPaymentSource'] : 'income',
         paymentDay: Math.max(1, Math.min(28, Math.floor(toNumberOrFallback(raw.paymentDay as number, 15)))),
+        autopayEndYearMonth: normalizeYearMonth(raw.autopayEndYearMonth as string | undefined) || '',
+        autopayEndMarkerId: normalizeMarkerId(raw.autopayEndMarkerId),
         showOnGraph: Boolean(raw.showOnGraph),
         flagColor: typeof raw.flagColor === 'string' && raw.flagColor.trim().length > 0 ? raw.flagColor : undefined
       };
@@ -485,6 +518,7 @@ export const loadAppState = (): PersistedAppState => {
             scenario.options?.dateOfBirth ?? defaultScenario.options.dateOfBirth,
             scenario.profile?.currentAge ?? defaultScenario.profile.currentAge
           ),
+        startMarkerId: normalizeMarkerId(entry.startMarkerId),
         purchasePrice: Math.max(0, toNumberOrFallback(entry.purchasePrice, 0)),
         downPayment: Math.max(0, toNumberOrFallback(entry.downPayment, 0)),
         downPaymentSource: typeof entry.downPaymentSource === 'string' ? entry.downPaymentSource as LoanPaymentSource : undefined,
@@ -493,6 +527,7 @@ export const loadAppState = (): PersistedAppState => {
         extraMonthlyPayment: Math.max(0, toNumberOrFallback(entry.extraMonthlyPayment, 0)),
         monthlyRent: Math.max(0, toNumberOrFallback(entry.monthlyRent, 0)),
         endYearMonth: normalizeYearMonth(entry.endYearMonth as string | undefined) || '',
+        endMarkerId: normalizeMarkerId(entry.endMarkerId),
         propertyTaxYearly: Math.max(0, toNumberOrFallback(entry.propertyTaxYearly, 0)),
         homeInsuranceYearly: Math.max(0, toNumberOrFallback(entry.homeInsuranceYearly, 0)),
         hoaMonthly: Math.max(0, toNumberOrFallback(entry.hoaMonthly, 0)),
@@ -501,6 +536,7 @@ export const loadAppState = (): PersistedAppState => {
         rentalIncomeMonthly: Math.max(0, toNumberOrFallback(entry.rentalIncomeMonthly, 0)),
         rentalIncomeAccountId: typeof entry.rentalIncomeAccountId === 'string' ? entry.rentalIncomeAccountId : undefined,
         sellYearMonth: normalizeYearMonth(entry.sellYearMonth as string | undefined) || '',
+        sellMarkerId: normalizeMarkerId(entry.sellMarkerId),
         appreciationRate: toNumberOrFallback(entry.appreciationRate, 0),
         sellingCostsRate: Math.max(0, toNumberOrFallback(entry.sellingCostsRate, 0)),
         saleProceedsAccountId: typeof entry.saleProceedsAccountId === 'string' ? entry.saleProceedsAccountId : undefined,
@@ -589,13 +625,12 @@ export const loadAppState = (): PersistedAppState => {
     };
 
     return {
-      scenario: {
+      scenario: resolveDateMarkers({
         ...defaultScenario,
         ...scenario,
         profile: { ...defaultScenario.profile, ...scenario.profile },
         options: { ...defaultScenario.options, ...scenario.options },
         portfolio: { ...defaultScenario.portfolio, ...scenario.portfolio },
-        contribution: { ...defaultScenario.contribution, ...scenario.contribution },
         careerPlan: {
           enabled: scenario.careerPlan?.enabled ?? defaultScenario.careerPlan.enabled,
           entries:
@@ -770,6 +805,16 @@ export const loadAppState = (): PersistedAppState => {
             label: typeof raw?.label === 'string' && raw.label.trim().length > 0 ? raw.label : `Category ${cIdx + 1}`
           } satisfies PurchaseCategory;
         }).filter((c) => c.label.length > 0),
+        dateMarkers: (Array.isArray(scenario.dateMarkers) ? scenario.dateMarkers : defaultScenario.dateMarkers)
+          .map((marker: unknown, mIdx: number): DateMarker => {
+            const raw = marker as Record<string, unknown> | null;
+            return {
+              id: typeof raw?.id === 'string' && raw.id.trim().length > 0 ? raw.id : `marker-${mIdx + 1}`,
+              label: typeof raw?.label === 'string' && raw.label.trim().length > 0 ? raw.label : `Marker ${mIdx + 1}`,
+              date: normalizeMarkerDate(raw?.date)
+            };
+          })
+          .filter((marker) => marker.date.length > 0),
         timelines: (Array.isArray(scenario.timelines) ? scenario.timelines : defaultScenario.timelines).map((timeline: unknown, tIdx: number) => normalizeTimeline(timeline, tIdx)),
         activeTimelineId: (typeof scenario.activeTimelineId === 'string' && scenario.activeTimelineId.trim().length > 0)
           ? scenario.activeTimelineId
@@ -804,7 +849,9 @@ export const loadAppState = (): PersistedAppState => {
               if (src === 'income') return 'income';
               if (typeof src === 'string' && src.startsWith('account:') && bankAccountIds.has(src.slice('account:'.length))) return src as `account:${string}`;
               return undefined;
-            })()
+            })(),
+            startMarkerId: normalizeMarkerId(entry.startMarkerId),
+            endMarkerId: normalizeMarkerId(entry.endMarkerId)
           })),
           imports: (scenario.expenses?.imports ?? defaultScenario.expenses.imports).map((item, index) => ({
             id: typeof item.id === 'string' && item.id.trim().length > 0 ? item.id : `expense-import-${index + 1}`,
@@ -891,7 +938,9 @@ export const loadAppState = (): PersistedAppState => {
               if (src === 'income') return 'income';
               if (typeof src === 'string' && src.startsWith('account:') && bankAccountIds.has(src.slice('account:'.length))) return src as `account:${string}`;
               return undefined;
-            })()
+            })(),
+            startMarkerId: normalizeMarkerId(event.startMarkerId),
+            endMarkerId: normalizeMarkerId(event.endMarkerId)
           })),
           ui: {
             groupingMode: scenario.expenses?.ui?.groupingMode === 'pool' ? 'pool' : 'account',
@@ -924,17 +973,21 @@ export const loadAppState = (): PersistedAppState => {
           ...item,
           accountId: typeof item.accountId === 'string' && item.accountId.trim().length > 0 ? item.accountId : null,
           startYearMonth: typeof item.startYearMonth === 'string' ? normalizeYearMonth(item.startYearMonth) : undefined,
-          endYearMonth: typeof item.endYearMonth === 'string' ? normalizeYearMonth(item.endYearMonth) : undefined
+          endYearMonth: typeof item.endYearMonth === 'string' ? normalizeYearMonth(item.endYearMonth) : undefined,
+          startMarkerId: normalizeMarkerId(item.startMarkerId),
+          endMarkerId: normalizeMarkerId(item.endMarkerId)
         })),
         lifeEvents: (scenario.lifeEvents ?? []).map((event) => ({
           ...event,
           accountId: typeof event.accountId === 'string' && event.accountId.trim().length > 0 ? event.accountId : null,
           startYearMonth: typeof event.startYearMonth === 'string' ? normalizeYearMonth(event.startYearMonth) : undefined,
-          endYearMonth: typeof event.endYearMonth === 'string' ? normalizeYearMonth(event.endYearMonth) : undefined
+          endYearMonth: typeof event.endYearMonth === 'string' ? normalizeYearMonth(event.endYearMonth) : undefined,
+          startMarkerId: normalizeMarkerId(event.startMarkerId),
+          endMarkerId: normalizeMarkerId(event.endMarkerId)
         })),
         incomeFallbackAccountId: normalizeIncomeFallbackId(scenario.incomeFallbackAccountId, bankAccountIds),
         incomeFallbackAccountId2: normalizeIncomeFallbackId(scenario.incomeFallbackAccountId2, bankAccountIds)
-      },
+      }),
       ui: {
         ...defaultUiState,
         ...ui,
@@ -958,5 +1011,6 @@ export const saveAppState = (state: PersistedAppState) => {
     return;
   }
 
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const { contribution: _obsoleteContribution, ...scenario } = state.scenario as Scenario & { contribution?: unknown };
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, scenario }));
 };

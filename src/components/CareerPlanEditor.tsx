@@ -1,11 +1,12 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { BufferedNumberInput } from './BufferedNumberInput';
 import { YearMonthInput } from './YearMonthInput';
+import { DateOrMarkerInput } from './DateOrMarkerInput';
 import { PaycheckEditorModal } from './PaycheckEditorModal';
-import type { BankAccountDefinition, CareerEntry, CareerPlan, CareerSourceLine, Paycheck, PaycheckInfo, PoolDefinition, ProjectionYear } from '../types';
+import type { BankAccountDefinition, CareerEntry, CareerPayPlan, CareerPlan, CareerSourceLine, DateMarker, Paycheck, PaycheckInfo, PoolDefinition, ProjectionYear } from '../types';
 import { addMonthsToYearMonth, ageFromYearMonth, formatYearMonthFromAge } from '../utils/ageDate';
 import { useRenderCount } from '../utils/perfTools';
-import { PAY_FREQUENCY_LABELS, compilePaycheck, getPaycheckTotals, paycheckFromPaycheckInfo, resolvePaycheckInfo } from '../paycheck';
+import { PAY_FREQUENCY_LABELS, compilePaycheck, createCareerPayPlan, getPaycheckTotals, paycheckFromPaycheckInfo, resolvePaycheckInfo } from '../paycheck';
 
 interface CareerPlanEditorProps {
   value: CareerPlan;
@@ -29,6 +30,7 @@ interface CareerPlanEditorProps {
   incomeFallbackNotice?: string | null;
   onDismissIncomeFallbackNotice?: () => void;
   withdrawalShortfalls?: Record<string, number>;
+  dateMarkers?: DateMarker[];
   allowReordering?: boolean;
 }
 
@@ -54,10 +56,10 @@ const careerAnnualNetIncome = (career: CareerEntry | undefined): number => {
 };
 
 const resolveCareerLineForAccount = (
-  career: CareerEntry,
+  career: CareerEntry | undefined,
   account: BankAccountDefinition
 ): CareerSourceLine => {
-  const existingLines = career.sourceLines ?? [];
+  const existingLines = career?.sourceLines ?? [];
   const accountLine = existingLines.find((line) => line.sourceType === 'account' && line.sourceId === account.id);
   if (accountLine) {
     return accountLine;
@@ -111,16 +113,87 @@ export const CareerPlanEditor = memo(({
   incomeFallbackNotice,
   onDismissIncomeFallbackNotice,
   withdrawalShortfalls,
+  dateMarkers = [],
   allowReordering = true
 }: CareerPlanEditorProps) => {
   useRenderCount('CareerPlanEditor');
   const selectedCareer = value.entries.find((career) => career.id === selectedCareerId) ?? value.entries[0];
   const [dragCareerId, setDragCareerId] = useState<string | null>(null);
   const [showPaycheckModal, setShowPaycheckModal] = useState(false);
-  const selectedPaycheck = selectedCareer
-    ? selectedCareer.paycheck ?? paycheckFromPaycheckInfo(selectedCareer.paycheckInfo)
-    : undefined;
-  const selectedPaycheckTotals = selectedPaycheck ? getPaycheckTotals(selectedPaycheck) : undefined;
+  const [selectedPayPlanId, setSelectedPayPlanId] = useState('initial');
+  const payPlans = useMemo(() => selectedCareer?.payPlans ?? [], [selectedCareer]);
+  const activePlan = selectedPayPlanId === 'initial' ? undefined : payPlans.find((plan) => plan.id === selectedPayPlanId);
+  const activePaycheck = (activePlan?.paycheck ?? selectedCareer?.paycheck)
+    ?? (selectedCareer ? paycheckFromPaycheckInfo(selectedCareer.paycheckInfo) : undefined);
+  const activeSourceLines = activePlan?.sourceLines ?? selectedCareer?.sourceLines ?? [];
+  const lineCareer = selectedCareer ? { ...selectedCareer, sourceLines: activeSourceLines } : undefined;
+  const activePaycheckTotals = activePaycheck ? getPaycheckTotals(activePaycheck) : undefined;
+  const paycheckDeductionsExceedGross = Boolean(activePaycheckTotals)
+    && activePaycheckTotals!.grossAnnual <
+      activePaycheckTotals!.taxAnnual + activePaycheckTotals!.pretaxAnnual + activePaycheckTotals!.posttaxAnnual - 0.01;
+
+    useEffect(() => {
+    setSelectedPayPlanId('initial');
+  }, [selectedCareer?.id]);
+
+  const writeActiveSourceLines = (nextSourceLines: CareerSourceLine[]) => {
+    if (!selectedCareer) {
+      return;
+    }
+    if (activePlan) {
+      onChangeCareer({
+        ...selectedCareer,
+        payPlans: payPlans.map((plan) => (plan.id === activePlan.id ? { ...plan, sourceLines: nextSourceLines } : plan))
+      });
+    } else {
+      onChangeCareer({ ...selectedCareer, sourceLines: nextSourceLines });
+    }
+  };
+
+  const updateActivePaycheck = (nextPaycheck: Paycheck) => {
+    if (!selectedCareer) {
+      return;
+    }
+    if (activePlan) {
+      onChangeCareer({
+        ...selectedCareer,
+        payPlans: payPlans.map((plan) => (plan.id === activePlan.id ? { ...plan, paycheck: nextPaycheck } : plan))
+      });
+    } else {
+      onChangeCareer({ ...selectedCareer, paycheck: nextPaycheck, paycheckInfo: compilePaycheck(nextPaycheck) });
+    }
+  };
+
+  const handleAddPayPlan = () => {
+    if (!selectedCareer || !activePaycheck) {
+      return;
+    }
+    const careerStartMonth = selectedCareer.startYearMonth || formatYearMonthFromAge(selectedCareer.startAge, dateOfBirth, currentAge);
+    const lastPlanMonth = payPlans.length > 0 ? payPlans[payPlans.length - 1].effectiveYearMonth : '';
+    const defaultMonth = addMonthsToYearMonth(lastPlanMonth || careerStartMonth, 12);
+    const plan = createCareerPayPlan(`Plan ${payPlans.length + 2}`, defaultMonth, activePaycheck, activeSourceLines);
+    onChangeCareer({ ...selectedCareer, payPlans: [...payPlans, plan] });
+    setSelectedPayPlanId(plan.id);
+  };
+
+  const handleRemovePayPlan = (planId: string) => {
+    if (!selectedCareer) {
+      return;
+    }
+    onChangeCareer({ ...selectedCareer, payPlans: payPlans.filter((plan) => plan.id !== planId) });
+    if (selectedPayPlanId === planId) {
+      setSelectedPayPlanId('initial');
+    }
+  };
+
+  const handleUpdatePayPlan = (planId: string, patch: Partial<CareerPayPlan>) => {
+    if (!selectedCareer) {
+      return;
+    }
+    onChangeCareer({ ...selectedCareer, payPlans: payPlans.map((plan) => (plan.id === planId ? { ...plan, ...patch } : plan)) });
+  };
+
+
   const selectedCareerIndex = selectedCareer ? value.entries.findIndex((career) => career.id === selectedCareer.id) : -1;
   const previousCareer = selectedCareerIndex > 0 ? value.entries[selectedCareerIndex - 1] : undefined;
   const previousCareerEndYearMonth = previousCareer
@@ -154,11 +227,7 @@ export const CareerPlanEditor = memo(({
   };
 
   const handleSavePaycheck = (nextPaycheck: Paycheck) => {
-    if (!selectedCareer) {
-      return;
-    }
-
-    onChangeCareer({ ...selectedCareer, paycheck: nextPaycheck, paycheckInfo: compilePaycheck(nextPaycheck) });
+    updateActivePaycheck(nextPaycheck);
     setShowPaycheckModal(false);
   };
 
@@ -189,14 +258,25 @@ export const CareerPlanEditor = memo(({
       period: prev.period
     };
     const nextPaycheckInfo = { ...(selectedCareer.paycheckInfo ?? {} as PaycheckInfo), ...partialPaycheck } as PaycheckInfo;
-    onChangeCareer({
-      ...selectedCareer,
-      annualRaiseRate: previousCareer.annualRaiseRate,
-      paycheckInfo: nextPaycheckInfo,
-      paycheck: paycheckFromPaycheckInfo(nextPaycheckInfo)
-    });
+    const targetPaycheck = paycheckFromPaycheckInfo(nextPaycheckInfo);
+    if (activePlan) {
+      onChangeCareer({
+        ...selectedCareer,
+        annualRaiseRate: previousCareer.annualRaiseRate,
+        payPlans: payPlans.map((plan) => (plan.id === activePlan.id ? { ...plan, paycheck: targetPaycheck } : plan))
+      });
+    } else {
+      onChangeCareer({
+        ...selectedCareer,
+        annualRaiseRate: previousCareer.annualRaiseRate,
+        paycheckInfo: nextPaycheckInfo,
+        paycheck: targetPaycheck
+      });
+    }
   };
-  const previewNetIncome = previewYear?.netIncome ?? careerAnnualNetIncome(selectedCareer);
+  const previewNetIncome = activePlan
+    ? (activePaycheckTotals?.netAnnual ?? 0)
+    : previewYear?.netIncome ?? careerAnnualNetIncome(selectedCareer);
   const activeStartAge = selectedStartAge ?? selectedCareer.startAge;
   const periodYears = Math.max(0, selectedCareer.endAge - activeStartAge + 1);
   const periodMonths = periodYears * 12;
@@ -215,7 +295,7 @@ export const CareerPlanEditor = memo(({
 
   const annualSavingsFromPercentage = (percentage: number, income = previewNetIncome) => Math.round(income * (percentage / 100));
 
-  const getLineForAccount = (career: CareerEntry, account: BankAccountDefinition) =>
+  const getLineForAccount = (career: CareerEntry | undefined, account: BankAccountDefinition) =>
     resolveCareerLineForAccount(career, account);
 
   const updateLineForAccount = (
@@ -224,7 +304,7 @@ export const CareerPlanEditor = memo(({
       Pick<CareerSourceLine, 'contributionRate' | 'savingsMonthly' | 'monthlyWithdrawal' | 'enabled' | 'maxBalance' | 'overflowFallbackAccountId' | 'mode' | 'fixedAmount' | 'increaseWithPaycheck' | 'increaseWithdrawalWithPaycheck'>
     >
   ) => {
-    const existingLine = getLineForAccount(selectedCareer, account);
+    const existingLine = getLineForAccount(lineCareer, account);
     const nextLine: CareerSourceLine = {
       ...existingLine,
       ...updates,
@@ -246,40 +326,37 @@ export const CareerPlanEditor = memo(({
             ? updates.overflowFallbackAccountId
             : existingLine.overflowFallbackAccountId ?? null
     };
-    const remainingLines = (selectedCareer.sourceLines ?? []).filter(
+    const remainingLines = activeSourceLines.filter(
       (line) =>
         !(line.sourceType === 'account' && line.sourceId === account.id) &&
         !(line.sourceType === 'pool' && line.sourceId === account.poolId)
     );
 
-    onChangeCareer({
-      ...selectedCareer,
-      sourceLines: [...remainingLines, nextLine]
-    });
+    writeActiveSourceLines([...remainingLines, nextLine]);
   };
 
-  const getCareerPercentage = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).contributionRate;
+  const getCareerPercentage = (account: BankAccountDefinition) => getLineForAccount(lineCareer, account).contributionRate;
 
   const getSourceLineMode = (account: BankAccountDefinition): 'percentOfSalary' | 'fixedAmount' =>
-    getLineForAccount(selectedCareer, account).mode ?? 'percentOfSalary';
+    getLineForAccount(lineCareer, account).mode ?? 'percentOfSalary';
 
-  const getSourceLineFixedAmount = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).fixedAmount ?? 0;
+  const getSourceLineFixedAmount = (account: BankAccountDefinition) => getLineForAccount(lineCareer, account).fixedAmount ?? 0;
 
   const getSourceLineIncreasesWithPaycheck = (account: BankAccountDefinition) =>
-    Boolean(getLineForAccount(selectedCareer, account).increaseWithPaycheck);
+    Boolean(getLineForAccount(lineCareer, account).increaseWithPaycheck);
 
   const getWithdrawalIncreasesWithPaycheck = (account: BankAccountDefinition) =>
-    Boolean(getLineForAccount(selectedCareer, account).increaseWithdrawalWithPaycheck);
+    Boolean(getLineForAccount(lineCareer, account).increaseWithdrawalWithPaycheck);
 
   const getWithdrawalShortfall = (account: BankAccountDefinition) => {
     if (!withdrawalShortfalls) {
       return 0;
     }
-    const line = getLineForAccount(selectedCareer, account);
+    const line = getLineForAccount(lineCareer, account);
     return withdrawalShortfalls[line.sourceId ?? account.id] ?? 0;
   };
 
-  const isSavingsMonthly = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).savingsMonthly;
+  const isSavingsMonthly = (account: BankAccountDefinition) => getLineForAccount(lineCareer, account).savingsMonthly;
 
   const savingsInputAmountFromPercentage = (account: BankAccountDefinition) => {
     const annualSavings = annualSavingsFromPercentage(getCareerPercentage(account));
@@ -289,10 +366,10 @@ export const CareerPlanEditor = memo(({
   const annualSavingsFromInputAmount = (account: BankAccountDefinition, inputAmount: number) =>
     Math.round(isSavingsMonthly(account) ? inputAmount * 12 : inputAmount);
 
-  const getMonthlyWithdrawal = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).monthlyWithdrawal;
-  const getMaxBalance = (account: BankAccountDefinition) => getLineForAccount(selectedCareer, account).maxBalance ?? 0;
+  const getMonthlyWithdrawal = (account: BankAccountDefinition) => getLineForAccount(lineCareer, account).monthlyWithdrawal;
+  const getMaxBalance = (account: BankAccountDefinition) => getLineForAccount(lineCareer, account).maxBalance ?? 0;
   const getOverflowFallbackAccountId = (account: BankAccountDefinition) =>
-    getLineForAccount(selectedCareer, account).overflowFallbackAccountId ?? null;
+    getLineForAccount(lineCareer, account).overflowFallbackAccountId ?? null;
 
   const calculateCareerEndBalancesThroughIndex = (targetIndex: number): Record<string, number> => {
     let balances: Record<string, number> = Object.fromEntries(
@@ -411,6 +488,74 @@ export const CareerPlanEditor = memo(({
         <span>Estimate income from this career</span>
       </label>
 
+      {selectedCareer && (
+        <div className="pay-plan-bar">
+          <div className="pay-plan-selector">
+            <span>Net pay plan</span>
+            <div className="pay-plan-chips" role="tablist" aria-label="Net pay plan">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={selectedPayPlanId === 'initial'}
+                className={`career-tab${selectedPayPlanId === 'initial' ? ' active' : ''}`}
+                onClick={() => setSelectedPayPlanId('initial')}
+              >
+                Initial
+              </button>
+              {payPlans.map((plan) => {
+                const isActive = selectedPayPlanId === plan.id;
+                return (
+                  <button
+                    key={plan.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`career-tab${isActive ? ' active' : ''}`}
+                    onClick={() => setSelectedPayPlanId(plan.id)}
+                  >
+                    {plan.label}
+                    {plan.effectiveYearMonth ? ` (${plan.effectiveYearMonth})` : ''}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <button type="button" className="secondary-button" onClick={handleAddPayPlan}>
+            + Pay Plan
+          </button>
+          {activePlan && (
+            <button type="button" className="text-button" onClick={() => handleRemovePayPlan(activePlan.id)}>
+              Remove plan
+            </button>
+          )}
+          {activePlan && (
+            <label className="pay-plan-label">
+              <span>Plan name</span>
+              <input
+                type="text"
+                aria-label="Pay plan name"
+                value={activePlan.label}
+                onChange={(event) => handleUpdatePayPlan(activePlan.id, { label: event.target.value })}
+              />
+            </label>
+          )}
+          {activePlan && (
+            <label className="pay-plan-date">
+              <span>Effective from</span>
+              <DateOrMarkerInput
+                label="Effective"
+                value={activePlan.effectiveYearMonth}
+                markerId={activePlan.effectiveMarkerId}
+                markers={dateMarkers}
+                onChange={(value, markerId) =>
+                  handleUpdatePayPlan(activePlan.id, { effectiveYearMonth: value, effectiveMarkerId: markerId })
+                }
+              />
+            </label>
+          )}
+        </div>
+      )}
+
       {selectedCareer ? (
         <>
           <div className="career-grid">
@@ -436,22 +581,27 @@ export const CareerPlanEditor = memo(({
             </label>
             <label>
               <span>Start (Year-Month)</span>
-              <YearMonthInput
+              <DateOrMarkerInput
                 label="Start"
                 value={startYearMonthValue}
+                markerId={selectedCareer.startMarkerId}
+                markers={dateMarkers}
                 disabled={selectedCareer.useBirthdayBasedStartAge || (selectedCareer.usePreviousCareerStartAge && Boolean(previousCareer))}
-                onChange={(event) => {
-                  const derivedAge = ageFromYearMonth(event, dateOfBirth, currentAge, startAgeMin, startAgeMax);
+                onChange={(next, markerId) => {
+                  const derivedAge = ageFromYearMonth(next, dateOfBirth, currentAge, startAgeMin, startAgeMax);
 
-                  if (derivedAge === null) {
+                  if (derivedAge === null && !markerId) {
                     return;
                   }
 
                   onChangeCareer({
                     ...selectedCareer,
-                    startAge: derivedAge,
-                    endAge: Math.max(selectedCareer.endAge, derivedAge),
-                    startYearMonth: event
+                    startAge: derivedAge ?? selectedCareer.startAge,
+                    endAge: derivedAge === null ? selectedCareer.endAge : Math.max(selectedCareer.endAge, derivedAge),
+                    startYearMonth: next,
+                    startMarkerId: markerId,
+                    useBirthdayBasedStartAge: markerId ? false : selectedCareer.useBirthdayBasedStartAge,
+                    usePreviousCareerStartAge: markerId ? false : selectedCareer.usePreviousCareerStartAge
                   });
                 }}
               />
@@ -473,17 +623,24 @@ export const CareerPlanEditor = memo(({
             </label>
             <label>
               <span>End (Year-Month)</span>
-              <YearMonthInput
+              <DateOrMarkerInput
                 label="End"
                 value={endYearMonthValue}
-                onChange={(nextValue) => {
-                  const derivedAge = ageFromYearMonth(nextValue, dateOfBirth, currentAge, endAgeMin, endAgeMax);
+                markerId={selectedCareer.endMarkerId}
+                markers={dateMarkers}
+                onChange={(next, markerId) => {
+                  const derivedAge = ageFromYearMonth(next, dateOfBirth, currentAge, endAgeMin, endAgeMax);
 
-                  if (derivedAge === null) {
+                  if (derivedAge === null && !markerId) {
                     return;
                   }
 
-                  onChangeCareer({ ...selectedCareer, endAge: derivedAge, endYearMonth: nextValue });
+                  onChangeCareer({
+                    ...selectedCareer,
+                    endAge: derivedAge ?? selectedCareer.endAge,
+                    endYearMonth: next,
+                    endMarkerId: markerId
+                  });
                 }}
               />
             </label>
@@ -496,6 +653,7 @@ export const CareerPlanEditor = memo(({
                     ...selectedCareer,
                     useBirthdayBasedStartAge: event.target.checked,
                     usePreviousCareerStartAge: event.target.checked ? false : selectedCareer.usePreviousCareerStartAge,
+                    startMarkerId: event.target.checked ? null : selectedCareer.startMarkerId,
                     startAge: event.target.checked ? birthdayBasedCareerStartAge : selectedStartAge ?? selectedCareer.startAge,
                     startYearMonth: formatYearMonthFromAge(
                       event.target.checked ? birthdayBasedCareerStartAge : selectedStartAge ?? selectedCareer.startAge,
@@ -517,6 +675,7 @@ export const CareerPlanEditor = memo(({
                     ...selectedCareer,
                     usePreviousCareerStartAge: event.target.checked,
                     useBirthdayBasedStartAge: event.target.checked ? false : selectedCareer.useBirthdayBasedStartAge,
+                    startMarkerId: event.target.checked ? null : selectedCareer.startMarkerId,
                     startAge: event.target.checked && previousCareer ? previousCareerStartAge ?? previousCareer.endAge : selectedCareer.startAge,
                     startYearMonth:
                       event.target.checked && previousCareer
@@ -552,31 +711,37 @@ export const CareerPlanEditor = memo(({
             </div>
             <div className="paycheck-summary-row">
               <span>Pay frequency</span>
-              <span>{selectedPaycheckTotals ? `${PAY_FREQUENCY_LABELS[selectedPaycheck!.payFrequency]} (${selectedPaycheckTotals.periodsPerYear}/yr)` : '-'}</span>
+              <span>{activePaycheckTotals ? `${PAY_FREQUENCY_LABELS[activePaycheck!.payFrequency]} (${activePaycheckTotals.periodsPerYear}/yr)` : '-'}</span>
             </div>
             <div className="paycheck-summary-row">
               <span>Gross / period</span>
-              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.grossPerPeriod) : '-'}</span>
+              <span>{activePaycheckTotals ? formatCurrency(activePaycheckTotals.grossPerPeriod) : '-'}</span>
             </div>
             <div className="paycheck-summary-row">
               <span>Annual gross</span>
-              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.grossAnnual) : '-'}</span>
+              <span>{activePaycheckTotals ? formatCurrency(activePaycheckTotals.grossAnnual) : '-'}</span>
             </div>
             <div className="paycheck-summary-row">
               <span>Taxes</span>
-              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.taxAnnual) : '-'}</span>
+              <span>{activePaycheckTotals ? formatCurrency(activePaycheckTotals.taxAnnual) : '-'}</span>
             </div>
             <div className="paycheck-summary-row">
               <span>Deductions (pre + post tax)</span>
-              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.pretaxAnnual + selectedPaycheckTotals.posttaxAnnual) : '-'}</span>
+              <span>{activePaycheckTotals ? formatCurrency(activePaycheckTotals.pretaxAnnual + activePaycheckTotals.posttaxAnnual) : '-'}</span>
             </div>
             <div className="paycheck-summary-row">
               <span>Employer contributions</span>
-              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.employerAnnual) : '-'}</span>
+              <span>{activePaycheckTotals ? formatCurrency(activePaycheckTotals.employerAnnual) : '-'}</span>
             </div>
-            <div className="paycheck-summary-row net">
+            <div
+              className={`paycheck-summary-row net${paycheckDeductionsExceedGross ? ' invalid' : ''}`}
+              title={paycheckDeductionsExceedGross ? 'Deductions exceed gross pay; net pay is $0.' : undefined}
+            >
               <span>Net pay / period</span>
-              <span>{selectedPaycheckTotals ? formatCurrency(selectedPaycheckTotals.netPerPeriod) : '-'}</span>
+              <span>
+                {activePaycheckTotals ? formatCurrency(activePaycheckTotals.netPerPeriod) : '-'}
+                {paycheckDeductionsExceedGross ? ' (deductions exceed gross)' : ''}
+              </span>
             </div>
             {previousCareer && (
               <button type="button" className="secondary-button" onClick={handleCopyFromPrevious}>
@@ -797,7 +962,7 @@ export const CareerPlanEditor = memo(({
               Selected timeline: <strong>{selectedStartAge ?? selectedCareer.startAge}</strong> to <strong>{selectedCareer.endAge}</strong>
             </p>
             <p>
-              Starting net income: <strong>{formatCurrency(careerAnnualNetIncome(selectedCareer))}</strong>
+              Starting net income: <strong>{formatCurrency(activePaycheckTotals?.netAnnual ?? careerAnnualNetIncome(selectedCareer))}</strong>
             </p>
             <p>
               Preview net income: <strong>{previewYear ? formatCurrency(previewYear.netIncome) : '$0'}</strong>
@@ -818,9 +983,9 @@ export const CareerPlanEditor = memo(({
         </>
       ) : null}
 
-      {showPaycheckModal && selectedCareer && selectedPaycheck && (
+      {showPaycheckModal && selectedCareer && activePaycheck && (
         <PaycheckEditorModal
-          paycheck={selectedPaycheck}
+          paycheck={activePaycheck}
           bankAccounts={bankAccounts}
           onClose={() => setShowPaycheckModal(false)}
           onSave={handleSavePaycheck}

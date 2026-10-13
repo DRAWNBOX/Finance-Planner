@@ -3,6 +3,7 @@ import { formatCurrency } from '../engine/projection';
 import { parseExpenseImportFiles } from '../importers/expenseImport';
 import type {
   BankAccountDefinition,
+  DateMarker,
   ExpensesConfig,
   ExpenseEntry,
   NetWorthHistoryEntry,
@@ -13,6 +14,7 @@ import type {
   RecurringExpenseEvent
 } from '../types';
 import { useRenderCount } from '../utils/perfTools';
+import { DateOrMarkerInput } from './DateOrMarkerInput';
 
 const DEFAULT_CATEGORY_LABELS = ['Subscription', 'Gas', 'Purchases', 'Fun'];
 const RAINBOW_COLOR_PRESETS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#6366f1', '#a855f7'];
@@ -189,6 +191,7 @@ interface ExpensesPlannerProps {
   pools: PoolDefinition[];
   netWorthHistory: NetWorthHistoryEntry[];
   projectionYears: ProjectionYear[];
+  dateMarkers?: DateMarker[];
   onChange: (next: ExpensesConfig) => void;
 }
 
@@ -202,6 +205,8 @@ interface RecurringDraftState {
   rule: RecurringEventRule;
   startDate: string;
   endDate: string;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
   dayOfMonth: number;
   anchorDate: string;
 }
@@ -219,6 +224,7 @@ interface OneTimeDraftState {
   label: string;
   amount: number;
   date: string;
+  startMarkerId?: string | null;
   accountId: string;
   fundingSource: string;
   categoryId: string | null;
@@ -254,6 +260,7 @@ export const ExpensesPlanner = memo(({
   pools,
   netWorthHistory,
   projectionYears,
+  dateMarkers = [],
   onChange
 }: ExpensesPlannerProps) => {
   useRenderCount('ExpensesPlanner');
@@ -279,6 +286,8 @@ export const ExpensesPlanner = memo(({
     rule: 'every_friday' as const,
     startDate: expenses.ui.windowStartDate,
     endDate: expenses.ui.windowEndDate,
+    startMarkerId: null,
+    endMarkerId: null,
     dayOfMonth: 1,
     anchorDate: expenses.ui.windowStartDate
   });
@@ -286,6 +295,7 @@ export const ExpensesPlanner = memo(({
     label: 'Event',
     amount: 50,
     date: expenses.ui.windowStartDate,
+    startMarkerId: null,
     accountId: bankAccounts[0]?.id ?? '',
     fundingSource: `account:${bankAccounts[0]?.id ?? ''}`,
     categoryId: null,
@@ -363,6 +373,7 @@ export const ExpensesPlanner = memo(({
       label: 'Event',
       amount: 50,
       date: clampIsoDate(weekStartDate ?? expenses.ui.windowStartDate, minDate, maxDate),
+      startMarkerId: null,
       accountId,
       fundingSource: `account:${accountId}`,
       categoryId: defaultCategoryId,
@@ -409,6 +420,7 @@ export const ExpensesPlanner = memo(({
                 amount: Math.max(0, oneTimeDraft.amount),
                 startDate: clampedDate,
                 endDate: clampedDate,
+                startMarkerId: oneTimeDraft.startMarkerId ?? null,
                 accountId: oneTimeDraft.accountId || null,
                 poolId: account?.poolId ?? null,
                 categoryId: oneTimeDraft.categoryId ?? null,
@@ -430,6 +442,7 @@ export const ExpensesPlanner = memo(({
             amount: Math.max(0, oneTimeDraft.amount),
             startDate: clampedDate,
             endDate: clampedDate,
+            startMarkerId: oneTimeDraft.startMarkerId ?? null,
             accountId: oneTimeDraft.accountId || null,
             poolId: account?.poolId ?? null,
             notes: '',
@@ -526,6 +539,8 @@ export const ExpensesPlanner = memo(({
           rule: recurringDraft.rule,
           startDate: clampIsoDate(recurringDraft.startDate, minDate, maxDate),
           endDate: clampIsoDate(recurringDraft.endDate, minDate, maxDate),
+          startMarkerId: recurringDraft.startMarkerId ?? null,
+          endMarkerId: recurringDraft.endMarkerId ?? null,
           dayOfMonth: recurringDraft.dayOfMonth,
           anchorDate: recurringDraft.anchorDate,
           enabled: true,
@@ -553,6 +568,8 @@ export const ExpensesPlanner = memo(({
               rule: recurringDraft.rule,
               startDate: clampIsoDate(recurringDraft.startDate, minDate, maxDate),
               endDate: clampIsoDate(recurringDraft.endDate, minDate, maxDate),
+              startMarkerId: recurringDraft.startMarkerId ?? null,
+              endMarkerId: recurringDraft.endMarkerId ?? null,
               dayOfMonth: recurringDraft.dayOfMonth,
               anchorDate: recurringDraft.anchorDate,
               color: recurringDraft.color,
@@ -1000,8 +1017,8 @@ export const ExpensesPlanner = memo(({
               </label>
               <label><span>Cadence</span><select value={recurringDraft.cadence} onChange={(e) => setRecurringDraft((c) => ({ ...c, cadence: e.target.value as 'weekly' | 'monthly' }))}><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
               <label><span>Rule</span><select value={recurringDraft.rule} onChange={(e) => setRecurringDraft((c) => ({ ...c, rule: e.target.value as 'on_date' | 'every_friday' | 'first_monday_after' }))}><option value="on_date">Pays On Date</option><option value="every_friday">Every Friday</option><option value="first_monday_after">First Monday After Date</option></select></label>
-              <label><span>Start Date</span><input type="date" value={recurringDraft.startDate} min={minDate} max={maxDate} onChange={(e) => setRecurringDraft((c) => ({ ...c, startDate: e.target.value }))} /></label>
-              <label><span>End Date</span><input type="date" value={recurringDraft.endDate} min={recurringDraft.startDate || minDate} max={maxDate} onChange={(e) => setRecurringDraft((c) => ({ ...c, endDate: e.target.value }))} /></label>
+              <label><span>Start Date</span><DateOrMarkerInput label="Start" mode="date" value={recurringDraft.startDate} markerId={recurringDraft.startMarkerId} markers={dateMarkers} onChange={(value, markerId) => setRecurringDraft((c) => ({ ...c, startDate: value, startMarkerId: markerId }))} /></label>
+              <label><span>End Date</span><DateOrMarkerInput label="End" mode="date" value={recurringDraft.endDate} markerId={recurringDraft.endMarkerId} markers={dateMarkers} onChange={(value, markerId) => setRecurringDraft((c) => ({ ...c, endDate: value, endMarkerId: markerId }))} /></label>
               <label>
                 <span>Event Color</span>
                 <div className="expense-category-color-controls">
@@ -1062,7 +1079,7 @@ export const ExpensesPlanner = memo(({
               </label>
               <label>
                 <span>Date</span>
-                <input type="date" value={oneTimeDraft.date} min={minDate} max={maxDate} onChange={(e) => setOneTimeDraft((c) => ({ ...c, date: e.target.value }))} />
+                <DateOrMarkerInput label="Date" mode="date" value={oneTimeDraft.date} markerId={oneTimeDraft.startMarkerId} markers={dateMarkers} onChange={(value, markerId) => setOneTimeDraft((c) => ({ ...c, date: value, startMarkerId: markerId }))} />
               </label>
               <label>
                 <span>Account</span>
@@ -1262,6 +1279,8 @@ export const ExpensesPlanner = memo(({
                                   rule: recurringEvent.rule,
                                   startDate: recurringEvent.startDate,
                                   endDate: recurringEvent.endDate,
+                                  startMarkerId: recurringEvent.startMarkerId ?? null,
+                                  endMarkerId: recurringEvent.endMarkerId ?? null,
                                   dayOfMonth: recurringEvent.dayOfMonth ?? 1,
                                   anchorDate: recurringEvent.anchorDate ?? recurringEvent.startDate
                                 });
@@ -1277,6 +1296,7 @@ export const ExpensesPlanner = memo(({
                                 label: sourceEntry.label,
                                 amount: sourceEntry.amount,
                                 date: sourceEntry.startDate,
+                                startMarkerId: sourceEntry.startMarkerId ?? null,
                                 accountId: sourceEntry.accountId ?? (activeAccountId ?? ''),
                                 fundingSource: (sourceEntry as unknown as Record<string, unknown>).fundingSource as string ?? `account:${sourceEntry.accountId ?? activeAccountId ?? ''}`,
                                 categoryId: sourceEntry.categoryId ?? null,
@@ -1416,8 +1436,8 @@ export const ExpensesPlanner = memo(({
                   <tr key={entry.id}>
                     <td><input type="text" value={entry.label} onChange={(event) => updateEntry(entry.id, { label: event.target.value })} /></td>
                     <td><input type="number" min={0} value={entry.amount} onChange={(event) => updateEntry(entry.id, { amount: Math.max(0, Number(event.target.value) || 0) })} /></td>
-                    <td><input type="date" min={minDate} max={maxDate} value={entry.startDate} onChange={(event) => updateEntry(entry.id, { startDate: clampIsoDate(event.target.value, minDate, maxDate) })} /></td>
-                    <td><input type="date" min={entry.startDate || minDate} max={maxDate} value={entry.endDate} onChange={(event) => updateEntry(entry.id, { endDate: clampIsoDate(event.target.value, entry.startDate || minDate, maxDate) })} /></td>
+                    <td><DateOrMarkerInput label="Start" mode="date" value={entry.startDate} markerId={entry.startMarkerId} markers={dateMarkers} onChange={(value, markerId) => updateEntry(entry.id, { startDate: markerId ? value : clampIsoDate(value, minDate, maxDate), startMarkerId: markerId })} /></td>
+                    <td><DateOrMarkerInput label="End" mode="date" value={entry.endDate} markerId={entry.endMarkerId} markers={dateMarkers} onChange={(value, markerId) => updateEntry(entry.id, { endDate: markerId ? value : clampIsoDate(value, entry.startDate || minDate, maxDate), endMarkerId: markerId })} /></td>
                     <td>
                       <select value={entry.categoryId ?? ''} onChange={(event) => updateEntry(entry.id, { categoryId: event.target.value || null })}>
                         <option value="">Uncategorized</option>
