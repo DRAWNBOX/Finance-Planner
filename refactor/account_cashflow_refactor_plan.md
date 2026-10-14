@@ -2,15 +2,15 @@
 
 Parent: [`../agent_plan.md`](../agent_plan.md). Inventory: [`feature_specification.md`](feature_specification.md).
 
-## Current checkpoint
+## Checkpoint at original drafting (later authorization: ADR-022)
 
-Pre-Step 0 complete. User decisions: new save/pruning/defaults accepted; planner entries are obligations; retirement withdrawals are spending; standalone manual contributions removed in favor of career allocations/other-income events. **That explicit removal is implemented; architecture/decisions/save plan otherwise remain Gate B drafts.** Broader financial implementation has not started.
+Pre-Step 0 complete. User decisions: new save/pruning/defaults accepted; planner entries are obligations; retirement withdrawals are spending; standalone manual contributions removed in favor of career allocations/other-income events. **At the time of this draft, only that explicit removal was implemented and Gate B remained pending.** ADR-022 subsequently authorized broader financial implementation; no new account-only engine implementation is claimed by this historical checkpoint.
 
 RV01–RV31/clarifications recorded in review/ADR-019/020: universal partial, held home deposit until completion, taxable gain20% gross/default editable LTCG15%, user withdrawals/residual0% lump sum/twelve ordinary payments/view-only history/net-worth graph/defaults/ordering/timing/recovery/responsive80years. Acquisition/tax ambiguity resolved; configurable4% valuation/payoff dates/source/rounding explicit. Code/test/cutover pending.
 
 The parent's order remains inspect → validate → design/validate → implement → verify. User decisions supersede equivalent old-save conversion and mandatory backup requirements. Draft documents label proposals; implementation remains pending. Track features by F-ID and issues by R-ID.
 
-**Current phase: planning only.** User requests removing Pools and defining rates per account, with no code changes now. ADR-014 and [account_only_subplan.md](account_only_subplan.md) revise all target ownership/funding/reporting/default assumptions. Source code still contains pools until a later authorized implementation phase.
+**Historical phase at this plan's drafting: planning only.** User requested removing Pools and defining rates per account, with no code changes at that time. ADR-014 and [account_only_subplan.md](account_only_subplan.md) revise all target ownership/funding/reporting/default assumptions. The later [ADR-022](architecture_decisions.md#adr-022--incremental-implementation-authorized-intermediate-breakage-permitted) authorizes incremental implementation and early consumer removal; this older sub-plan does not override the consolidated implementation plan.
 
 GUI investigation delivered [gui_compatibility_audit.md](gui_compatibility_audit.md): G01–G40 at-risk controls/read-write paths, proposed canonical normalization/view/context/shared selectors and GUI-A01–A10 tests. Treat GUI work as required in each future integration phase, not a final cosmetic update. No source changes in this audit.
 
@@ -84,7 +84,7 @@ Exit: F03–F22 map to one posting/funding path; mandatory obligations and acqui
 7. Update feature matrix, architecture/decisions/diagrams and changelogs to actual implemented status.
 8. Complete GUI-A01–A10 checks for the adapted G01–G40 elements, including zero-career/empty states, atomic skipped purchases, partial debt/card schedules, planner integration, negative net worth, real-dollar tooltips, clone/reference cleanup and new-field persistence.
 9. Run B-P1–B-P8 benchmarks, scale one dimension at a time and compare against deterministic reference/invariants; publish reference environment/sample counts/p95/peak footprint/bytes/cancellation and validated supported envelope. No silent event/audit truncation to meet a budget.
-10. Complete MD01–MD11 ownership/helper/schema/test/doc cleanup after consumer parity. Refresh general runtime code/domain/persistence/test docs with actual modules/suites/commands; label historical plans, retain this-session refactor records here, and do not claim undocumented CI/coverage/browser verification.
+10. Complete MD01–MD11 ownership/helper/schema/test/doc **verification** after integration; ADR-022 permits obsolete consumer/helper removal earlier with interim failures tracked. Refresh general runtime code/domain/persistence/test docs with actual modules/suites/commands; label historical plans, retain this-session refactor records here, and do not claim undocumented CI/coverage/browser verification.
 
 Exit: no missing preservation rows; tested reset/default saved-plan cutover; full verification completed or pre-existing exceptions explicitly reviewed.
 
@@ -97,4 +97,4 @@ Exit: no missing preservation rows; tested reset/default saved-plan cutover; ful
 - Target invariants: income posted once; closing=opening+posted changes; assets−liabilities=net worth; net allocations=sum executed payment; funded principal reduces debt exactly once; atomic failure changes no state; partial payments change only funded amounts; no negative cash/phantom transfers; investment valuation is not pay income.
 - Dates/precision: leap years, timezone-independent date-only parsing, inclusive card/end windows, first partial periods, final cents, early payoff, missed payment deadlines and long horizons.
 - End each phase with verified findings/decisions, open questions/R-register changes, affected files, exact test status and next gate/step. No gate is marked approved on the agent's assumption.
-- Follow [audit_status.md](audit_status.md) for inspection versus execution. New financial/default code requires relevant CA tests and engine/App suites; full test/build at handoff. Recorded 207/208 failure persists until reproduced/fixed; static review and writing docs are not a fresh test pass.
+- Follow [audit_status.md](audit_status.md) for inspection versus execution. New financial/default code needs focused CA tests as modules become executable; engine/App suites can fail or be unavailable during authorized intermediate removals (ADR-022), with exact results recorded. Full test/build is a **final** handoff gate. The recorded 207/208 baseline failure is historical until a fresh run/fix verifies a change; static review and writing docs are not a fresh test pass.

@@ -2,7 +2,7 @@
 
 ## Status and authority
 
-**Planning only. No implementation changes in this phase.** User instruction: remove Pools during the restructuring; interest rates should be defined per account; do more planning, no code changes now.
+**Status:** this sub-plan originated as planning only; no pool-removal code has been implemented by writing it. The later explicit authorization in [ADR-022](architecture_decisions.md#adr-022--incremental-implementation-authorized-intermediate-breakage-permitted) permits account-only implementation and immediate deletion of superseded consumers while other phases remain incomplete.
 
 Accepted: remove the pool domain, configuration/UI, source references and shared rate ownership. Proposed: exact account field names/defaults, optional retirement-rate override, withdrawal-policy relocation, retirement fallback contract and report shapes below. This sub-plan supersedes earlier target-architecture passages retaining pool rules/expansion. Existing pool behavior in the feature inventory and archived fixtures remains historical evidence.
 
@@ -67,6 +67,7 @@ interface ProjectionAccountDefinition {
 RV01/RV02 accepted two-phase per-account rates/defaults; no single-rate-only simplification/pool inheritance. RV15 clarification: disclosed taxable gain20% gross/LTCG default15% editable; no actual basis tracking or unknown-basis zero-tax guess.
 - AccountType identifies tax/eligibility semantics and HSA treatment, not membership or automatic grouping/funding priority. Existing `isHSA` pool flag becomes `accountType: hsa`; not a second potentially contradictory boolean.
 - General account withdrawal tax/penalty settings remain independently configured; taxable brokerage's distinct default LTCG15% applies only to assumed20% gross gain (3% effective before penalty/rounding). Do not apply a second generic all-proceeds tax or infer actual basis; cash/HSA/401K purpose/age rules independent. Display assumptions explicitly.
+- ADR-021: explicitly qualified HSA medical spending is tax/penalty-free. Non-qualified HSA spending retains its configured income-tax assumption; the separately configurable extra penalty defaults to 20% before the account holder's 65th birthday and is waived thereafter whether retired or working.
 - Proposed automatic fallback defaults: checking/savings/taxable allowed, retirement/Roth/HSA require explicit eligibility/source configuration. An account's display visibility/order never changes opening net worth, growth or funding eligibility.
 - No generic pool-like enable switch that makes a real account disappear from valuations. If an account is retained with a positive balance, it counts in account assets; explicit liquidity/purpose/allowed-source policy determines whether it may fund a payment.
 - New rates/rules live globally on accounts, matching current shared net-worth configuration across timelines. Timeline-specific career/housing/card plans continue to refer to those IDs. Per-timeline rate forecasts would be a separate, unrequested feature.
@@ -91,11 +92,11 @@ Properties have appreciation and liabilities have contract APR independently. Ne
 
 - All deposits, paycheck benefit destinations, career allocations/caps, obligations and shortfalls use account IDs. Remove `sourceType: pool`, `sourceId` ambiguity and `pool:*` source strings in the target schema. Prefer `accountId` and `FundingPolicy` directly.
 - A payment debits selected primary account then configured eligible fallbacks, deduplicated in order. No “first account in pool” lookup or automatic sweep by account type. Source quotas/split funding remain supported where already meaningful.
-- Retirement spending rows become **account rows**: enabled, account ID, amount or initial 4% target, start date/age, retirement-start link. Min/max/inflation and spending interpretation remain.
+- Retirement spending rows become **account rows**: enabled, account ID, fixed amount or configurable initial-balance percentage (new-item default 4%), start date/age, retirement-start link. Min/max/inflation and spending interpretation remain.
 - Proposed retirement priority is an explicit `withdrawal.fallbackAccountIds` list, separately configurable from ordinary payment fallback defaults. Per-row override may select a different ordered list; default empty means no unconfigured automatic draw. Choosing all intended retirement accounts is an explicit plan action.
-- For a 4% row, derive initial target from that account's authoritative balance at the configured retirement target date, then preserve current target-escalation intent. Selecting multiple account rows can sum 4% targets without a shared pool. Shared total targets, if exposed, refer to an explicit list and do not create independent balances/rates.
+- For a percentage row, derive its initial net target from **that account's** authoritative balance at its configured valuation date × its own `initialWithdrawalRatePercent` (editable 0–100%, default 4%), then preserve target escalation. The default valuation date is that source's first withdrawal date, including later-start rows, never a shared retirement target date. Selecting multiple account rows sums their targets without a shared pool or mandatory shared rate.
 
-RV18 overrides a fixed global retirement date: user chooses per-row withdrawal start/date/day and may optionally link retirement/markers. Initial 4% valuation date must be explicitly controlled/defaulted to that schedule rather than silently using a global date; exact base-date default to be finalized before tests/calculation changes.
+RV18 overrides a fixed global retirement date: user chooses per-row withdrawal start/date/day and may optionally link retirement/markers. The initial percentage valuation date defaults to that row's first withdrawal date and can be explicitly selected if an authoritative observation exists (ADR-021); it never silently uses a global date.
 - When one source exhausts, continue to the next explicitly eligible account in the configured retirement order. Record each actual gross debit/net payment/tax/penalty by account; shortfall when list exhausted. Account type/display order does not silently broaden the list.
 - Separate **display order**, **deposit allocation order**, **fallback order**, and **same-date obligation priority**. A chart reorder cannot alter payment funding. Stable account IDs are final tie-breaks where ordering matters.
 - Existing tax-aware withdrawal, HSA age/purpose restrictions, caps and source start age capability move to account policy/plans; removing pools does not remove these financial requirements.
@@ -105,7 +106,7 @@ RV18 overrides a fixed global retirement date: user chooses per-row withdrawal s
 | View | Target change | Retained capability |
 |---|---|---|
 | Net Worth account editor | Remove pool table/Add Pool/membership dropdown; add rate/optional retirement override, color and account rule controls | Account CRUD/balances/history/type, named accounts, priority configuration in appropriate plan views. |
-| Retirement | Account-specific source rows, spending amounts/4%, start links and ordered fallback accounts | Tax/penalty/HSA controls, min/max/inflation/exhaustion warnings without pooled balances. |
+| Retirement | Account-specific source rows, spending amounts or configurable initial-balance percentage (4% default), start links and ordered fallback accounts | Tax/penalty/HSA controls, min/max/inflation/exhaustion warnings without pooled balances. |
 | Careers/pay plans | Each savings/expense line targets account; shared engine previews read account rates | Paycheck employee/employer deposits, fixed/% savings, raise options, cap overflow, monthly expenses and career end totals. |
 | Stacked savings chart | One layer per account, account color/label/ID, per-account legend visibility and hover | Monthly stacked chart, totals, range, flags and color UI. No substitute user-defined financial grouping. |
 | Results/summary | Account columns and explicitly named asset/debt/net-worth totals; weighted rate derived from accounts | Monthly/yearly views, warnings/tooltips, current dollars and trajectory comparisons. |
@@ -130,16 +131,16 @@ Unsupported old pool-funded source does not resolve its pool ID as an account ID
 
 Normalization remains read-only until normal save; code rollback through git remains possible, equivalent old-plan reconstruction after pruning not guaranteed. Opening liabilities still deduplicate by ID; deleting pool metadata does not change supported snapshot account balances or imply debt was included.
 
-## 7. Future implementation sequence (not authorized in this phase)
+## 7. Authorized implementation sequence (ADR-022)
 
 1. Finalize account rate fields/defaults/override and withdrawal/fallback contract at Gate B; update types/default/storage/consumer checklist.
 2. Add target account-only characterization/invariants and synthetic saved-input normalization fixtures; keep original pool baseline evidence archived.
 3. Introduce independent account definitions, account tax quote, direct account source/fallback contracts and account-only valuation through the new engine, without mixed old/new execution.
-4. Adapt account/retirement/career/funding editors and default plans together; remove first-account-in-pool conversion helpers after all consumers use account IDs.
+4. Adapt account/retirement/career/funding editors and default plans; old editors/helpers may be removed before every replacement is wired, with remaining target behavior tracked to its owner and intermediate failures recorded.
 5. Adapt stacked/chart/table/trajectory/deflation and career/retirement breakdown outputs; verify all account assets are counted exactly once.
 6. Adapt planner/import APIs and account/category UI; remove all pool grouping/filter fields and props.
 7. Canonical save prunes obsolete pool fields across all timelines; validate missing defaults/invalid source IDs.
-8. Remove pool type/functions/state/normalizers/derived maps and update runtime docs only after integrated replacement tests pass.
+8. Verify that pool types/functions/state/normalizers/derived maps removed during earlier phases have no survivors; finish actual-code docs after integrated replacement tests pass. Pool-era consumers may be removed earlier under ADR-022.
 
 ## 8. Acceptance tests to add later
 
@@ -148,7 +149,7 @@ Normalization remains read-only until normal save; code rollback through git rem
 - Zero balance/rate, negative investment return, optional retirement-rate boundary and partial periods follow explicit policy; no NaN/phantom principal.
 - Two accounts with different tax/penalty/basis/purpose rules yield independent gross/net funding allocations; HSA medical/general capability persists without isHSA pool flag.
 - Retirement primary + multiple explicit fallbacks split correctly and retain liability/expense conservation; unconfigured or restricted accounts never implicitly fund spending.
-- Per-account 4% targets/min/max/inflation/source start dates retain capability; account exhaustion no longer depends on membership.
+- Per-account configurable initial-balance percentage targets (new-item 4%) / min/max / inflation / source start dates retain capability; account exhaustion no longer depends on membership.
 - Deposit/payroll/cap overflow destinations exactly match IDs; no first-account-in-pool or duplicate allocation conversion.
 - Stacked chart includes all visible accounts once, even multiple same-type accounts; account color/legend visibility cannot change projection math.
 - Career/retirement output maps keyed by account ID reconcile to monthly audit; totals/current-dollar/trajectory views contain no pool aggregate double count.

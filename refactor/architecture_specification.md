@@ -2,11 +2,11 @@
 
 ## 1. Status, scope and authority
 
-**Gate B draft.** The explicitly approved standalone manual-contribution removal is implemented; the broader architecture is not. Based on the code audit, `agent_plan.md`, and user decisions. Accepted rules/proposed assumptions are tracked in [architecture_decisions.md](architecture_decisions.md); save handling in [migration_plan.md](migration_plan.md).
+**Target specification; incremental implementation authorized by ADR-022.** The explicitly approved standalone manual-contribution removal is implemented; the broader account-only architecture is not yet implemented. Based on the code audit, `agent_plan.md`, and user decisions. Accepted rules/proposed assumptions are tracked in [architecture_decisions.md](architecture_decisions.md); save handling in [migration_plan.md](migration_plan.md).
 
 Accepted: original rules plus RV01–RV31/ADR-019 and follow-up ADR-020. Partial acquisition holds a deposit until complete; taxable gain20% of gross with default editable LTCG15% is clarified. Rates/defaults/allocation/caps/monthly timing/growth/calendar reports/view-only occurred imports/default net-worth/responsive80years reviewed. No implementation/test success implied by approvals; user withdrawal/percentage-base/payoff dates and source contracts explicit.
 
-**New accepted direction, planning only:** remove Pools entirely; each account owns its interest/return assumptions. [account_only_subplan.md](account_only_subplan.md) specifies affected rules, priorities, views and saved fields. No code changes are authorized in this planning phase. Prior pool-preserving target contracts are superseded by ADR-014; historical descriptions remain evidence of current code.
+**Authorized target direction:** remove Pools entirely; each account owns its interest/return assumptions. [account_only_subplan.md](account_only_subplan.md) specifies affected rules, priorities, views and saved fields. ADR-022 permits current consumers to be removed while other work remains incomplete; prior pool-preserving target contracts are superseded by ADR-014. Historical descriptions remain evidence of current code, not mandatory compatibility behavior.
 
 Use React/TypeScript and the existing components. The engine remains deterministic and side-effect free with respect to its inputs; it operates on a private runtime state. No general transfer editor, individual card-purchase simulator or full double-entry product.
 
@@ -102,7 +102,7 @@ Persisted values are **configuration and historical opening observations**. Runt
 - `OrdinaryCardSchedule`: kind=expectedPayment, amount, inclusive start/end (default end=start+11, twelve payments), payment day/funding/flags. No tracked balance/charges/APR/purchase ledger. RV20/RV25 accepted.
 - `ZeroInterestCardPlan`: `kind: 'zeroInterestPayoff'`, liability ID, initial balance, start month, inclusive target month, payment day, funding policy and flags. APR always zero. Initial balance is not reinjected at each month or if linked snapshot debt exists.
 - Planner entry/event: manual plans default projected, category/account/provenance/dates/rules/funding retained. RV22 occurred imported history is permanently view-only/no projection or planning-budget effect; sourceDate/sourceSign/asOf retained, not clamped/re-executed by changing display date. Future planned records separate; recurrence parent not a second obligation.
-- `CashflowItem`/life events/retirement/housing/purchases retain their capabilities through normalized adapters. Remove redundant stored computed totals and obsolete income selectors only after consumers use new contracts.
+- `CashflowItem`/life events/retirement/housing/purchases retain their **final target** capabilities through canonical configuration and the shared engine. ADR-022 allows redundant stored computed totals, old consumers and obsolete income selectors to be deleted before every replacement is wired; record interim failures and do not save a partial fallback over user data.
 
 All new fields have documented factory defaults. Choosing defaults for absent fields is different from making finance assumptions about existing values. Missing IDs produce defaults/empty references, and invalid funding references produce visible configuration shortfalls rather than invented accounts with money.
 
@@ -133,7 +133,7 @@ The state object is local to simulation. `commitChanges` is the only balance mut
 
 ## 5. Monetary precision and funding lifecycle
 
-**Proposed policy:** cash balances/postings/liabilities use integer cents. Reject nonfinite/unsafe numeric inputs and negative request amounts at normalization. Convert persisted dollar inputs once by rounding half away from zero. Perform rate calculations at higher floating precision, then round the posted result to cents at the event boundary. Residual fractions from recurring annual allocations use cumulative rounding so twelve monthly postings sum to the rounded annual amount. Four-percent initial targets and employer contributions follow the same rule. Never use a $0.01 tolerance to erase unpaid principal.
+**Accepted precision policy (ADR-021):** cash balances/postings/liabilities use integer cents. Reject nonfinite/unsafe numeric inputs and negative request amounts at normalization. Convert persisted dollar inputs once by rounding half away from zero. Represent accepted rate decimals exactly for taxable quotes, round each posted tax/penalty separately once, and round valuation only at its posting boundary. Annualized allocation requests use per-line cumulative rounded target differences, including applicable percentage-based initial targets and employer contributions; actual deposits remain bounded by available pay. Never use a $0.01 tolerance to erase unpaid principal.
 
 ```ts
 interface FundingRequest {
@@ -169,17 +169,17 @@ interface FundingPlan {
 
 1. Build primary + explicit per-obligation fallbacks, else configured global fallbacks. Deduplicate IDs preserving first position; never sweep accounts by type or former membership. Retirement spending uses a separately configured explicit account fallback order.
 2. Quote indexed read-only balances/rules with sparse tentative debits, not live state; configured ordered sources/quotas retained. Gain proxy/rate metadata retained; no actual basis balance mutated.
-3. Cash debit/net funding are equal when tax/penalty-free. With tax-aware sources, choose the smallest cent-valued gross debit whose rounded proceeds cover the assigned net amount without exceeding balance. Deduct withholding/penalty from gross proceeds; any unavoidable rounding remainder remains in the source account rather than appearing as unexplained income. Validate allocation identity exactly.
+3. Cash debit/net funding are equal when tax/penalty-free. With tax-aware sources, calculate tax and penalty separately as rounded fractions of gross; choose the smallest cent-valued gross debit whose exact rounded net covers the assigned net amount without exceeding balance. Derive and enumerate a proven rounding-error bracket of at most 256 candidates; if it exceeds the limit or safe numeric range, report an unsupported-range diagnostic. Never assume the net proceeds are monotone across consecutive cents. Deduct withholding/penalty from gross proceeds once; any unavoidable rounding remainder stays in the source account, not unexplained income. Validate allocation identity exactly (ADR-021).
 4. RV11: executed=sum actual net funded, unpaid=requested−executed. Zero-fund no debit/no implicit retry; atomic validation/commit preserved. Partial home funding creates deposit asset; until down-payment funding complete, no full property/mortgage/ownership costs. Explicit later funding events can complete acquisition without inventing borrowing.
 5. Combine account debits and actual debt/deposit/acquisition effects into one change set; check revision/nonnegative balances/ownership/conservation; stale quote recomputed. Brokerage assumption metadata is not an actual basis reduction/posting.
 6. Commit once or no-op. No intermediate transfer, no income injection for withdrawals, and no negative cash borrowing. Accrual events independent of payment still occur even when funding fails.
 
-### Eligibility and taxes — reviewed direction; RV15 formula details open
+### Eligibility and taxes — accepted target direction (ADR-021); implementation pending
 
 - RV14/RV16: checking/savings/taxable ordinarily liquid; explicit retirement/Roth/HSA eligibility/purpose/settings. Taxable brokerage only gain taxed, never all proceeds. No tax-lot product or inferred actual basis.
 - RV15 clarification: taxable gain assumed20% of **gross account debit**, assumed cost80%; LTCG default15% editable per account. Tax=roundToCents(gross×0.20×configured LTCG rate) at posting boundary, default effective3% gross. High-precision/rational intermediate gain, not prematurely rounded gain; gross debit/net payment/withholding separately recorded. No actual-basis option/tax-return brackets inferred; assumption always labeled. Do not apply brokerage proxy to HSA/401K/property sale/payroll by default.
 - 401K/Roth/HSA are excluded from *implicit* automatic fallback. Explicit primary/fallback/retirement sources may use them under configured rules/purpose. Preserve user-configurable retirement tax/penalty and HSA restriction capability; unknown Roth contribution/earnings splits are not inferred.
-- HSA medical spending: tax/penalty-free if identified as qualified. General HSA spending: configured tax/penalty; existing penalty-free rule at >=65 and retirement can be retained pending review. A generic category named “medical” is not silently classified qualified without explicit config.
+- HSA medical spending: tax/penalty-free if explicitly identified as qualified. Non-qualified HSA spending: configured income tax and a configurable default 20% extra penalty before the holder's 65th birthday; waive **only** that penalty at age 65 regardless of retirement status (ADR-021). A generic category named “medical” is not silently classified qualified without explicit config.
 - Account liquidity/purpose/automatic-fallback eligibility is explicit; no pool enable flag or inherited rule lookup. Retained account assets still count in valuations regardless of chart visibility. Property/illiquid assets cannot fund ordinary requests.
 - Withheld taxes/penalties are paid from gross debit, not charged a second time as another expense. Separately scheduled tax expenses need their own event IDs and funds. Payroll tax deductions are reported distinctly from withdrawal withholding.
 
@@ -207,7 +207,7 @@ Other income (rent, pensions, benefits, cashflow/life-event inflows) deposits to
 
 Date-only fields use parsed year/month/day, never `new Date('YYYY-MM-DD')` followed by timezone-local extraction. Use month ordinals for month-range inclusion; validate leap/day rules. Engine receives explicit start date and resolved end date. New saved opening snapshot is an observation **before modeled events on its date**; old snapshot timing is unknown and may require a new save.
 
-**Accepted RV06/RV23/RV25:** month-oriented dated events, configurable income day (default1), explicit debt/card/withdrawal days and month-only default1. Frequency annualizes, not invented paycheck calendar; actual weekly expense dates retained. No later-date pay funds earlier spending. **RV18:** user selects withdrawal timing with per-source start/date/day and optional retirement/marker link; initial 4% base date/control must be explicit instead of forced global retirement date.
+**Accepted RV06/RV23/RV25:** month-oriented dated events, configurable income day (default1), explicit debt/card/withdrawal days and month-only default1. Frequency annualizes, not invented paycheck calendar; actual weekly expense dates retained. No later-date pay funds earlier spending. **RV18/ADR-021:** user selects withdrawal timing with per-source start/date/day and optional retirement/marker link; the configurable initial-balance percentage (4% new-item default) and its valuation date/control must be explicit instead of forced to a global retirement date.
 
 Events sort by date/phase/configured priority/stable occurrence ID. Accepted same-date phases (RV23):
 
@@ -230,7 +230,7 @@ RV25/RV26 accept calendar aggregation and stated boundary conventions. RV31 requ
 
 | Kind | Proposed partial/failure policy | Accounting and preservation |
 |---|---|---|
-| Retirement spending | Partial allowed; unmet minimum/spending warning, no fictional income | Preserve account-specific initial 4% or specified targets, inflation, caps/start ages and explicit account exhaustion/fallback order. Spend net funded once. Other configured expenses are additional unless user reduces the target; no automatic offset guess. |
+| Retirement spending | Partial allowed; unmet minimum/spending warning, no fictional income | Preserve account-specific configurable initial-balance percentage (4% new-item default) or specified targets, inflation, caps/start dates and explicit account exhaustion/fallback order. Spend net funded once. Other configured expenses are additional unless user reduces the target; no automatic offset guess. |
 | Career expenses, ordinary cards, rent/ancillary housing, recurring planner, cashflow/event expenses | Partial allowed; actual paid vs requested retained; no automatic retry/debt for unmet expense | Preserve all schedules/sources and visible shortfalls. Subsequent occurrence is its own request, not an arrears repayment. |
 | Loan/mortgage installment | Partial allowed; accrued interest then principal; liability persists on shortfall | Never reduce by desired payment. Maintain missed scheduled payment information; no invented late fees/default/foreclosure without terms. Required installment before extra payment. |
 | 0% card | Partial allowed; funded amount reduces principal, no interest | Adaptive target to inclusive end; unpaid balance survives deadline. |
@@ -243,7 +243,7 @@ RV11 supersedes indivisible payment defaults; actual state changes always atomic
 
 ### Reviewed configurable withdrawal/payoff dates
 
-- Each retirement account source has explicit first-withdrawal date/month and payment day; retirement/marker linking optional. The initial4% valuation-date control defaults to that selected first-withdrawal date, not a forced global retirement date. Selected basis needs an available authoritative observation/state; no future/past unknown balance invented. Amounts are net spending targets, with gross debit/tax shown separately.
+- Each retirement account source has an explicit first-withdrawal date/month and payment day; retirement/marker linking is optional. Percentage mode uses an editable `initialWithdrawalRatePercent` per source (new-item default 4%, valid 0–100%). Its initial net target uses the selected account's authoritative balance at its valuation date × the selected rate; this date defaults to **that source's first withdrawal date**, even if it starts later than retirement. The target then escalates under the configured inflation rule. Explicit earlier valuation dates require an available observation; no future/past unknown balance is invented. Gross debit/tax are shown separately (ADR-021).
 - Each0% payoff has an explicit date/source policy; default date is the final scheduled payment date and default source its regular funding policy. If payoff and final installment coincide, execute **one** remaining-principal request labeled final payoff/lump sum. If user schedules payoff later, request only principal still outstanding on that date; retain overdue warning/liability until actually funded. No automatic monthly retry or second charge of already-paid principal.
 - These are visible/configurable engineering defaults implementing RV18/RV19; user can select dates/sources. Scheduler, marker registry, funding editor, summary and actual-paid preview use the same fields/context.
 
@@ -251,7 +251,7 @@ RV11 supersedes indivisible payment defaults; actual state changes always atomic
 
 Ordinary: one expected expense per inclusive month, default twelve payments end=start+11 (RV20). No balance/charges/interest, blank end uses that factory default, no legacy ongoing inference. Start/payment day explicit.
 
-0%: opening liability identified exactly once; schedule dates start at max(config start, simulation anchor). On a payment month through inclusive target, requested cents = `ceil(remaining principal cents / remaining scheduled payment count)`, capped at principal. Example $100 over three payments: $33.34, $33.33, $33.33. Shortfall of first payment leaves more principal to divide over remaining dates. Early payoff stops requests. Missed pre-simulation payments are not assumed funded; opening snapshot balance wins.
+0%: opening liability identified exactly once; schedule dates start at max(config start, simulation anchor). Per ADR-021, on a payment month through inclusive target, requested cents = `ceil(actual remaining principal cents / remaining scheduled payment count)`, capped at principal. Example $100 over three fully funded payments: $33.34, $33.33, $33.33. Shortfall of first payment leaves more principal to divide over remaining dates. Early payoff stops requests. Missed pre-simulation payments are not assumed funded; opening snapshot balance wins.
 
 RV19: unpaid remaining principal requires a lump-sum payoff; liability/overdue warning retained, no new interest/fees. Make payoff request/date/source explicit and partial-fundable. The final adaptive installment already equals remaining principal when one scheduled month remains; never emit a second duplicate payoff. An unpaid future lump sum needs user-specified timing/source rather than silently repeating debit attempts or injecting funds. Exact default payoff scheduling still to finalize.
 
@@ -302,14 +302,14 @@ Stacked savings is account-based: layer/legend/color/hover keyed by account ID. 
 | F01/F02/F23/F26 | Independent account configuration, opening identity, schedule, defaults/pruning | Account CRUD/rates without Pools; timeline/markers/history preserved; missing defaults/obsolete pool pruning; explicit debt identity. |
 | F03–F07 | Income, scheduler, special cap, obligations | Same career/pay-plan/paycheck/match/savings/expense controls; single posted dollar; no zero-salary phantom deposits. |
 | F08/F09 | Funding/taxes/state | Primary-first split/eligibility, exact gross/net, atomic no-op, visible shortfall; no annual reservoir. |
-| F10/F11 | Account-only retirement spending/valuation | Account 4%/specified/inflation/min/max/explicit fallback/HSA; spending once; independent account rates and exact APY. |
+| F10/F11 | Account-only retirement spending/valuation | Per-account configurable initial-balance percentage (4% new-item default) or specified amount, inflation/min/max/explicit fallback/HSA; spending once; independent account rates and exact APY. |
 | F12/F13/F19/F20/F22 | Scheduled obligations and other income | Purchase/source/category/flag/cashflow/event/planner/import views retained; explicit failure policy and occurrence identity. |
 | F14/F17/F18 | Debt/property/accrual/disposition | Actual funded debt payments; housing groups, extra payment/PMI/rent/sale; equity/deficiency retained. |
 | F15/F16 | Expected-card schedule and permanent-0% liability | Agreed two-type product; no equivalent old-card conversion; inclusive end/adaptive payoff/deadline debt. |
 | F21 | **Removed with user approval (ADR-005)** | Controls/configuration/unposted calculation removed; no conversion into extra income. Career allocations/other-income events retained. |
 | F24/F25 | Audit/reporting/display | Annual sums, shared previews, account vs net-worth metrics, consistent deflation and warnings. |
 
-Rollout: retain original B01–B09 evidence → approve Gate B → state/funding kernel tests → income and monthly obligation integration → cards/debts/housing/planner → shared reporting → new-save defaults/pruning → remove obsolete paths after consumer/test parity. Runtime cutover must wait until no user flow mixes new and old spending engines.
+Rollout: retain original B01–B09 evidence → Gate B/ADR-022 implementation authorization → canonical schema/default/codec and state/funding kernel tests → income and monthly obligation integration → cards/debts/housing/planner → shared reporting → measured integrated candidate → final residual-obsolete-path sweep. Superseded consumers may be deleted at any earlier point and the intermediate app/build/tests may fail, with exact failures recorded. **Final release** waits until no user flow mixes new and old spending engines and the Phase-8 checks pass.
 
 GUI exit: account rates/policies survive unrelated edits/reload; no-career plans render; atomic failures visibly marked without negative balances; funded card/debt/planner previews use same engine context; shared date/units/metrics/deflation are consistent; nested timeline policies clone safely; GUI-A01–A10 acceptance completed. Detailed GUI list/verification is in the compatibility audit.
 

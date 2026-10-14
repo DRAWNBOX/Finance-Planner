@@ -1,3 +1,17 @@
+# Session Changes — October 14, 2026
+
+## Accepted account-only finance rules (planning only)
+- Recorded the user's acceptance of a provably bounded minimal-gross quote, separately rounded gross-based tax and penalty, per-line cumulative allocation rounding, funded-only ceiling-cent 0% repayment, and the non-qualified HSA extra penalty waived at age 65 regardless of retirement.
+- Specified a per-source user-configurable initial-balance withdrawal percentage (4% new-item default) and source-specific first-withdrawal valuation date; aligned ADR-021, review, frozen contracts, implementation/Phase-1 plans, architecture/save/account-only specs, and CA coverage targets.
+- No finance code or test assertions changed in this documentation update; financial implementation and numeric validation remain pending.
+
+## Phase 1+ implementation authorization and transition policy
+- Recorded explicit permission in ADR-022/review.md to implement the account-only refactor and delete current consumers before their replacements are wired; intermediate App, build and existing tests may fail until all phases are completed. Final release still requires target behavior, tests/build, browser/80-year evidence and manual sign-off.
+- Updated Phase 1/implementation/save/GUI/architecture plans: run focused checks on executable target modules, record exact intermediate failures and restoring owners, and make Phase 7 the final leftover-legacy sweep rather than the first removal point. Phase 1 can start with P1.1; no account-only runtime implementation is claimed by these documentation edits.
+- Pre-commit verification: `npm run test -- --run` produced **207 passed / 1 failed** (unchanged `src/App.test.tsx:519` loan-row assertion); `npm run build` and `git diff --check` passed. The failing assertion remains tracked for the integrated account-only engine; no test was skipped or relabeled as passing.
+
+---
+
 # Session Changes — October 13, 2026
 
 ## 1. README Architecture & Feature Inventory
@@ -11,6 +25,15 @@
   (`src/App.tsx:4768`), which does not use `ExpensesPlanner`.
 - Verification: docs-only change; test suite unchanged at 207/208 (pre-existing loan-row
   failure recorded in `refactor/testing_correctness_audit.md`); build passed.
+
+## 2. Refactor Phase 0 — Readiness, baseline triage, contract freeze
+- Executed Phase 0 of `refactor/implementation_plan.md` (tasks P0.1–P0.7): baseline triage, contract freeze, coverage register. No financial math replaced.
+- Reproduced the pre-existing App loan-row failure (App.test.tsx:519) with a fixed fixture: income-funded loan draws from the annual income reservoir (R01/ADR-001); requested 500000 capped to 25135.42, fully covered, shortfall 0. Left unresolved (Phase 5).
+- P0.6 test edits in `src/engine/projection.test.ts`: "uses 4 percent" now genuinely executes the four_percent source-line branch (sentinel amount:999999, toBeCloseTo(4000,6)); minimum-warning test retitled and now asserts the exact warning ("...below the configured minimum yearly amount from age 65."). Engine/schema/storage math untouched.
+- New `refactor/coverage_register.md` (167 rows across F/R/G/GUI-A/TC/CA/MD/PS/B-P with owner/task/evidence/status).
+- New `refactor/frozen_contracts.md` (P0.3/P0.4/P0.5/P0.7 frozen contracts; 9 remaining blockers).
+- Recorded Phase 0 authorization in `refactor/architecture_decisions.md` (Gate B) and `refactor/review.md`.
+- Verification: `npm run test -- --run` → 207/208 (same pre-existing loan-row failure, reproduced not fixed); `npm run build` passes; `src/engine/projection.test.ts` 90/90.
 
 ---
 

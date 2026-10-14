@@ -2,11 +2,11 @@
 
 ## 1. Purpose, authority and current status
 
-This is the consolidated execution plan for the new codebase described in `refactor/`. It turns the specifications, decisions and audits into assignable tasks, dependencies, deliverables and verification gates. **This document is planning work; it does not authorize or claim runtime implementation.**
+This is the consolidated execution plan for the new codebase described in `refactor/`. It turns the specifications, decisions and audits into assignable tasks, dependencies, deliverables and verification gates. **Incremental implementation is explicitly authorized by ADR-022 (2026-10-14); this plan does not claim it has been implemented, tested or released.**
 
 Authority order:
 
-1. Latest explicit user decisions, [recorded RV01–RV31 responses](review.md#recorded-responses), and ADR-019/020 in [architecture_decisions.md](architecture_decisions.md).
+1. Latest explicit user decisions, [recorded RV01–RV31 responses and follow-ups](review.md#recorded-responses), and ADR-019/020/021 in [architecture_decisions.md](architecture_decisions.md).
 2. Other accepted ADRs and the account-only target contracts.
 3. Architecture/save specifications and proposed engineering contracts, finalized in Phase 0.
 4. Audits and observed feature inventory, used for coverage and historical evidence. Older recommendations conflicting with accepted decisions are superseded.
@@ -20,8 +20,10 @@ The standalone manual-contribution removal is already implemented and should rem
 - Primary-first, ordered, eligible split funding; per-obligation fallbacks override global defaults, retirement has a separate explicit list. Every obligation allows partial funding. Actual related changes commit atomically; zero-fund/invalid transactions debit nothing. No implicit borrowing or retry.
 - Partial home down-payment funding becomes a non-liquid held acquisition-deposit asset. Only complete funding creates the property/mortgage. Later funding is explicitly scheduled; deposit/property are never counted together.
 - Taxable withdrawals assume gain equal to 20% of gross debit, with default editable LTCG rate 15%. This is a disclosed proxy, not actual basis or inferred tax brackets. Gross, net, tax and penalty are separate; withholding is not charged twice.
-- Retirement withdrawals are additional living spending, not income or transfers. Preserve amount/initial 4%, min/max, inflation, account order and user-selected withdrawal timing/valuation date.
-- Ordinary cards are expected expenses, default twelve inclusive payments ending at start + 11 months, with no debt. Permanent-0% cards have identified opening debt, adaptive funded-only repayment and an explicit residual lump-sum payoff; coincident final installment/payoff executes once.
+- Tax/penalty are rounded separately from gross once; use a provably bounded minimal-gross quote, with an unsupported-range diagnostic rather than approximate/unbounded search. Annualized allocations use per-line cumulative rounding (ADR-021).
+- Retirement withdrawals are additional living spending, not income or transfers. Preserve fixed amount or a **per-source configurable initial-balance percentage (new-item default 4%)**, min/max, inflation, account order and user-selected withdrawal timing/valuation date; a later-start source defaults its basis date to its own first withdrawal date.
+- Explicitly qualified HSA spending is tax/penalty-free. Non-qualified HSA spending retains configured tax; the separately configurable extra penalty defaults to 20% before age 65 and is waived at 65 regardless of retirement status (ADR-021).
+- Ordinary cards are expected expenses, default twelve inclusive payments ending at start + 11 months, with no debt. Permanent-0% cards have identified opening debt, adaptive ceiling-cent funded-only repayment and an explicit residual lump-sum payoff; coincident final installment/payoff executes once.
 - Manual planner entries and recurrences execute once per obligation/occurrence. Already-occurred imported transactions are permanently view-only with original date/sign/as-of provenance and no projection or planning-budget effect.
 - Date-only arithmetic, stable event order, explicit integer-cent rounding, month-close effective APY, partial-month exponent, inclusive ends/day31 clamp, and calendar-year totals from actual months.
 - Assets, liabilities, held deposits and signed net worth reconcile. Net worth is the default graph; account assets remain available. Exhaustion of eligible funding accounts and unmet obligations are separate conditions.
@@ -101,11 +103,13 @@ Phase numbers describe milestones, **not a requirement to finish every task in o
 
 1. Each task below has an ID, owner, prerequisites and deliverable. Use its ID in work branches/PRs or handoff notes. Do not assign two tasks to rewrite the same module simultaneously.
 2. S owns shared schema/default/storage edits; K owns projection facade/state/scheduler; the integration owner serializes `App.tsx` wiring. Feature owners propose contract changes to these owners instead of independently redefining them.
-3. Publish TypeScript interfaces, factory examples, exact money/date rules and a small canonical result fixture at P0/P1. Contract changes update producers, consumers and acceptance together.
-4. Prefer separately owned processors, editor components, selectors and test files. Merge shared contracts first, then feature work. Runtime adapters may retain supported public entry points, but may not fabricate empty pool maps or fictional income to satisfy legacy props.
+3. Publish TypeScript interfaces, factory examples, exact money/date rules and a small canonical result fixture at P0/P1. Contract changes update target producers, consumers and acceptance together; superseded consumers may be deleted before replacements are runnable under ADR-022.
+4. Prefer separately owned processors, editor components, selectors and test files. Merge shared contracts first, then feature work. Existing consumer/module removal may begin in any relevant phase; adapters are optional, not mandatory compatibility work. Never fabricate empty pool maps or fictional income to satisfy legacy props.
 5. Feature processors may be developed concurrently using small independent inputs and the real kernel. Combined chronological execution waits for integration. **Do not concurrently mutate one projection ledger**: events in one context remain sequentially ordered. Independent contexts or pure compilation can run in parallel when measured useful.
-6. Old and new projections may coexist in a development-only comparison harness as separate results. Never blend old spending with new postings, or show warnings/previews from a different context/revision than the chart.
-7. Every task hands off affected files, contracts, tests/results, F/R/ADR links, unresolved findings and next dependencies. A phase is complete only when its exit criteria are verified.
+6. Old and new projections may coexist in a development-only comparison harness **if the old path still exists**; it is not required to keep the old engine running. Never blend old spending with new postings, or show warnings/previews from a different context/revision than the chart.
+7. Every task hands off affected files, contracts, tests/results, F/R/ADR links, unresolved findings and next dependencies. A phase is complete only when its **scoped** exit criteria are verified; an intermediate App, build or existing suite may remain broken with exact failures and restoring owners recorded (ADR-022).
+
+**Approved intermediate breakage:** removing current consumers, pool-era types and UI before every replacement is wired is allowed. Preserve target feature requirements, opening/history/import user data and archived evidence. Test independent modules as they become executable, record failures rather than skip them, and do not release an incomplete mixed-engine result. A runnable integrated candidate is needed to measure GUI/browser performance; final full-suite/build/release gates remain Phase 8.
 
 ## 4. Phase-by-phase task plan
 
@@ -119,7 +123,7 @@ Phase numbers describe milestones, **not a requirement to finish every task in o
 | P0.2 | S + Q | None | Build one coverage register for F01–F26, R01–R26, G01–G40, TC01–TC13, MD01–MD11, PS01–PS20, CA01–CA13, GUI-A01–A10 and B-P1–B-P8. Each row needs owner, task, test/evidence and status. |
 | P0.3 | K + R | None | Freeze config/event/posting/funding/result/context interfaces, phases/order, partial policy, cents rounding, cumulative allocation residuals, safe integer limits, exact bounded gross-net algorithm and unsupported-range diagnostics. Define any unresolved formula details explicitly. |
 | P0.4 | S + U | None | Finalize independent first-launch/item factories, supported absent/empty/0/false/null semantics, local malformed recovery and hydration/autosave/future-version behavior. Specify initial $0 cash account and references without resurrecting hidden assets. |
-| P0.5 | I + O | None | Specify withdrawal first date/day/optional links and available 4% basis observation; payoff date/source defaults and one coincident final request; acquisition-deposit lifecycle; HSA/retirement purpose/age rules; raise/career-break boundaries. |
+| P0.5 | I + O | None | Specify withdrawal first date/day/optional links and available configurable initial-percentage basis observation (4% new-item default); payoff date/source defaults and one coincident final request; acquisition-deposit lifecycle; HSA/retirement purpose/age rules; raise/career-break boundaries. |
 | P0.6 | Q | P0.3/P0.5 for assertions | Define independently calculated CA cases and approved before/after differences. Repair misleading 4% fixture/branch coverage and minimum-warning claims when test edits are authorized; never use archived defects as the oracle. |
 | P0.7 | P + U | None | Declare 960-month household/large profiles, stage/counter metrics, browser/hardware procedure and proposed budgets. Assign cache/runner/audit-query/storage ownership. |
 
@@ -131,15 +135,15 @@ Phase numbers describe milestones, **not a requirement to finish every task in o
 
 | Task | Owner | Prerequisites | Needed work / deliverable |
 |---|---|---|---|
-| P1.1 | S | P0.3–P0.5 | Add target account/rate/policy, liability/property/held-deposit, opening snapshot, funding, allocation/remainder, withdrawal, two-card, planner provenance and result metadata types. Keep descriptive AccountType and payroll retirement/HSA kinds; no financial pools. |
-| P1.2 | S | P1.1 | Fresh scenario/UI/item factories with explicit date/ID inputs where needed; $0 opening/0%/null defaults, ordinary card end=start+11, zero 0% debt. Preserve supported payroll/housing/purchase/cashflow defaults deliberately. |
+| P1.1 | S | P0.3–P0.5 | Add target account/rate/policy, liability/property/held-deposit, opening snapshot, funding, allocation/remainder, per-source configurable initial withdrawal percentage/valuation date, two-card, planner provenance and result metadata types. Current pool-era consumers/types may be removed immediately; track resulting compile errors until dependent tasks restore them. Keep descriptive AccountType and payroll retirement/HSA kinds; no financial pools in the target. |
+| P1.2 | S | P1.1 | Fresh scenario/UI/item factories with explicit date/ID inputs where needed; $0 opening/0%/null defaults, 4% new-withdrawal-source percentage, non-qualified HSA pre-65 extra penalty 20% (configurable), ordinary card end=start+11, zero 0% debt. Preserve supported payroll/housing/purchase/cashflow defaults deliberately. |
 | P1.3 | S + Q | P1.1/P1.2 | Canonical structural normalizers and versioned allowlisted codec. Preserve valid siblings, empty collections and zero/false/null; deterministic ID repair; local diagnostics; no raw-input mutation; prune approved fields across base/inactive timelines/pay plans/import/UI. |
 | P1.4 | S | P1.1/P1.2 | Shared active-timeline/selected-pay-plan commands, deep clone/freeze helpers, marker/reference registry, career/housing chain resolution and deletion cleanup. Separate global accounts/rates/planner from timeline-local plans. |
 | P1.5 | S + K | P1.1/P1.4 | Opening-resolution contract: stable IDs and measurement/provenance; observed debt wins, including zero; configured debt used once when absent; old history remains asset-only; no speculative mortgage payment history or loan proceeds. |
-| P1.6 | U + S | P1.3/P1.4 | Route incremental editor writes through canonical helpers; define shared funding control and named-context/view boundaries. Ensure unrelated edits retain every new field. Keep production release on the existing coherent path until integrated cutover. |
-| P1.7 | Q | P1.2–P1.6 | CA11 factory isolation, reset/load equivalence, partial malformed records, round-trip/idempotence, inactive plans, orphan UI references, liability identity and unrelated-edit tests. Test recovery/autosave behavior, not just raw decoding. |
+| P1.6 | U + S | P1.3/P1.4 | Define canonical target editor writes, shared funding control and named-context/view boundaries; remove superseded editors/consumers without maintaining the old production path. Ensure unrelated canonical command edits retain every new field. Full App/UI rewiring is completed with feature editors and P5 integration. |
+| P1.7 | Q | P1.2–P1.6 | CA11 factory isolation, reset/load equivalence, partial malformed records, round-trip/idempotence, inactive plans, orphan references, liability identity and command-level unrelated-edit tests. Check recovery/autosave without overwriting stored valid data; defer App-only checks for removed paths to P5 and record their status explicitly. |
 
-**Reuse:** stable supported account/config IDs, tabs/UI preferences, date-marker and timeline interaction ideas, factory pattern and storage key `finance-planner-state` unless a measured need changes it. Existing duplicate normalizers are inputs to consolidation, not two authorities to preserve. **Exit:** canonical config and codecs tested in isolation; units/default/reference contracts available to all streams; no new field lost on shared edit paths.
+**Reuse:** stable supported account/config IDs, tabs/UI preferences, date-marker and timeline interaction ideas, factory pattern and storage key `finance-planner-state` unless a measured need changes it. Existing duplicate normalizers are inputs to consolidation, not two authorities to preserve. **Exit:** canonical config and codecs tested in isolation; units/default/reference contracts available to all streams; no new field lost on implemented canonical command paths. Record removed consumers, broken App/build/suites and the owning later task; end-to-end UI persistence waits for P5. Phase-1 exit does not imply a runnable app.
 
 ### Phase 2 — Deterministic execution and atomic funding kernel
 
@@ -147,13 +151,13 @@ Phase numbers describe milestones, **not a requirement to finish every task in o
 
 | Task | Owner | Prerequisites | Needed work / deliverable |
 |---|---|---|---|
-| P2.1 | K | P0.3 | Date-only parser/calendar/month ordinals, leap/day31 behavior, inclusive clipping, explicit start/end/horizon metadata. Cents conversion/half-away-from-zero posting policy, cumulative residual allocation, finite/safe-runtime sums and overflow diagnostics. |
+| P2.1 | K | P0.3 | Date-only parser/calendar/month ordinals, leap/day31 behavior, inclusive clipping, explicit start/end/horizon metadata. Cents conversion/half-away-from-zero posting policy, per-line cumulative target rounding, finite/safe-runtime sums and overflow diagnostics. |
 | P2.2 | K | P0.3; P1.1 for final types | Private indexed account/liability/property/deposit state, opening construction, sparse change sets, revision checks and sole `commitChanges` mutation route. Validate conservation/nonnegative cash/ownership and reject invalid changes without mutation. |
-| P2.3 | K | P2.1/P1.1 | Purpose/age/account eligibility and tax calculations: broker 20%-gross gain/default editable LTCG15%, configured other-account/HSA rules, exact rounded withholding/penalty identities and bounded minimal sufficient gross solver. |
+| P2.3 | K | P2.1/P1.1 | Purpose/age/account eligibility and tax calculations: broker 20%-gross gain/default editable LTCG15%, HSA non-qualified 20% default extra penalty before 65/zero thereafter regardless of retirement, separately rounded gross-based tax/penalty identities, and ADR-021's bounded (max 256 candidates) minimal sufficient gross solver. |
 | P2.4 | K | P2.2/P2.3 | Pure primary-first quote with deduplicated global/override/retirement sources and supported quotas, sparse overlays, actual partial/unpaid outcomes, stale quote handling and atomic commit including related debt/deposit changes. |
 | P2.5 | S + K | P1.4/P1.5/P2.1 | Compile requested timeline/context only: immutable config, stable ID indexes, resolved date dependencies, active career/pay-plan intervals, rates and source orders. Inactive timelines are validated/persisted, not eagerly simulated. |
 | P2.6 | K | P2.1/P2.5 | Month-batched scheduler and handler interfaces: recurrence cursors, active boundaries, stable date/phase/priority/occurrence order, dynamic execution-time targets and month close. No full-horizon eager expansion or per-event whole-ledger cloning. |
-| P2.7 | K + Q | P2.2–P2.6 | `projectScenario` orchestration behind a development comparison boundary; tiny real-kernel projections and CA03/CA04/CA08/CA13 tests for split/no-op/partial/replenishment/stale/eligibility/rounding/determinism. |
+| P2.7 | K + Q | P2.2–P2.6 | `projectScenario` orchestration (development comparison boundary only if the old path still exists); tiny real-kernel projections and CA03/CA04/CA08/CA13 tests for split/no-op/partial/replenishment/stale/eligibility/rounding/determinism. |
 
 **Reuse:** side-effect-free projection intent, account-ID-led math, effective APY formula and public facade. **Exit:** independent numerical and atomicity tests pass; no negative cash, future-income spending, unsafe cents or balance mutation outside commit. Funding plans reconcile gross=net+tax+penalty under the finalized rounding policy.
 
@@ -177,7 +181,7 @@ Phase numbers describe milestones, **not a requirement to finish every task in o
 | Task | Owner | Prerequisites | Needed work / deliverable |
 |---|---|---|---|
 | P3S.1 | O | P2.4/P2.6 | Large/long-term purchases, source quotas, career monthly expenses, recurring/one-time cashflow and generic life-event outflows. Requested/paid/unpaid once; no automatic arrears debt/retry. |
-| P3S.2 | O | P2.4/P2.6/P1.5 | Retirement account rows, user start/date/day/links, explicit 4% basis observation, amount/min/max/inflation and separate fallback order. Amounts are net additional living spending; use cumulative rounding for periodic targets. |
+| P3S.2 | O | P2.4/P2.6/P1.5 | Retirement account rows, user start/date/day/links, editable per-source initial-balance withdrawal percentage (4% default) and source-specific valuation date, amount/min/max/inflation and separate fallback order. Amounts are net additional living spending; use cumulative rounding for periodic targets. |
 | P3S.3 | O + S | P2.6/P1.4 | Manual planner one-time and recurrence adapters, stable occurrence IDs, explicit same-obligation links and shared preview recurrence. One-time endDate is a display span; parent plus occurrence cannot double-charge. |
 | P3S.4 | S + U | P1.3/P3S.3 contracts | Adapt `expenseImport.ts` and planner APIs to accounts/categories; preserve original source date/sign/as-of/batches/confidence/source removal. Occurred imports remain view-only even with older anchor or moved display date. Future plans use explicit status/new identity. Add meaningful parser fixtures. |
 | P3S.5 | U + Q | P1.6/P3S.1–P3S.4; P4 for previews | Account retirement/funding/expense/planner controls, shared recurrence previews, requested vs paid weekly view and common statuses. Retain drag/copy/paste/categories/sorting/flags. Verify CA07/CA10 and GUI-A02/A04/A07; no tracker scope expansion. |
@@ -187,7 +191,7 @@ Phase numbers describe milestones, **not a requirement to finish every task in o
 | Task | Owner | Prerequisites | Needed work / deliverable |
 |---|---|---|---|
 | P3D.1 | O | P2.4/P2.6 | Ordinary expected-payment schedules: explicit start/day, inclusive end and twelve-payment factory; execute even without card debt. No charges/APR/balance simulation. |
-| P3D.2 | O | P1.5/P2.4/P2.6 | Permanent-0% liability initialization once; adaptive ceiling-cent remaining-principal/payment-count targets, funded-only reduction/early stop, explicit residual payoff date/source, overdue retained principal and one coincident final request. |
+| P3D.2 | O | P1.5/P2.4/P2.6 | Permanent-0% liability initialization once; adaptive ceiling-cent actual remaining-principal/payment-count targets recalculated after funded payments, funded-only reduction/early stop, explicit residual payoff date/source, overdue retained principal and one coincident final request. |
 | P3D.3 | O | P2.4/P2.6 | Monthly contractual loan accrual/required installment/extra/down-payment requests. Payment allocates actual funds to interest then principal, caps at outstanding amount, retains unpaid debt and missed-payment info; no fabricated fees/proceeds. |
 | P3D.4 | U + Q | P1.6/P3D.1–P3D.3; P4 for schedules | Two-type card editor/date links, loan contract and opening-liability inputs, actual-funded schedule/payoff views and common status. Remove old modes only when replacements are integrated. Verify CA05/CA06, GUI-A05/A06 and fixed-date loan-row regression. |
 
@@ -233,7 +237,7 @@ Phase numbers describe milestones, **not a requirement to finish every task in o
 
 **Required warnings:** “Some scheduled payments could not be fully funded, beginning in [month].” Use “eligible funding accounts exhausted” only when those configured eligible sources actually exhaust; signed net worth, restrictions and property equity do not prove cash exhaustion.
 
-**Exit:** complete feature/GUI/default coverage, historical loan failure executed and correctly resolved/classified, coherent new result/schema candidate and full functional test/build verification. Runtime release still waits for measured scalability and cleanup.
+**Exit:** target cross-feature finance/GUI/default behavior has focused CA/GUI evidence; historical loan failure is resolved/classified in target behavior; a sufficiently runnable integrated result/UI is available for Phase-6 browser measurement. Record any remaining whole-suite/build failures and their owners without treating them as passing. Final full-suite/build/release verification remains Phase 8, after measured scalability and residual cleanup (ADR-022).
 
 ### Phase 6 — Measured 80-year scalability, responsive UI and durable storage
 
@@ -255,13 +259,13 @@ Use the audit's budgets as **proposed measurement goals**, not proven commitment
 
 ### Phase 7 — Remove obsolete paths and align ownership/documentation
 
-**Goal:** Finish the new codebase rather than leave parallel legacy authorities. **Needs:** P5 correctness/GUI parity and P6 measured candidate. Cleanup in separately owned modules can proceed concurrently.
+**Goal:** Verify and finish removal of obsolete paths rather than leave parallel legacy authorities. **Needs:** P5 integrated candidate and P6 measurements for the final sweep. ADR-022 permits deleting obsolete consumers/modules earlier; this phase checks for leftovers and aligns actual-code docs. Cleanup in separately owned modules can proceed concurrently.
 
 | Task | Owner | Prerequisites | Needed work / deliverable |
 |---|---|---|---|
-| P7.1 | S + K | P5/P6 exits | Remove runtime pool definitions/membership/source variants/shared rates/rules/helpers/legacy aggregate maps, spendable income reservoirs, scalar starting-asset authority and superseded payroll/card aliases. Preserve AccountType/payroll benefit kinds/housing payment groups. |
-| P7.2 | U + R | P5/P6 exits | Remove pool management/filter/import/chart UI, legacy result consumers, duplicate local normalizers/calculators and old card controls. Budget diagnostic naming becomes periodKind; no fake compatibility maps. |
-| P7.3 | K + Q | P7.1/P7.2 | Remove old engine comparison path from production, confirm one formula/write/state/report owner and search all consumers for obsolete references. Review unused helpers/static checks against actual callers; no unrelated work or archives deleted. |
+| P7.1 | S + K | P5/P6 exits | Verify and remove any **remaining** runtime pool definitions/membership/source variants/shared rates/rules/helpers/legacy aggregate maps, spendable income reservoirs, scalar starting-asset authority and superseded payroll/card aliases. Earlier removal is authorized. Preserve AccountType/payroll benefit kinds/housing payment groups. |
+| P7.2 | U + R | P5/P6 exits | Verify and remove any **remaining** pool management/filter/import/chart UI, legacy result consumers, duplicate local normalizers/calculators and old card controls. Budget diagnostic naming becomes periodKind; no fake compatibility maps. |
+| P7.3 | K + Q | P7.1/P7.2 | Remove any surviving development-only old-engine comparison path, confirm one formula/write/state/report owner and search all consumers for obsolete references. Review unused helpers/static checks against actual callers; no unrelated work or archives deleted. |
 | P7.4 | Q | P7.1–P7.3 | Update obsolete tests to approved behavior, retain archived evidence, remove misleading coverage claims and close TC/MD coverage register rows with actual proof. Confirm standalone contribution pruning remains effective. |
 | P7.5 | S + Q | Implemented modules confirmed | Refresh README, AGENTS/CODEMAP and runtime docs for actual architecture/domain/calc/money flow/features/persistence/tests; remove nonexistent bank-import coverage claims. Update refactor status/ADRs and changelogs with implemented vs historical distinction. Update CHANGES.md before any requested commit/push. |
 
@@ -290,7 +294,7 @@ Use the audit's budgets as **proposed measurement goals**, not proven commitment
 | Effective APY `(1 + rate)^(1/12) - 1` | Keep formula; twelve unrounded full months match stated APY | Per-account rates, accepted month-close/partial timing and explicit cent-posting reconciliation; P2/P3H |
 | Granular `Paycheck`, `PaycheckEditorModal`, frequency helpers in `paycheck.ts` | Keep labeled categories/lines, frequencies, actual deductions and benefit capabilities | Preserve all per-line destinations; shared payroll compiler, no competing flat authority; P3I |
 | Career/pay-plan selected editing, date chaining, overlaps/raises/caps | Keep controls and plan-snapshot idea | Correct month gaps/inactivity, ordered net deposits/remainder, explicit cap policy and authoritative previews; P1/P3I |
-| Retirement amount/4%/min/max/inflation/HSA/exhaustion capability | Keep product capability | Account-specific plans/rules, selected start/basis dates and additional net spending; P3S |
+| Retirement amount/configurable initial-balance percentage (4% default)/min/max/inflation/HSA/exhaustion capability | Keep product capability | Account-specific plans/rules, selected start/basis dates and additional net spending; P3S |
 | `HousingEditor` chips, mixed mortgage/rental CRUD, links/chaining/grouped sources | Keep interaction/layout and independent funding groups | Opening identity, held deposit, funded-only debt, consistent PMI/value, deficiency; P3H |
 | Purchases/long-term expenses, categories/sort/filter/flags | Keep schedules, categories and display interactions | Shared funding/actual partial outcomes, no negative hypothetical cash; P3S/P4 |
 | `ExpensesPlanner`, manual entry/recurrence/copy/paste/drag | Keep planning workflow and account/category track idea | Shared scheduler/actual forecast, no pool dependencies, one obligation identity; P3S |
@@ -352,8 +356,8 @@ The coverage register created by P0.2 is the per-item source of completion statu
 
 ### Required checks and phase handoff evidence
 
-- Financial/account/funding/career/housing/card/retirement changes: run `npm run test -- --run src/engine/projection.test.ts` and `npm run test -- --run src/App.test.tsx`, plus relevant new module/acceptance suites.
-- Integrated/final handoff: `npm run test -- --run` and `npm run build`. Fix the documented failure or record a reviewed exception accurately; no skipped assertions or false green claims.
+- Financial/account/funding/career/housing/card/retirement changes: run focused new-module/CA tests as soon as their modules are executable. Attempt `npm run test -- --run src/engine/projection.test.ts` and `npm run test -- --run src/App.test.tsx` when those paths can run; if an old consumer is removed, record the exact unavailable/failing test and its restoring task instead of treating it as passed.
+- Intermediate handoffs: attempt `npm run test -- --run` and `npm run build` where useful, record exact outcomes even when broken by authorized removals; a passing whole suite/build is **not** an intermediate-phase gate. Final Phase-8 handoff requires complete test/build verification and accurately reviewed exceptions, with no skipped assertions or false green claims.
 - Browser/worker/layout/storage-quota/performance checks are separate evidence from jsdom tests or build success. Record actual environment and results.
 - Numeric proof includes posted income once; closing=opening+postings; totalAssets−totalLiabilities=netWorth; debt decreases only by funded payment/settlement; partial execution changes only actual funds; invalid atomic commit changes nothing; annual totals=sum(actual months); input unchanged.
 - Preserve the original snapshots and report intentional before/after corrections by F/R/ADR. Tests must exercise the actual percentage, source, debt, default and date branches with independently established expected values.
@@ -374,3 +378,4 @@ This plan consolidates all planning/audit records in this folder:
 - [Testing/correctness audit](testing_correctness_audit.md): TC01–TC13/CA01–CA13 and historical loan/test-coverage findings.
 - [Maintainability/documentation audit](maintainability_documentation_audit.md): MD01–MD11, one-rule ownership and actual-vs-target documentation.
 - [Archived original projection evidence](fixtures/projection.pre-refactor.snap): retained unchanged as historical inputs/outputs.
+- [Phase 1 task breakdown](phase1_plan.md): detailed P1.1–P1.7 breakdown with decisions D1–D4 recorded in [frozen contracts](frozen_contracts.md).

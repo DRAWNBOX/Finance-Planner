@@ -43,3 +43,6 @@ Screenshot*.jpeg
 
 # Sample expenses data
 sample expenses/
+
+# Deepwork session state
+.slim/deepwork/

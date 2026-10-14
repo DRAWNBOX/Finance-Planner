@@ -172,8 +172,8 @@ describe('projectScenario', () => {
             enabled: true,
             sourceType: 'pool' as const,
             sourceId: 'retirement401k',
-            mode: 'amount' as const,
-            amount: 4000,
+            mode: 'four_percent' as const,
+            amount: 999999,
             syncWithRetirementAge: true
           }
         ]
@@ -184,8 +184,7 @@ describe('projectScenario', () => {
     const retirementYear = findProjectedYear(result, scenario.profile.retirementAge + 1);
     const expected = 100000 * 0.04;
 
-    expect(retirementYear!.withdrawal).toBeGreaterThan(expected * 0.99);
-    expect(retirementYear!.withdrawal).toBeLessThan(expected * 1.1);
+    expect(retirementYear!.withdrawal).toBeCloseTo(expected, 6);
   });
 
   it('honors per-pool withdrawal start age before drawing retirement withdrawals', () => {
@@ -995,7 +994,7 @@ describe('projectScenario', () => {
     expect(result.depletedAge).toBeNull();
   });
 
-  it('marks depletion when retirement withdrawals miss the configured minimum yearly amount', () => {
+  it('warns but does not mark depletion when retirement withdrawals miss the configured minimum yearly amount', () => {
     const result = projectScenario({
       ...defaultScenario,
       profile: {
@@ -1028,13 +1027,14 @@ describe('projectScenario', () => {
       },
       withdrawal: {
         ...defaultScenario.withdrawal,
-        firstYearAmount: 0,
         minimumYearlyWithdrawal: 10000,
-        }
+        sourceLines: []
+      }
     });
 
     expect(result.survivesToEnd).toBe(true);
     expect(result.depletedAge).toBeNull();
+    expect(result.warnings ?? []).toContain('Retirement withdrawals were below the configured minimum yearly amount from age 65.');
   });
 
   it('does not deplete when retirement withdrawals meet the configured minimum yearly amount', () => {

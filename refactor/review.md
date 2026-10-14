@@ -58,9 +58,15 @@ The three financial clarifications below have now been answered. Approval of con
 2. **Gain denominator:** user selected “20% of proceeds.” A $1,000 gross withdrawal has $200 assumed gain/$800 assumed cost; not a20% return relative to cost and not an observed basis ledger.
 3. **LTCG rate:** user selected “15%, editable.” Default tax on that $200 gain is $30, leaving $970 net before penalties. A $1,000 net spending request needs approximately $1,030.93 gross/$30.93 tax under cent rounding. Editable account rate, not an inferred jurisdiction/filing bracket.
 
-### Scheduling details to finalize without guessing
+### Follow-up decisions: exact execution and withdrawal percentage
 
-- **RV18:** user-selectable first withdrawal date/month/day, optional retirement/marker link and explicit initial4% valuation date defaulting to the first withdrawal date. No forced global retirement basis or invented unavailable observation. Net-spending target versus gross/tax separate.
+The user accepted recommendations 1–5 on minimal gross-debit quoting, penalty rounding, cumulative annual-allocation residuals, adaptive 0% card cents, and HSA age-65 treatment. The user also requires the formerly fixed “4% rule” withdrawal **rate to be configurable per source**. [ADR-021](architecture_decisions.md#adr-021--exact-cents-hsa-age-rule-and-configurable-initial-balance-withdrawal-rate) records exact testable contracts and a 4% **new-item default**, not a mandatory rate. This approval is for target behavior; none of the new finance paths or acceptance tests has been implemented merely by recording it.
+
+HSA non-qualified spending retains configured income tax, defaults to a configurable 20% extra penalty before age 65, and has **no extra penalty from age 65 regardless of retirement status**. Explicit qualified medical spending remains tax/penalty-free. Percentage retirement spending uses the user-selected rate on that source's observed balance at its selected valuation date, which defaults to its **own first withdrawal date** (including later-start sources).
+
+### Scheduling details (accepted defaults; implementation pending)
+
+- **RV18:** user-selectable first withdrawal date/month/day, optional retirement/marker link and explicit percentage-rule valuation date defaulting to that source's first withdrawal date. The rate is editable per source (new-item default 4%); no forced global retirement basis or invented unavailable observation. Net-spending target versus gross/tax separate.
 - **RV19:** explicit payoff date/source defaulting to final scheduled date/regular funding policy. Coincident final installment/payoff is one remaining-principal request. A user-selected later lump date pays only then-outstanding debt; retain unpaid/overdue balance, no recurring retry/duplicate principal/new income.
 - **RV31:** at least 80-year support, not an assumed hard cap/default for every plan. Benchmark 960-month household/large profiles; input/scroll/cancellation must stay responsive. Account/schedule counts and reference hardware are benchmark parameters, not invented user commitments.
 
@@ -195,7 +201,11 @@ The agent should perform these after the relevant contracts and implementation p
 
 Resolving review items does not mark tests or benchmarks as passed.
 
-- [ ] Required decisions above are recorded in the decision log.
-- [ ] Corresponding architecture/default/test contracts are updated.
-- [ ] Incremental implementation is authorized.
+- [x] Required decisions above are recorded in the decision log.
+- [x] Corresponding architecture/default/test contracts are updated (Phase 0: frozen_contracts.md, coverage_register.md, projection.test.ts P0.6 edits).
+- [x] Incremental implementation is authorized (ADR-022, 2026-10-14); current consumers may be removed and intermediate App/build/tests may be broken until all phases complete. Record every check's actual result.
 - [ ] Final cutover is authorized only after required verification and manual sign-off.
+
+Phase 0 authorization (2026-10-13): readiness, baseline triage and contract freeze (P0.1–P0.7) are authorized and complete; no financial math replaced. Baseline loan-row failure reproduced and left unresolved (Phase 5). Frozen contracts: refactor/frozen_contracts.md (9 blockers **at Phase-0 close**, subsequently addressed in D1–D4/ADR-021). Coverage register: refactor/coverage_register.md. Phase 1+ implementation was still gated **at that time**.
+
+Implementation authorization (2026-10-14): the user permits direct removal of current consumers and temporary program/build/test breakage through the dependent implementation phases. Phase 1 may begin under `implementation_plan.md` and `phase1_plan.md`; full product behavior, exact verification and a working release remain the Phase-8 sign-off, not a claim made by this authorization.

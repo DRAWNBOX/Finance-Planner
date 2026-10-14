@@ -9,6 +9,7 @@
 - Evidence: `src/App.tsx`, the complete `src/engine/projection.ts`, `src/types.ts`, `src/defaultScenario.ts`, `src/storage.ts`, `src/paycheck.ts`, `src/financeModel.ts`; scheduler/estimator/reporting paths in components and utilities; existing engine/UI/paycheck/date-marker tests; new characterization inputs and snapshots.
 - Existing docs are navigation aids. In particular, `AGENTS.md` says old migration code was removed, but `storage.ts` still contains legacy paycheck, account-rule, annual-return and tab adapters. Older test titles sometimes describe removed depletion rules although assertions reflect newer behavior.
 - Supplementary audit coverage: [audit_status.md](audit_status.md), [testing/correctness](testing_correctness_audit.md) and [maintainability/documentation](maintainability_documentation_audit.md). All six requested areas inspected; actual 4% test branch/default normalization/shared-default/malformed recovery gaps recorded below. No target implementation or new test execution implied.
+- **Current authorization update (2026-10-14):** the Gate-status statements above describe the 2026-10-12 inspection, not the current approval. [ADR-022](architecture_decisions.md#adr-022--incremental-implementation-authorized-intermediate-breakage-permitted) now authorizes phased implementation, direct removal of current consumers and intermediate App/build/test breakage; this inventory's observed behavior and archived baselines remain historical evidence.
 
 ### Baseline verification
 
@@ -297,7 +298,7 @@ These are **provisional module responsibilities**, not finalized architecture or
 | F07 | Obligations/funding | Source expense adapter, actual funded audit | B02; withdrawal/raise; gross/net |
 | F08 | Funding/reporting | Map income selectors to explicit accounts; remove reservoirs after parity | B03/B04; fallback tests; annual no respending |
 | F09 | Account eligibility/tax quote/funding | Per-account tax/penalty/restriction rules and accountType HSA; no shared pool lookup | B04; different account policies; HSA/basis |
-| F10 | Account-only retirement spending/funding | Account rows/min/max/initial 4%/start links and explicit account fallback order | B04; tax-aware account exhaustion/spending once |
+| F10 | Account-only retirement spending/funding | Account rows/min/max/configurable initial-balance percentage (4% new-item default)/start links and explicit account fallback order (ADR-021) | B04 remains historical; CA07 tests editable rate/date and tax-aware account exhaustion/spending once |
 | F11 | Per-account valuation/reporting | Independent account rates, proposed optional retirement override, exact APY/inflation | B01; two distinct yields/boundary/gain separation |
 | F12 | Purchase scheduler/funding | Source quotas/order adapter; atomicity decision | B07; purchase/UI; failed indivisible |
 | F13 | Recurring scheduler/funding | Inclusive month and duration adapter | B07; long-term/UI; date boundaries |
