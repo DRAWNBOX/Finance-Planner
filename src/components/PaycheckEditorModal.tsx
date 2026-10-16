@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type {
-  BankAccountDefinition,
+  AccountDefinition,
   Paycheck,
   PaycheckCategory,
   PaycheckDepositBucket,
@@ -11,7 +11,7 @@ import { PAY_FREQUENCY_LABELS, createPaycheckLine, getPaycheckTotals } from '../
 
 interface PaycheckEditorModalProps {
   paycheck: Paycheck;
-  bankAccounts: BankAccountDefinition[];
+  accounts: AccountDefinition[];
   onClose: () => void;
   onSave: (paycheck: Paycheck) => void;
 }
@@ -29,7 +29,7 @@ const clonePaycheck = (paycheck: Paycheck): Paycheck => ({
   }))
 });
 
-const bucketForAccount = (account: BankAccountDefinition | undefined): PaycheckDepositBucket | null => {
+const bucketForAccount = (account: AccountDefinition | undefined): PaycheckDepositBucket | null => {
   if (!account) return null;
   if (account.accountType === 'hsa') return 'hsa';
   if (account.accountType === 'retirement401k' || account.accountType === 'roth') return 'retirement';
@@ -38,7 +38,7 @@ const bucketForAccount = (account: BankAccountDefinition | undefined): PaycheckD
 
 const isEarning = (category: PaycheckCategory) => category.kind === 'earning';
 
-export const PaycheckEditorModal = ({ paycheck, bankAccounts, onClose, onSave }: PaycheckEditorModalProps) => {
+export const PaycheckEditorModal = ({ paycheck, accounts, onClose, onSave }: PaycheckEditorModalProps) => {
   const [draft, setDraft] = useState<Paycheck>(() => clonePaycheck(paycheck));
 
   useEffect(() => {
@@ -80,7 +80,7 @@ export const PaycheckEditorModal = ({ paycheck, bankAccounts, onClose, onSave }:
   };
 
   const setAccountForLine = (categoryId: string, lineId: string, accountId: string) => {
-    const account = bankAccounts.find((candidate) => candidate.id === accountId);
+    const account = accounts.find((candidate) => candidate.id === accountId);
     updateLine(categoryId, lineId, {
       accountId: accountId || null,
       bucket: bucketForAccount(account)
@@ -207,8 +207,11 @@ export const PaycheckEditorModal = ({ paycheck, bankAccounts, onClose, onSave }:
                           value={line.accountId ?? ''}
                           onChange={(event) => setAccountForLine(category.id, line.id, event.target.value)}
                         >
+                          {line.accountId && !accounts.some((account) => account.id === line.accountId) && (
+                            <option value={line.accountId}>Unresolved account ({line.accountId})</option>
+                          )}
                           <option value="">No deposit</option>
-                          {bankAccounts.map((account) => (
+                           {accounts.map((account) => (
                             <option key={`${line.id}-${account.id}`} value={account.id}>
                               {account.label}
                             </option>

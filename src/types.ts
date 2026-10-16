@@ -1,7 +1,11 @@
-export type WithdrawalMode = 'four_percent' | 'specified';
+// Plan-level retirement withdrawal selector. The former fixed `'four_percent'`
+// label is replaced by `'percentOfInitialBalance'`; per-source mode lives on
+// `RetirementWithdrawalSourceLine` (configurable rate, no implied fixed 4%).
+export type WithdrawalMode = 'specified' | 'percentOfInitialBalance';
 export type CashflowCadence = 'one_time' | 'recurring';
 export type CashflowDirection = 'inflow' | 'outflow';
-export type SourceType = 'pool' | 'account';
+// Target schema has no pool domain: the only remaining source kind is an account.
+export type SourceType = 'account';
 export type SourceLineMode = 'amount' | 'four_percent';
 export type AccountTypePreset = 'checking' | 'savings' | 'taxable' | 'retirement401k' | 'roth' | 'hsa';
 export type CashflowCategory =
@@ -77,6 +81,8 @@ export interface CareerPayPlan {
   paycheck: Paycheck;
   sourceLines: CareerSourceLine[];
   annualRaiseRate?: number;
+  /** Canonical ordered net-pay allocation + remainder (successor to `sourceLines`). */
+  depositPlan?: CareerDepositPlan;
 }
 
 export interface CareerEntry {
@@ -114,6 +120,8 @@ export interface CareerEntry {
   investmentsMonthlyWithdrawal?: number;
   retirement401kMonthlyWithdrawal?: number;
   sourceLines?: CareerSourceLine[];
+  /** Canonical ordered net-pay allocation + remainder (Initial plan successor). */
+  depositPlan?: CareerDepositPlan;
   paycheckInfo?: PaycheckInfo;
   paycheck?: Paycheck;
   payPlans?: CareerPayPlan[];
@@ -152,15 +160,58 @@ export interface FutureRetirementPlan {
   retirementYears: number;
 }
 
+/**
+ * Purchase/long-term source line. `accountId` is the canonical target; the
+ * legacy `sourceType`/`sourceId` pair is retained for existing consumers until
+ * P3S migrates them, and no longer exposes a pool variant. Purchase modes are
+ * intentionally distinct from `RetirementWithdrawalSourceLine` modes.
+ */
 export interface SourceLine {
   id: string;
   enabled: boolean;
+  /** Canonical target account ID. */
+  accountId?: string;
+  /** @deprecated legacy consumer field; migrate to `accountId` (P3S). */
   sourceType: SourceType;
+  /** @deprecated legacy consumer field; migrate to `accountId` (P3S). */
   sourceId: string;
   mode: SourceLineMode;
   amount: number;
   startAge?: number;
   syncWithRetirementAge?: boolean;
+}
+
+/**
+ * Withdrawal-specific successor to the shared `SourceLine` (purchases keep the
+ * `SourceLine` modes unchanged). The percentage mode uses a per-source editable
+ * rate against the account's authoritative balance on the valuation date.
+ */
+export type RetirementWithdrawalMode = 'amount' | 'percentOfInitialBalance';
+
+export interface RetirementWithdrawalSourceLine {
+  id: string;
+  label?: string;
+  enabled: boolean;
+  accountId: string;
+  mode: RetirementWithdrawalMode;
+  /** Fixed dollar amount when `mode === 'amount'`. */
+  amount: number;
+  /**
+   * Editable percentage of the account's initial balance when
+   * `mode === 'percentOfInitialBalance'`. New-item default 4; an explicit 0 is valid.
+   */
+  initialWithdrawalRatePercent?: number;
+  /** Date-only first withdrawal date for this source. */
+  firstWithdrawalDate: string;
+  /** Defaults to `firstWithdrawalDate` when absent. */
+  initialWithdrawalValuationDate?: string | null;
+  paymentDay?: number | null;
+  /** Optional marker/retirement start link. */
+  startMarkerId?: string | null;
+  syncWithRetirementAge?: boolean;
+  startAge?: number;
+  /** Explicit ordered fallback account IDs for this source. */
+  fallbackAccountIds?: string[];
 }
 
 export interface CareerSourceLine {
@@ -191,6 +242,14 @@ export interface Timeline {
   longTermPurchases: LongTermPurchase[];
   loans: Loan[];
   creditCards: CreditCard[];
+  /**
+   * Card-product plans (ordinary expected-payment / permanent-0% payoff) are a
+   * timeline-local domain (RV04/F23: cards are timeline-specific). The base
+   * `Scenario.cardPlans` field is the implicit base timeline; each timeline owns
+   * an independent copy. A legacy timeline without the field normalizes to `[]`
+   * and never inherits the base plan list.
+   */
+  cardPlans: CardPlan[];
   careerPlan: CareerPlan;
   housing: HousingEntry[];
 }
@@ -230,7 +289,8 @@ export interface LongTermPurchase {
 }
 
 export type LoanPaymentSourceAccount = string | 'income';
-export type LoanPaymentSource = 'income' | `pool:${string}` | `account:${string}`;
+// Pool source variant removed from the target schema (`account:` / `income` only).
+export type LoanPaymentSource = 'income' | `account:${string}`;
 
 export interface Loan {
   id: string;
@@ -278,6 +338,19 @@ export interface CreditCard {
 
 export type HousingType = 'mortgage' | 'rental';
 
+/**
+ * Retained housing payment groups (G20/G22). Keys map to the obligation groups
+ * the housing engine posts: PI+extra / rent (`payment`), taxes+insurance
+ * (`taxesInsurance`), HOA+maintenance (`hoaMaintenance`), PMI (`pmi`), and the
+ * acquisition down payment (`downPayment`).
+ */
+export type HousingFundingGroup = 'payment' | 'taxesInsurance' | 'hoaMaintenance' | 'pmi' | 'downPayment';
+
+/**
+ * Legacy mortgage/rental editor configuration. Kept for existing housing
+ * consumers until P3H migrates them; `PropertyDefinition`/`LiabilityDefinition`
+ * are the canonical observed shapes and link back via `sourceConfigId`.
+ */
 export interface HousingEntry {
   id: string;
   label: string;
@@ -322,30 +395,237 @@ export interface HousingEntry {
   taxesInsuranceSource?: LoanPaymentSource;
   hoaMaintenanceSource?: LoanPaymentSource;
   pmiSource?: LoanPaymentSource;
+  /**
+   * Ordered per-group funding overrides (G20/G22). Each group is an independent
+   * `FundingPolicy` (explicit `primaryAccountId` + ordered `fallbackAccountIds`).
+   * A **missing** group inherits the configured global default policy; an
+   * explicit policy overrides it, and a valid `null` primary / empty
+   * `fallbackAccountIds` is preserved rather than defaulted. When a group policy
+   * is absent its legacy `*Source` scalar (above) remains the read fallback. No
+   * hidden account is ever invented.
+   */
+  fundingPolicies?: Partial<Record<HousingFundingGroup, FundingPolicy>>;
+  /**
+   * Timeline-local dated funding events for the property linked to this housing
+   * entry (matched by the property's `sourceConfigId`, else by `id`). RV04/F23:
+   * a property's observed identity (`value`/`status`/`debtLink`) stays global and
+   * authoritative, but its dated **future** funding events are per-timeline.
+   * `scenario.properties[].fundingEvents` is the implicit base timeline; a named
+   * timeline reads this list instead and never implicitly inherits the base list.
+   * Absent is interpreted as `[]` for a named timeline.
+   */
+  fundingEvents?: PropertyFundingEvent[];
 }
 
-export interface PoolDefinition {
+/**
+ * HSA-only withdrawal configuration. Kept separate from the generic account
+ * `withdrawalTaxRate`/`penaltyRate` so qualified income tax, the generic
+ * penalty, and the age-based non-qualified extra penalty never collapse.
+ */
+export interface HsaWithdrawalPolicy {
+  /**
+   * Extra penalty rate (%) applied to non-qualified withdrawals before the
+   * waiver age. Separately configurable; default 20. Not income tax.
+   */
+  nonQualifiedPenaltyRate: number;
+  /**
+   * Age (holder's birthday) at or after which the non-qualified extra penalty
+   * is waived regardless of retirement status. Default 65.
+   */
+  nonQualifiedPenaltyWaiverAge: number;
+}
+
+export interface AccountWithdrawalPolicy {
+  /** Whether this account may be used as an automatic fallback funding source. */
+  allowAutomaticFallback: boolean;
+  /** Configured income-tax assumption (%) applied to taxable withdrawals. */
+  withdrawalTaxRate: number;
+  /** Generic extra penalty rate (%) applied once, separately from income tax. */
+  penaltyRate: number;
+  /** Free-text restriction shown to the user (e.g., qualified medical only). */
+  restrictionNote: string;
+  /**
+   * HSA-only non-qualified penalty configuration. Absent for non-HSA accounts.
+   * Explicitly qualified medical spending remains tax/penalty-free.
+   */
+  hsa?: HsaWithdrawalPolicy;
+}
+
+/**
+ * Canonical account (replaces the pool-era `BankAccountDefinition`). Owns its
+ * opening balance, base return, optional retirement override and withdrawal
+ * policy. There is no pool membership, shared rate or hidden scalar asset.
+ */
+export interface AccountDefinition {
+  id: string;
+  label: string;
+  accountType: AccountTypePreset;
+  /** Persisted dollars. Runtime postings use integer cents. */
+  openingBalance: number;
+  /** Effective annual return / APY (%). Missing defaults to 0. */
+  annualReturnRate: number;
+  /** Optional retirement-phase rate override (%); null = same as base rate. */
+  retirementAnnualReturnRate: number | null;
+  color?: string;
+  /** Display-only ordering; never changes funding or deposit order. */
+  displayOrder: number;
+  withdrawalPolicy: AccountWithdrawalPolicy;
+  /** Taxable-proxy assumed gain share of gross debit (%). Default 20. */
+  assumedGainPercent?: number;
+  /** Editable long-term capital-gains rate (%) applied to the assumed gain. Default 15. */
+  capitalGainsTaxRate?: number;
+}
+
+export type LiabilityKind = 'loan' | 'mortgage' | 'zeroInterestCard' | 'saleDeficiency';
+
+/**
+ * Observed/configured debt. Negative account balances are never debt.
+ * `saleDeficiency` is a persisted liability kind: an underwater-sale deficiency
+ * retained as debt. The runtime deficiency amount produced by a sale is written
+ * into a `LiabilityDefinition` of this kind (engine/reporting owner); unlike the
+ * runtime-only `acquisitionDepositCents`, it survives as configuration.
+ */
+export interface LiabilityDefinition {
+  id: string;
+  kind: LiabilityKind;
+  label?: string;
+  /** Persisted dollars; positive = debt. */
+  openingBalance: number;
+  /** Source config (loan/housing/zero-interest card) this liability derives from. */
+  sourceConfigId?: string | null;
+  linkedPropertyId?: string | null;
+  /** Contractual annual interest rate (%), distinct from account APY. */
+  annualInterestRate?: number;
+  minimumMonthlyPayment?: number;
+  extraMonthlyPayment?: number;
+  /** Inclusive final payment / term date. */
+  endYearMonth?: string | null;
+  openingYearMonth?: string | null;
+  paymentDay?: number;
+}
+
+export type PropertyStatus = 'pending' | 'owned' | 'sold';
+export type PropertyKind = 'primaryResidence' | 'rental' | 'other';
+
+/** A dated funding event toward a property's required down payment. */
+export interface PropertyFundingEvent {
+  id: string;
+  date: string;
+  /** Persisted dollars requested. */
+  amount: number;
+  accountId?: string | null;
+}
+
+/** Property identity/lifecycle. Held deposit is runtime state, not persisted here. */
+export interface PropertyDefinition {
+  id: string;
+  label?: string;
+  kind?: PropertyKind;
+  /** Persisted dollars; observed opening value. */
+  value: number;
+  /** Linked liability ID (e.g., mortgage); debt is counted once. */
+  debtLink?: string | null;
+  requiredDownPayment: number;
+  status: PropertyStatus;
+  sourceConfigId?: string | null;
+  acquisitionYearMonth?: string | null;
+  completedDate?: string | null;
+  /** Property appreciation rate (%). */
+  appreciationRate?: number;
+  sellingCostsRate?: number;
+  fundingEvents?: PropertyFundingEvent[];
+}
+
+export type OpeningMeasurement = 'assetOnly' | 'assetsMinusLiabilities';
+
+export interface OpeningSnapshotAccountValue {
+  accountId: string;
+  /** Persisted dollars. */
+  balance: number;
+}
+
+export interface OpeningSnapshotLiabilityValue {
+  liabilityId: string;
+  /** Persisted dollars; positive = debt. Observed 0 wins over configured debt. */
+  balance: number;
+}
+
+export interface OpeningSnapshotPropertyValue {
+  propertyId: string;
+  /** Persisted dollars; observed opening value. */
+  value: number;
+  /** Observed linked debt (positive = debt) when present. */
+  debtBalance?: number;
+}
+
+/** Observation before same-date events. Keyed by stable IDs. */
+export interface OpeningSnapshot {
+  date: string;
+  accounts: OpeningSnapshotAccountValue[];
+  liabilities: OpeningSnapshotLiabilityValue[];
+  properties?: OpeningSnapshotPropertyValue[];
+  measurement: OpeningMeasurement;
+  sourceSnapshotId?: string | null;
+}
+
+/** Ordered account funding: primary first, then deduplicated fallbacks. */
+export interface FundingPolicy {
+  primaryAccountId: string | null;
+  fallbackAccountIds: string[];
+  /** Optional short purpose label (e.g., 'housing', 'loan'). */
+  purpose?: string;
+}
+
+/** Ordered net-pay allocation with an explicit remainder destination. */
+export interface CareerDepositPlan {
+  allocations: CareerSourceLine[];
+  remainderAccountId: string | null;
+  postingDay?: number;
+}
+
+export interface OrdinaryCardSchedule {
+  kind: 'expectedPayment';
   id: string;
   label: string;
   enabled: boolean;
-  priority: number;
-  color?: string;
-  preRetirementReturnRate: number;
-  postRetirementReturnRate: number;
-  taxRate: number;
-  penaltyRate: number;
-  isHSA?: boolean;
-  softRestrictionNote?: string;
+  /** Expected payment per scheduled month (dollars). Missing defaults to 0. */
+  amount: number;
+  startYearMonth: string;
+  /** Inclusive end; default = start + 11 months (twelve payments). */
+  endYearMonth: string;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
+  paymentDay: number;
+  funding: FundingPolicy;
+  showOnGraph?: boolean;
+  flagColor?: string;
 }
 
-export interface BankAccountDefinition {
+export interface ZeroInterestCardPlan {
+  kind: 'zeroInterestPayoff';
   id: string;
   label: string;
-  poolId: string;
-  priority: number;
-  accountType: AccountTypePreset;
-  balance: number;
+  enabled: boolean;
+  /** Linked liability ID; opening debt is counted once. */
+  liabilityId: string;
+  /** Persisted dollars; opening balance (mirrors the liability). */
+  initialBalance: number;
+  startYearMonth: string;
+  /** Inclusive target payoff date. */
+  targetYearMonth: string;
+  startMarkerId?: string | null;
+  endMarkerId?: string | null;
+  paymentDay: number;
+  funding: FundingPolicy;
+  /** Explicit residual lump-sum payoff date; defaults to `targetYearMonth`. */
+  payoffYearMonth?: string | null;
+  payoffFunding?: FundingPolicy;
+  showOnGraph?: boolean;
+  flagColor?: string;
 }
+
+/** Two card product models. APR/charges/minimums are not simulated. */
+export type CardPlan = OrdinaryCardSchedule | ZeroInterestCardPlan;
 
 export interface NetWorthCustomAccount {
   id: string;
@@ -359,11 +639,34 @@ export interface NetWorthHistoryAccountSnapshot {
   balance: number;
 }
 
+/**
+ * Origin of a net-worth history observation. Optional on purpose: a legacy
+ * record with no provenance stays unspecified rather than being given a
+ * fabricated origin.
+ */
+export type NetWorthHistoryProvenance = 'manual' | 'imported' | 'projected';
+
 export interface NetWorthHistoryEntry {
   id: string;
   date: string;
   accounts: NetWorthHistoryAccountSnapshot[];
+  /**
+   * Total for this observation. Legacy entries are `assetOnly` (sum of account
+   * balances) and were never negative; signed records use
+   * `assetsMinusLiabilities` and may be negative. The stored value is never
+   * clamped — a negative net-worth observation is a valid record.
+   */
   totalNetWorth: number;
+  /**
+   * Explicit measurement basis. A legacy entry without one decodes to
+   * `assetOnly`; an old asset-only total is never reinterpreted as signed net
+   * worth.
+   */
+  measurement?: MeasurementBasis;
+  /** Optional origin of the observation; absent = legacy/unspecified. */
+  provenance?: NetWorthHistoryProvenance;
+  /** Optional observation snapshot id this record was derived from. */
+  sourceSnapshotId?: string | null;
 }
 
 export interface TrajectoryYear {
@@ -398,30 +701,142 @@ export interface TrajectorySnapshot {
   endingBalance: number;
   summary: string;
   years: TrajectoryYear[];
+  /** Measurement/schema/engine/date metadata frozen with the snapshot. */
+  context?: ResultContextMetadata;
 }
 
+/** How a result's money values should be interpreted (signed net worth vs assets-only). */
+export type MeasurementBasis = 'assetOnly' | 'assetsMinusLiabilities' | 'accountAssets';
+
+/** Per-result measurement/schema/engine/date metadata for views and frozen snapshots. */
+export interface ResultContextMetadata {
+  measurement: MeasurementBasis;
+  /** Date-only observation start. */
+  startDate: string;
+  /** Date-only observation end. */
+  endDate: string;
+  schemaVersion?: number;
+  engineRevision?: string;
+  /** Named-context identifier (revision/cache key). */
+  contextId?: string;
+}
+
+/**
+ * One canonical trajectory annual point (D20 `formatVersion: 2`): the actual
+ * year-close stocks in **integer cents**. `netWorthCents` is signed
+ * (assets − liabilities) and may be negative; `accountAssetsCents` (account-only
+ * assets) and `liabilityCents` (positive = debt) stay separate so an asset-only
+ * figure is never silently reinterpreted as signed net worth.
+ */
+export interface CanonicalTrajectoryAnnualPoint {
+  /** Calendar-year label of the report group. */
+  calendarYear: number;
+  /** Date-only closing observation for this year. */
+  closingDate: string;
+  /** Signed net worth in integer cents (may be negative; never clamped). */
+  netWorthCents: number;
+  /** Account-only assets in integer cents. */
+  accountAssetsCents: number;
+  /** Liabilities (positive = debt) in integer cents. */
+  liabilityCents: number;
+}
+
+/**
+ * Required, validated freeze context for a canonical snapshot. Unlike the
+ * legacy optional {@link ResultContextMetadata}, every field is mandatory, so a
+ * canonical snapshot can never be persisted with fabricated or partial modern
+ * metadata. Structurally assignable to `ResultContextMetadata`.
+ */
+export interface CanonicalTrajectoryContext {
+  measurement: MeasurementBasis;
+  /** Date-only observation start. */
+  startDate: string;
+  /** Date-only observation end. */
+  endDate: string;
+  schemaVersion: number;
+  engineRevision: string;
+  /** Named-context identifier (revision/cache key). */
+  contextId?: string;
+}
+
+/**
+ * Versioned (D20 `formatVersion: 2`) trajectory snapshot: an immutable,
+ * cents-only record of actual year-close stocks plus the exact context it was
+ * produced under. Deliberately **distinct** from the legacy
+ * {@link TrajectorySnapshot}, which stays unversioned and is never silently
+ * reinterpreted as this shape.
+ */
+export interface CanonicalTrajectorySnapshot {
+  formatVersion: 2;
+  id: string;
+  label: string;
+  createdAt: string;
+  context: CanonicalTrajectoryContext;
+  annualPoints: CanonicalTrajectoryAnnualPoint[];
+}
+
+/**
+ * Persisted trajectory entry: either a legacy (unversioned) derived snapshot or
+ * a canonical `formatVersion: 2` snapshot. Discriminate with the `isCanonical`
+ * guard / the presence of `formatVersion`.
+ */
+export type AnyTrajectorySnapshot = TrajectorySnapshot | CanonicalTrajectorySnapshot;
+
 export interface NetWorthConfig {
-  accountBalances: Record<string, number>;
-  pools?: PoolDefinition[];
-  bankAccounts?: BankAccountDefinition[];
+  /** Canonical global accounts (rates, policies and opening balances live here). */
+  accounts: AccountDefinition[];
   customAccounts?: NetWorthCustomAccount[];
   history?: NetWorthHistoryEntry[];
+  /** Dated observation snapshot; observed debt wins over configured debt. */
+  openingSnapshot?: OpeningSnapshot;
   asOfDate: string;
 }
 
 export type ExpenseOriginType = 'manual' | 'imported';
-export type ExpenseGroupingMode = 'account' | 'pool';
+/** No pool grouping in the target schema. */
+export type ExpenseGroupingMode = 'account';
 export type ExpenseImportFileType = 'csv' | 'pdf' | 'unknown';
 export type ExpenseImportStatus = 'staged' | 'ready' | 'needs_review' | 'error' | 'applied';
 
-export interface ExpenseEntry {
+/**
+ * Occurrence provenance for one obligation identity. Stable keys are
+ * `planner:<entryId>:<date>` and `recurrence:<eventId>:<date>`.
+ */
+export type PlannerProvenance = 'planner' | 'recurrence' | 'imported';
+/** Original transaction direction, preserved for occurred (view-only) imports. */
+export type PlannerSourceSign = 'debit' | 'credit';
+/**
+ * Occurrence planning status. `occurred` is a view-only historical observation
+ * with no projection/planning effect; `planned` is a projected obligation.
+ * Never inferred from a display date or simulation anchor.
+ */
+export type PlanningStatus = 'occurred' | 'planned';
+
+export interface PlannerProvenanceFields {
+  provenance?: PlannerProvenance;
+  /** Original source date (date-only) for occurred imports. */
+  sourceDate?: string | null;
+  /** Original sign; imports must not be inferred from absolute values. */
+  sourceSign?: PlannerSourceSign | null;
+  /** Time the source record was observed/staged. */
+  asOf?: string | null;
+  /**
+   * Explicit occurrence status. Imported observations default to `'occurred'`
+   * (view-only); manual plans/recurrences default to `'planned'`. An explicit
+   * valid value (e.g. a deliberately planned import) is preserved; an invalid
+   * value is ignored in favour of the provenance-derived default. No date-based
+   * promotion is ever applied.
+   */
+  planningStatus?: PlanningStatus;
+}
+
+export interface ExpenseEntry extends PlannerProvenanceFields {
   id: string;
   label: string;
   amount: number;
   startDate: string;
   endDate: string;
   accountId: string | null;
-  poolId: string | null;
   notes: string;
   originType: ExpenseOriginType;
   importSourceId: string | null;
@@ -449,7 +864,7 @@ export interface WeeklyBalancePoint {
 export type RecurringEventCadence = 'weekly' | 'monthly';
 export type RecurringEventRule = 'on_date' | 'every_friday' | 'first_monday_after';
 
-export interface RecurringExpenseEvent {
+export interface RecurringExpenseEvent extends PlannerProvenanceFields {
   id: string;
   label: string;
   amount: number;
@@ -493,7 +908,6 @@ export interface ExpenseTimelineUiState {
   windowStartDate: string;
   windowEndDate: string;
   selectedAccountIds: string[];
-  selectedPoolIds: string[];
   collapsedTrackIds: string[];
   trackerVisibleAccountIds: string[];
   planningWeekStartDay: number;
@@ -512,11 +926,16 @@ export interface ExpensesConfig {
 
 export interface WithdrawalPlan {
   mode: WithdrawalMode;
-  firstYearAmount: number;
   minimumYearlyWithdrawal: number;
   maximumYearlyWithdrawal: number;
   useRetirementAgeAsWithdrawalStartAge: boolean;
-  sourceLines?: SourceLine[];
+  /**
+   * Explicit ordered retirement fallback account IDs. Distinct from
+   * `FundingPolicy.fallbackAccountIds` (ordinary obligation funding) and from
+   * per-source `RetirementWithdrawalSourceLine.fallbackAccountIds`.
+   */
+  fallbackAccountIds?: string[];
+  sourceLines?: RetirementWithdrawalSourceLine[];
 }
 
 export interface ManualReturnModel {
@@ -582,7 +1001,8 @@ export interface Scenario {
   dateMarkers: DateMarker[];
   timelines: Timeline[];
   activeTimelineId: string | null;
-  trajectorySnapshots: TrajectorySnapshot[];
+  /** Legacy and/or canonical (versioned) trajectory entries. */
+  trajectorySnapshots: AnyTrajectorySnapshot[];
   largePurchases: LargePurchase[];
   creditCards: CreditCard[];
   longTermPurchases: LongTermPurchase[];
@@ -593,6 +1013,14 @@ export interface Scenario {
   expenses: ExpensesConfig;
   incomeFallbackAccountId?: string | null;
   incomeFallbackAccountId2?: string | null;
+  /** Global default account funding policy for obligations (primary + ordered fallbacks). */
+  fundingPolicy?: FundingPolicy;
+  /** Canonical observed/opening liabilities keyed by stable ID. */
+  liabilities?: LiabilityDefinition[];
+  /** Canonical observed/opening properties keyed by stable ID. */
+  properties?: PropertyDefinition[];
+  /** Canonical card product model (two card types). */
+  cardPlans?: CardPlan[];
 }
 
 export interface ProjectionYear {
@@ -737,4 +1165,6 @@ export interface ProjectionResult {
   careerWithdrawalShortfalls: Record<string, number>;
   monthlySnapshots?: MonthlySnapshot[];
   monthlyWaterfall?: MonthlyWaterfallSnapshot[];
+  /** Measurement/schema/engine/date metadata for this result context. */
+  context?: ResultContextMetadata;
 }

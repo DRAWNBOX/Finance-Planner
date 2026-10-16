@@ -2,41 +2,49 @@
 
 This repository supports AI-assisted development. Use this as a fast, practical jumpstart.
 
+> **Architecture state.** `src/` is the account-only, Phase-5 integrated candidate: a
+> deterministic kernel + feature streams + read-only reporting behind one projection
+> facade, with a versioned save codec. Phase 5 is **a runnable candidate for Phase-6
+> measurement, not a release** (ADR-022). Current authority: `refactor/phase5_handoff.md`,
+> `refactor/coverage_register.md`, `refactor/frozen_contracts.md`; the runtime files are
+> the final source of truth. Do **not** present the GUI-A01–A10/G01–G40 or CA01–CA13
+> matrices as certified by the passing test run.
+
 ## Quick Start
 
-1. Read `docs/INDEX.md` for the doc map.
+1. Read the Phase-5 source of truth:
+   - `refactor/phase5_handoff.md` — state, local gates and explicit non-claims.
+   - `refactor/coverage_register.md` — per-item evidence and status.
+   - `refactor/gui_browser_coverage.md` — per-G01–G40 Chromium browser coverage ledger.
 2. Read runtime entry points:
-   - `src/App.tsx` (composition root + tab orchestration)
-   - `src/engine/projection.ts` (core deterministic simulation)
-   - `src/financeModel.ts` (small helper set: ~35 lines, `normalizePurchaseFundingSource` + `getDefaultBankAccountIdForPool`)
-   - `src/storage.ts` (localStorage load/save + normalizers)
+   - `src/App.tsx` — composition root: canonical commands + one selected projection + rendering (no local scenario rebuild).
+   - `src/commands.ts` — the single canonical write/read surface (`createConfigurationCommands`, `applyToActiveTimeline`, `applyGlobal`, timeline/career/account/marker CRUD).
+   - `src/engine/featureHandlers.ts` — `projectFeatureScenario`, the one projection path (selects one timeline, composes all four streams, builds exactly one report).
+   - `src/engine/projection.ts` — the `projectScenario` kernel facade (scheduler + `state.commitChanges` + month-close APY).
+   - `src/codec.ts` + `src/storage.ts` — schema-v3 allowlisted codec and the localStorage load/save guard.
 3. Confirm current schema defaults and normalization:
    - `src/types.ts`
    - `src/defaultScenario.ts`
-   - `src/storage.ts`
+   - `src/codec.ts` (`CURRENT_SCHEMA_VERSION = 3`, `CANONICAL_TRAJECTORY_FORMAT_VERSION = 2`)
+   - `src/storage.ts` (load + save guard)
 
 ## Current Project Shape
 
 - Stack: React 19 + TypeScript + Vite + Vitest.
-- Main tabs/state: `options`, `careers`, `netWorth`, `expenses`.
-- Finances Prediction sub-tabs: `retirement`, `careers`, `timeline`, `purchasesExpenses`, `housing`, `trajectory`, `warnings`.
-- Expenses sub-tabs: `planning`, `tracking`, `creditCards`.
-- Projection outputs drive:
-  - `src/components/ChartPanel.tsx` (monthly portfolio line + credit card debt line + hover tooltip)
-  - `src/components/SavingsStackedChart.tsx` (monthly stacked areas + per-pool hover tooltip)
-  - `src/components/ResultsTable.tsx`
-- Monthly results table supports per-month rows via `MonthlySnapshot` data (which now carries real per-month `withdrawal`/`taxesPaid`/`penaltiesPaid`).
-- Universal Timelines: a global timeline bar (`addTimeline`/`switchTimeline`/`renameTimeline`/`duplicateTimeline`/`deleteTimeline`, `activeTimelineId`) snapshots purchases + long-term purchases + loans + credit cards + career plan + housing. All CRUD routes through `applyToActiveTimeline`.
-- Careers: `src/components/CareerPlanEditor.tsx` (paycheck editor with retirement/HSA mode toggles).
-- Housing: `src/components/HousingEditor.tsx` (chip-based editor — mortgages + rentals mixed, draggable/reorder/duplicate, inline property form, "use previous housing end date as start date").
-- Credit cards: credit card debt line on portfolio chart via `ChartPanel.tsx`; Payment Schedule Projection with account balance tracking in the expenses tab.
-- "Display values in current dollars" deflates graphs + summary + results table (yearly and monthly) to match.
-- Net worth import/history path:
-  - `src/importers/bankImport.ts`
-  - `src/components/NetWorthHistoryChart.tsx`
-- Expenses planning/tracking path:
-  - `src/components/ExpensesPlanner.tsx`
-  - `src/importers/expenseImport.ts`
+- Main tabs: `options`, `careers` ("Finances Prediction"), `netWorth`, `expenses`.
+- Finances Prediction sub-tabs: `retirement`, `careers`, `timeline`, `purchasesExpenses`, `housing`, `trajectory`, `warnings`, `dateMarkers`.
+- Expenses sub-tabs: `planning`, `tracking`, `creditCards`; Options: `profile`; Net Worth: `history`.
+- Deterministic engine (`src/engine/`), one owner per rule:
+  - Kernel: `dates.ts`, `money.ts`, `state.ts`, `taxes.ts`, `funding.ts`, `scheduler.ts`, `valuation.ts`, plus `opening.ts` (opening-observation resolver), `journal.ts` (posting journal), `contracts.ts` (funding request/allocation/plan).
+  - Feature streams: `income.ts` (payroll + ordered net allocations); `spending.ts` / `planner.ts` / `retirement.ts`; `cards.ts` / `loans.ts` / `housing.ts`.
+  - Composition + reporting: `configuration.ts` (named-context compiler), `projection.ts` (facade), `featureHandlers.ts` (composition seam), `reporting.ts` (read-only report).
+- `src/paycheck.ts` compiles the granular `CareerEntry.paycheck` into the flat `PaycheckInfo`.
+- Views read the single `ProjectionReport` only:
+  - `src/components/ChartPanel.tsx`, `src/components/SavingsStackedChart.tsx`, `src/components/ResultsTable.tsx`, `src/components/NetWorthHistoryChart.tsx`, `src/components/TrajectoryComparisonChart.tsx`, `src/components/HousingResults.tsx`.
+- Standalone editors mount at their tab placements: `AccountManagementEditor`, `AccountCareerPlanEditor`, `AccountExpensesPlanner`, `RetirementSpendingEditor`, `PurchaseEditor`, `LoanEditor`, `HousingEditor`, `CardPlanEditor`, `CashflowItemEditor`, `TimelineManager`, `TrajectoryManager`, `DateMarkersEditor`.
+- Timelines: `Scenario.timelines` + `activeTimelineId` snapshot seven timeline-local domains (`purchases`, `longTermPurchases`, `loans`, `creditCards`, `cardPlans`, `careerPlan`, `housing`); global configuration (accounts/rates/policies/liabilities/properties/markers/withdrawal) lives on the base scenario.
+- Imports/planning: `src/importers/expenseImport.ts` (occurred imports stay view-only); `AccountExpensesPlanner` displays a selected-account, selected-week **monthly-resolution** report close alongside its planned weekly grid, plus exact-date quoted planner-week requested/committed-paid totals from the same report (not a fabricated weekly funded balance).
+- Browser harness: `e2e/**` Playwright specs + `playwright.config.ts` (isolated Chromium, strict port `4173`, 2 workers, trace-on-first-retry) driven by `npm run test:e2e`; Vitest excludes `e2e/**`. Currently **17 specs / 33 tests** pass locally. A bounded smoke/flow gate over the real dev server — not a GUI/CA certification and not wired into CI.
 
 ## Commands
 
@@ -45,61 +53,37 @@ This repository supports AI-assisted development. Use this as a fast, practical 
 - Run engine tests: `npm run test -- --run src/engine/projection.test.ts`
 - Run app integration tests: `npm run test -- --run src/App.test.tsx`
 - Build: `npm run build`
+- Browser end-to-end (Playwright/Chromium): `npm run test:e2e -- --project=chromium`
+- One-time browser install before the first e2e run: `npx playwright install chromium`
+
+The Playwright specs live in `e2e/**` and are driven by `playwright test`, **not** Vitest (`vite.config.ts` excludes `e2e/**` while keeping Vitest's default excludes). They run against the real Vite dev server on `127.0.0.1:4173` in a fresh, isolated Chromium context and require the `@playwright/test` devDependency plus an installed Chromium. This is a **bounded local browser gate** only — it is **not** wired into any CI, and it does **not** certify the GUI-A/G or CA matrices (those remain Vitest's per-item owner).
 
 ## Core Invariants
 
-- Keep projection/account math deterministic and side-effect free.
-- Runtime source of truth for account-led math is `accountBalancesById`.
-- Account growth compounds monthly using exact APY: `monthlyRate = Math.pow(1 + rate, 1/12) - 1`, so `(1 + monthlyRate)^12 === 1 + rate` (a stated 6.5% rate yields exactly 6.5% annually).
-- Depletion detection uses `currentLedgerSum <= 0` (ledger-based) **only** — the summary says "runs out of money" at the actual depletion age. The former `$100k` net-worth floor was removed, and `withdrawal < requiredMinimumWithdrawalForPeriod` is now a Warnings-tab entry, not a depletion trigger (both used to falsely flag "runs out" while accounts still held money).
-- Careers store a granular `Paycheck` (`CareerEntry.paycheck`) for the paystub editor: `categories` (user-labeled) of `lines` each with `kind` (`earning` | `tax` | `pretax` | `posttax` | `employer`), per-period `amount` (or `percentOfGross`), optional `accountId`/`bucket` (`retirement`/`hsa`) for deposits, and `ytd`. `src/paycheck.ts` `compilePaycheck` flattens it into the engine's flat `PaycheckInfo` using the pay frequency (`weekly` 52 / `biweekly` 26 / `semimonthly` 24 / `monthly` 12).
-- `resolvePaycheckInfo(career)` (in `src/paycheck.ts`) is the single read point: it prefers an explicit `CareerEntry.paycheckInfo`, else compiles `CareerEntry.paycheck`. `storage.ts` keeps them in sync on load (a saved `paycheck` compiles into `paycheckInfo`; a legacy-only `paycheckInfo` synthesizes a `paycheck` via `paycheckFromPaycheckInfo`), and the paycheck editor recompiles `paycheckInfo` on save.
-- **Net pay plans** (`CareerEntry.payPlans: CareerPayPlan[]`) let a career change its paycheck + deposits + monthly withdrawals at a specific date (month precision). Each plan is a full snapshot (`paycheck`, `sourceLines`, optional `annualRaiseRate`) with an `effectiveYearMonth` + `effectiveMarkerId`. The career's own `paycheck`/`sourceLines`/`annualRaiseRate` are the **Initial** plan. The engine resolves the active plan **per month** (`resolveActiveCareerPayPlan` in `projection.ts`) — the latest plan whose `effectiveYearMonth ≤ current month`, else Initial — and a plan's salary grows by `(1 + raiseRate)^(age − planStartAge)` from its effective date. The editor's plan selector (below the "Estimate income from this career" checkbox) re-targets the paycheck modal + savings/expenses grids at the selected plan.
-- `resolveDateMarkers` resolves each plan's `effectiveMarkerId` → `effectiveYearMonth` (base scenario + every timeline), and `describeMarkerReferences` lists plan references.
-- **Career selection is date-based** (Phase 1 of `docs/PLAN_DATE_BASED_CAREERS.md`): the engine picks the active career **per month** via `getCareerEntryForMonth` (explicit `startYearMonth`/`endYearMonth`, else the age-derived month; prefers the most recently started), so careers that overlap at the same age but different months no longer misattribute income, source-line deposits, or the monthly income budget. `getCareerEntryForAge` remains only for the annual row label and as a legacy fallback. `careerEndSavingsBalances` records at each career's end **month**.
-- The paycheck's **net pay is the engine's income**. `monthlyTakeHome` (may be renamed net income) is `max(0, (salary − taxes − healthBenefits − otherBenefits − retirement − hsaContribution − livingExpenses) / 12)` where every paycheck amount is scaled by `raiseFactor = (1 + annualRaiseRate)^(age − startAge)` (so net grows with the raise, and amount-mode deductions scale too; `percentOf*` modes already scale). `salary` is the raised gross (`grossSalary × raiseFactor`). `retirement`/`hsaContribution` are the employee-paid portions (deducted in full); employer match is deposited separately and NOT deducted from take-home.
-- This income value drives **everything**: the per-month `monthAvailableIncome` pool (credit cards / monthly large + long-term purchases / housing), the yearly budget `availableIncome = monthlyTakeHome × periodMonths` (loans / age-only purchases), the Timeline waterfall `takeHomeIncome`, `incomeUsageByMonth.availableIncome`, fallback triggers, and `incomeValidation` budgets/warnings. `ProjectionYear.netIncome` (annual net) and `MonthlySnapshot.netIncome` (monthly net) expose it; the results table shows "Net income".
-- **Source-line contributions are a percentage of net income** (not gross): `getCareerContribution`, `applySourceContributions`, and `totalSourceContributions` use `monthlyTakeHome` as the percent base; `fixedAmount` lines are per-pay-period and stay flat unless `increaseWithPaycheck` is set, in which case they scale by `raiseFactor`.
-- **Monthly-withdrawal expenses** (`CareerSourceLine.monthlyWithdrawal`, the "Expenses (Monthly Withdrawals by Account)" grid) are **account-funded**: they withdraw each month from the line's account/pool and do **not** reduce income. They scale by `raiseFactor` only when `increaseWithdrawalWithPaycheck` is set. Unfunded amounts accumulate in `ProjectionResult.careerWithdrawalShortfalls` (keyed by account id), surface as a Warnings-tab entry, and mark the account's row red with a tooltip.
-- **Income fallback accounts** (`scenario.incomeFallbackAccountId` / `incomeFallbackAccountId2`) are consumed by `processIncomeWaterfall` for every income-funded item (credit cards, monthly/yearly purchases, housing, loans). `updateScenario` re-validates them against the current bank accounts and clears any that no longer exist (setting a dismissible `incomeFallbackNotice`), so deleting an account cannot leave a dangling fallback.
-- **Income verification**: income-funded items draw from that month's net pay (`monthlyTakeHome`); `processIncomeWaterfall` clamps the pool at 0 (income never goes negative), then uses the fallback accounts, then records a shortfall. `incomeValidation` flags periods where `totalRequested > budget` (`exceedsIncome`) or `totalShortfall > 0` (`hasUnmet`) → Warnings-tab entries. Purchases/loans, **housing chips**, and **credit-card rows** show yellow (fallback) / red (shortfall) indicators with tooltips; credit cards also surface `creditCardFundingShortfalls` for account-funded cards, and account-funded card shortfalls emit a Warnings-tab entry (autopay is income-verified like the other payment modes). Income-funded **housing is aggregated into one summed item per housing entry per month** (down payment + all income-funded groups) rather than one per sub-item. The engine also warns when a paycheck's deductions exceed its gross pay (net pay would be negative and is treated as `$0`).
-- **Credit cards**: `paymentMode: 'autopay'` pays `fixedPaymentAmount` every month through and including `autopayEndYearMonth` (blank = legacy/ongoing; the editor requires an end and auto-fills current month + 12 when switching to autopay, and the field is marker-linkable via `autopayEndMarkerId`). The other modes (`fixed` / `minimum` / `payInFull` / `fixedPlusLump`) pay `min(target, balance)` and never pay at a zero balance; only autopay pays at a zero balance (it models a recurring expense).
-- `PaycheckInfo` fields support mode toggles for percentage-based inputs:
-  - `retirementMode`: `'amount'` | `'percentOfSalary'`
-  - `retirementMatchMode`: `'amount'` | `'percentOfRetirement'`
-  - `hsaContributionMode`: `'amount'` | `'percentOfSalary'`
-  - `hsaEmployerMatchMode`: `'amount'` | `'percentOfHsaContribution'`
-  - `employerHsaDepositMode`: `'amount'` | `'percentOfSalary'`
-- `employerMaxMatchPercent` caps retirement match at a percentage of the raised salary.
-- `employerHsaDeposit` is a separate flat/percentage employer HSA contribution (not tied to employee match).
-- Retirement and HSA contributions are deposited per-month via `applyAccountDeposit` to their respective accounts; employer match/deposit added separately.
-- Credit card payments process monthly in the income waterfall after career contributions, before purchases.
-- Credit card lump sums (`fixedPlusLump` mode) pay off remaining balance in the last month of the 0% intro period.
-- SourceLine contributions (`mode: 'percentOfSalary'` default, or `'fixedAmount'` per pay period) are deducted from `monthAvailableIncome`.
-- Income-funded credit card balance reductions use actual `ccResult.covered`, not desired `paymentTarget`.
-- `financeModel.ts` contains only active business logic (no migration helpers). All migration code has been removed — this version breaks backward compatibility with pre-2026-05 saved data.
-- Income-usage validation lives in `ProjectionResult.incomeValidation`. Income-funded spends are recorded per pool inside `processIncomeWaterfall` via `recordIncomePoolUsage` (`monthly` = credit cards / monthly large + long-term purchases / housing; `yearly` = loans / age-only purchases). Each `IncomePoolUsagePeriod` carries `exceedsIncome` (`totalRequested > budget`) and `hasUnmet` (`totalShortfall > 0`). Career source-line contributions are recorded manually as the `career-source-contributions` item. This is the single choke point: any new income-funded withdrawal routed through `processIncomeWaterfall` is validated automatically. Warning-only — it never changes projection math. `incomeValidation.groups` consolidates periods with the same cause via `groupIncomeValidationPeriods` (shared item ids + requested amounts + overage, each rounded to the nearest $10 bucket); warnings and the Warnings tab render one box per group.
+- Keep projection/account math deterministic and side-effect free. The engine kernel state (`src/engine/state.ts`, integer cents) is the runtime source of truth for account/liability/property/deposit math; mutation happens **only** through `state.commitChanges` (revision-checked, all-or-none, with a declared `expectedNetWorthDeltaCents`). No wall clock — dates and horizons are explicit inputs.
+- Unit rule: persisted configuration is dollars; runtime postings/balances are integer cents, converted once at the posting boundary (half-away-from-zero). Rate math keeps high-precision intermediates and rounds only at the final posting (`src/engine/money.ts`).
+- Exact APY: account growth uses `monthlyRate = Math.pow(1 + rate, 1 / 12) - 1`, so `(1 + monthlyRate)^12 === 1 + rate` (a stated 6.5% rate yields exactly 6.5% per year). A month clipped by the valuation window uses the fractional exponent. Debt interest accrues at the **nominal** `annualRate / 12`; property appreciation uses the effective rate — all in `src/engine/valuation.ts`.
+- Signed net worth: `netWorthCents = accountAssets − liabilities` (may be negative). Every month close reconciles `closing = opening + Σ committed deltas` per account/liability/property/deposit; a mismatch is a reported diagnostic, never silently clamped or rounded (`src/engine/reporting.ts`).
+- Same-date phases: `accrual → income → cap → mandatory → discretionary → close`. Mandatory obligations band in the frozen order `loan/mortgage → housing → cards → planner/living → retirement` (`FEATURE_MANDATORY_BANDS`); intra-stream order is preserved inside a band.
+- Funding: primary-first, ordered, eligible split, deduplicated; every obligation is partial (`executedCents = Σ netFundedCents`, `shortfallCents = requested − executed`). Zero-fund/invalid plans debit nothing. Tax and penalty are withheld from gross exactly once (`gross = net + tax + penalty`). No pool/type sweep, no implicit borrowing or retry (`src/engine/funding.ts`).
+- Reporting selectors (D16): `report.shortfall.warning` is the first completeness shortfall; `report.exhaustion` is eligible-funded exhaustion (a policy/quota shortfall is **never** exhaustion); `report.fallback.occurrences` records a secondary source actually drawn from a **committed** plan. The funding plan retains its quote-time `resolvedSourceOrder`, so a global-default primary is not mislabeled fallback even when the raw request primary is null. Fallback is never reported as shortfall or exhaustion. Warnings are warning-only and never change projection math.
+- One projection, one report: `projectFeatureScenario` selects exactly one named timeline, compiles one context, composes all four streams, and attaches exactly one immutable `buildProjectionReport(run)` (D21/D23/D25). The raw `projectScenario` facade is kernel-only: `complete` stays `false` unless a call site claims full coverage **and** the run covered the whole requested horizon with nothing blocked (a partial `scheduleWindow` or a dropped handler stays incomplete).
+- Save lifecycle (D24): schema v3. The codec is allowlist-only — obsolete/derived fields (e.g. the flat `CareerEntry.paycheckInfo` cache, canvas caches, calculated balances) are pruned by construction. A newer-version payload blocks writes; corrupt bytes are preserved on automatic saves; only a user reset performs an explicit canonical replace. Autosave coalesces writes and flushes on `pagehide`.
+- Expense-import provenance is view-only: a planned copy with explicitly cleared `sourceSign: null` stays `null` on save/load (never fabricated as `'debit'`), while an imported sibling retains its actual sign.
+- A missing `CareerSourceLine.maxBalance` means no cap and stays **absent** on save/load; an explicit `0` stays `0` (also cap off). Positive persisted dollar caps can route payroll overflow to an explicit account; never manufacture a cap or silently reassign an unresolved overflow account.
+- Paycheck: the granular `CareerEntry.paycheck` is the authority; `resolvePaycheckInfo` / `compilePaycheck` (`src/paycheck.ts`) derive the flat `PaycheckInfo` on read, and the codec keeps them in sync on load/save.
+- Dollar display: "Display values in today's dollars" deflates graphs, summary and table through the report adapters (`src/utils/viewAdapters.ts`); the toggle is display-only and never changes the projection.
 
 ### Timelines
-- `Scenario.timelines: Timeline[]` + `activeTimelineId: string | null`. A timeline holds independent copies of `purchases`, `longTermPurchases`, `loans`, `creditCards`, `careerPlan`, and `housing`; categories are universal.
-- `activeLargePurchases`/`activeLongTermPurchases`/`activeLoans`/`activeCreditCards`/`activeCareerPlan`/`activeHousing` resolve the active timeline (or the base `scenario.*` fields when none is active).
-- All purchase/career/housing/credit-card CRUD writes through `applyToActiveTimeline(transform)`.
-- `addTimeline` deep-copies the active set (careers cloned with `sourceLines`/`paycheckInfo`) and activates it.
+- `Scenario.timelines: Timeline[]` + `activeTimelineId: string | null`. A timeline holds independent copies of `purchases`, `longTermPurchases`, `loans`, `creditCards`, `cardPlans`, `careerPlan` and `housing`; global configuration stays on the base scenario.
+- All purchase/career/housing/credit-card/card-plan CRUD writes through `applyToActiveTimeline`; global config writes through `applyGlobal` (both in `src/commands.ts`).
+- `compileScenarioContext` compiles the **selected** timeline only; inactive timelines are validated, never eagerly simulated.
 
-### Monthly application
-- Cashflow add-ons (`cashflowItems`) and life-event income/expense are applied **monthly** (deposit/withdraw to `accountId`), not as a yearly `extraCashflow` sum. One-time items fire at their exact `startYearMonth`.
-- Retirement withdrawals are spread `planned / periodMonths` per month; min/max thresholds remain a yearly cumulative check.
+### Cents funding and gross-net
+- `quoteFunding` never mutates state; `commitFunding` mutates only through one `state.commitChanges` call. Eligibility, ordered fallback, quota vs eligible exhaustion, and the exact bounded gross→net / net→gross tax+penalty solver live in `src/engine/funding.ts` + `src/engine/taxes.ts`.
 
-### Housing payment sources
-- `HousingEntry` grouped sources: P&I+extra / rent (`paymentSource`), taxes+insurance (`taxesInsuranceSource`), HOA+maintenance (`hoaMaintenanceSource`), PMI (`pmiSource`); each falls back to `paymentSource`.
-- `usePreviousEndAsStart` chains a housing entry's `startYearMonth` to the month after the previous entry's end (mortgage `sellYearMonth` / rental `endYearMonth`), resolved in `updateScenario`.
-- Career date links (one-way housing → career): `linkedCareerStartId` drives `startYearMonth`, `linkedCareerEndId` drives `sellYearMonth` (mortgage) / `endYearMonth` (rental). Resolved in `normalizeHousingChain`, using the career's stored year-month with an age-derived fallback. The start link is mutually exclusive with `usePreviousEndAsStart`; removing a career clears links referencing it.
-
-### Career date chaining
-- `usePreviousCareerStartAge` chains a career's start to the month after the previous career's end. The start age is derived from that month (`ageFromYearMonth`), so a birthday boundary rolls the start into the next age. Resolved in `normalizeCareerEntries` for the base scenario and every timeline (`updateScenario`), in `src/storage.ts` on load, and reflected in the `CareerPlanEditor` display/onChange.
-
-### Current-dollars deflation
-- "Display values in current dollars" deflates graphs, summary, and the results table via `adjustedYears`, `adjustedMonthlySnapshots`, and `adjustedIncomeUsageByMonth` (rate = `inflationEnabled ? manualReturns.inflationRate/100 : 0`).
+### Reported warnings
+- The Warnings tab renders the D16 selectors verbatim (`report.shortfall.warning`, `report.exhaustion`, `report.fallback.occurrences`) plus `context.diagnostics`. It never re-runs funding or re-derives eligibility.
 
 ## Schema Change Playbook
 
@@ -107,53 +91,48 @@ For any persisted field addition or shape change:
 
 1. Add/adjust types in `src/types.ts`.
 2. Add defaults in `src/defaultScenario.ts`.
-3. Add load-time normalization in `src/storage.ts`.
-4. Ensure runtime usage in `src/App.tsx` and/or `src/engine/projection.ts`.
+3. Add load-time normalization in `src/codec.ts` (the storage boundary) and, if needed, prune obsolete fields by allowlist.
+4. Ensure runtime usage in `src/commands.ts` and/or the engine (`src/engine/configuration.ts` compile step and the owning feature stream).
 5. Add or update tests for both engine and UI flow when behavior changes.
 
 ## High-Risk Areas
 
-- Retirement withdrawal funding source-line logic.
-- Monthly vs yearly contribution/withdrawal conversion.
-- Career timeline/source-line normalization and graph source switching.
-- Career date chaining (`usePreviousCareerStartAge`) — month-after start + derived start age, normalized for base + timelines (`normalizeCareerEntries`, `updateScenario`, `storage.ts`).
-- Loan, purchase, housing, and credit card funding shortfall math.
-- Income-pool validation (`incomeValidation`) — two independent budgets (monthly `monthAvailableIncome` vs yearly `availableIncome`); new income-funded withdrawals must route through `processIncomeWaterfall` with the pool context (`monthly`/`yearly`, period key, label, budget) or they won't be validated.
-- Income waterfall (`processIncomeWaterfall`) — per-month processing order: career contributions, credit cards, housing, loans, large purchases, long-term purchases. Each month gets its own `monthAvailableIncome` pool.
-- `PaycheckInfo` formula for `monthlyTakeHome` — net pay is the income base; all paycheck amounts scale with `raiseFactor`; retirement/HSA match math: employee pays full `retirement`/`hsaContribution`, employer match added separately to accounts.
-- `MonthlySnapshot` / per-account `accountActivity` recording integrity.
-- Pool-weighted portfolio return rate via `getManualRates`.
-- `fundingSource` normalization (defaults to `'income'` when missing).
-- `purchaseCategoryFilter` — ephemeral UI state; `sortedLargePurchases` useMemo applies category filter before sort.
-- Credit card `introEnabled` + `introEndYearMonth` logic for 0% APR periods.
-- Credit card `fixedPlusLump` mode and `lumpSumPaymentSource` routing.
-- Depletion detection: `currentLedgerSum` is the authoritative account total; `balance` synced to it yearly.
-- Purchase post-purchase balance display: simplified override only applies when `requestedSources.length === 0`.
-- Large Purchases table sorting (Year-Month, Amount, Pay From) with `purchaseSort` state.
-- Timeline resolution: `applyToActiveTimeline` and the `active*` derived values — editing must hit the active timeline, not the base `scenario.*` fields.
-- Monthly cashflow/life-event/withdrawal application: `monthlyRetirementLines`, the cashflow/life-event monthly blocks, and per-month snapshot deltas.
-- Housing grouped payment sources + `usePreviousEndAsStart` / career date links (`linkedCareerStartId`/`linkedCareerEndId`) chain normalization (base + timelines).
-- Current-dollars deflation (`adjustedYears` / `adjustedMonthlySnapshots` / `adjustedIncomeUsageByMonth`) — must stay consistent across graphs, summary, and table.
+- Kernel state atomics: `state.commitChanges` revision/ownership/conservation checks and sparse all-or-none change sets.
+- Exact-APY valuation, clipped partial-month exponent, debt accrual (`annualRate / 12`), and property appreciation (`src/engine/valuation.ts`).
+- Ordered partial funding, eligibility, de-duplication, and the quota-vs-exhaustion distinction (`src/engine/funding.ts`).
+- Reporting reconciliation and the shortfall/exhaustion/fallback selectors (D16), plus the honest `complete` coverage claim (D23).
+- Named-context compilation and timeline isolation (`src/engine/configuration.ts`) — one selected timeline; inactive timelines are validated but never simulated.
+- `projectFeatureScenario` is the only projection path — do not add a second projection call or a preview loop.
+- Codec schema versioning and the save guard: never persist derived/canvas/calculated data; never overwrite newer-version/corrupt bytes on automatic saves.
+- Paycheck compile and the `paycheckFromPaycheckInfo` full-cent precision round-trip.
+- Timeline resolution: editing must hit the active timeline (`applyToActiveTimeline`), not the base `scenario.*` fields.
+- Housing grouped funding policies (`HousingEntry.fundingPolicies`) ordered overrides with the legacy scalar `*Source` read fallback.
+- Current-dollars deflation adapters (`src/utils/viewAdapters.ts`) must use each report month's actual `closingDate` consistently across chart, stacked series, summary and table (including clipped months).
+- Marker resolution and career/housing date chains (`resolveDateMarkers`; the career/housing chain resolvers in `src/commands.ts`).
 
 ## Test Focus Map
 
-- Engine behavior: `src/engine/projection.test.ts`
-- UI integration/regressions: `src/App.test.tsx`
-- Import parsing: `src/importers/bankImport.test.ts`
+- Whole suite: `npm run test -- --run` (the Phase-5 handoff records an independently reproduced **55 files / 1073 tests** pass).
+- Browser end-to-end: `npm run test:e2e -- --project=chromium` (Playwright over the real dev server; `e2e/*.spec.ts`; currently **17 specs / 33 tests** pass locally). Bounded local gate — no CI wiring and not row-by-row GUI/CA certification (see `refactor/gui_browser_coverage.md`).
+- Engine kernel + facade: `src/engine/*.test.ts` (e.g. `projection.test.ts`, `state.test.ts`, `funding.test.ts`, `valuation.test.ts`, `reporting.test.ts`, `housing.test.ts`).
+- Phase-5 integration: `src/engine/phase5Acceptance.test.ts`, `src/engine/phase5CrossFeature.test.ts`.
+- UI integration/regressions: `src/App.test.tsx`.
+- Schema/commands: `src/codec.test.ts`, `src/commands.test.ts`, `src/storage.test.ts`, `src/paycheck.test.ts`.
+- Import parsing: `src/importers/expenseImport.test.ts`.
 
-When changing account math, funding, careers, housing, credit cards, or retirement logic, run at least engine + app tests. Also create new tests as needed to test any new logic added.
+When changing account math, funding, careers, housing, cards, or retirement logic, run at least engine + app tests. Also create new tests as needed to test any new logic added. These are local gate results — the GUI-A/G and CA matrices are not independently certified.
 
 ## Notes On Docs Consistency
 
-- `docs/` is the primary onboarding source, but verify file references against `src/components` before editing.
-- Some docs may reference older component names; treat runtime files as source of truth.
+- `docs/` and `refactor/README.md` are partly historical or describe the **target** architecture; several still reference removed modules (`src/financeModel.ts`, `src/components/CareerPlanEditor.tsx`, `src/components/ExpensesPlanner.tsx`). Treat `src/` and `refactor/phase5_handoff.md` as source of truth.
+- `refactor/README.md` mentions an `engine/obligations.ts` that does not exist; the implemented streams are `cards.ts`/`loans.ts`/`housing.ts`/`planner.ts`/`spending.ts`/`retirement.ts`.
 - `CHANGES.md` at the project root is the tracked session changelog — **update it before every commit/push**.
 - `gitchanges.md` at the project root tracks all session changes chronologically (gitignored).
 
 ## Change Checklist
 
-1. Types/defaults/storage stay aligned for all new or changed persisted fields.
-2. Engine formula changes are covered by/validated with tests.
-3. UI still renders chart/table paths correctly for Options and Finances flows.
+1. Types/defaults/codec stay aligned for all new or changed persisted fields.
+2. Engine rule changes are covered by/validated with tests.
+3. UI renders chart/table paths from the single report.
 4. `npm run test -- --run` and `npm run build` pass before handoff.
 5. `CHANGES.md` is updated with the session's changes before any commit/push to GitHub.

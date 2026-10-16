@@ -110,6 +110,51 @@ export interface PaycheckTotals {
   netAnnual: number;
 }
 
+/**
+ * One paycheck line compiled with its **destination** metadata, so a payroll
+ * engine can post each employee/employer retirement/HSA deposit to its own
+ * account (stream I, D9). `perPeriodAmount` is the line's per-pay-period dollar
+ * amount (a `percentOfGross` line is already resolved against the per-period
+ * gross); `annualAmount` annualizes it by the paycheck frequency. The flat
+ * `PaycheckInfo` remains derived-only; this detail list is the per-line view.
+ */
+export interface CompiledPaycheckLineAmount {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: PaycheckLineKind;
+  readonly bucket: PaycheckDepositBucket | null;
+  readonly accountId: string | null;
+  readonly perPeriodAmount: number;
+  readonly annualAmount: number;
+}
+
+/**
+ * Flattens every paycheck line into an ordered detail list with destination
+ * metadata and annualized amounts. Earnings lines are included (`kind:
+ * 'earning'`). The list preserves category/line order so downstream postings are
+ * deterministic. Pure: `paycheck` is never mutated.
+ */
+export const compilePaycheckLineAmounts = (paycheck: Paycheck): CompiledPaycheckLineAmount[] => {
+  const periods = getPeriodsPerYear(paycheck);
+  const grossPerPeriod = getPaycheckGrossPerPeriod(paycheck);
+  const lines: CompiledPaycheckLineAmount[] = [];
+  for (const category of paycheck.categories) {
+    for (const line of category.lines) {
+      const perPeriodAmount = getPaycheckLinePerPeriod(line, grossPerPeriod);
+      lines.push({
+        id: line.id,
+        label: line.label,
+        kind: category.kind,
+        bucket: line.bucket ?? null,
+        accountId: line.accountId ?? null,
+        perPeriodAmount,
+        annualAmount: perPeriodAmount * periods
+      });
+    }
+  }
+  return lines;
+};
+
 export const getPaycheckTotals = (paycheck: Paycheck): PaycheckTotals => {
   const periodsPerYear = getPeriodsPerYear(paycheck);
   const grossPerPeriod = getPaycheckGrossPerPeriod(paycheck);
@@ -282,6 +327,14 @@ export const createDefaultPaycheck = (index: number, payFrequency: PayFrequency 
  * Synthesizes a granular paycheck from legacy flat paycheck scalars so the paycheck editor has
  * something to show for scenarios saved before the paycheck model existed. Values are annual
  * scalars distributed across a monthly frequency (amount = annual / 12).
+ *
+ * The per-period amount is persisted at **full precision** (unrounded `annual / 12`). This is a
+ * supported saved-paystub conversion (P5.3 / D24), so rounding each line to whole cents here would
+ * silently shave up to ~6 cents a year off the reconstructed annual total (`100000 / 12` →
+ * `8333.33` → `99999.96`). Keeping the config value fractional means `compilePaycheck` recovers the
+ * exact annual cents (`(annual / 12) * 12` round-trips every cent), and each runtime posting splits
+ * that annual cent target with the per-line cumulative integer-cent schedule
+ * (`createCumulativeShareSchedule`) so no residual month is dropped and no cent is fabricated.
  */
 export const paycheckFromPaycheckInfo = (info: PaycheckInfo | undefined): Paycheck => {
   const categories: PaycheckCategory[] = [
@@ -297,36 +350,36 @@ export const paycheckFromPaycheckInfo = (info: PaycheckInfo | undefined): Payche
     return { payFrequency: 'monthly', categories };
   }
 
-  const monthly = (value: number) => Math.round((Math.max(0, value) / 12) * 100) / 100;
+  const perPeriod = (value: number) => Math.max(0, value) / 12;
 
-  byKind('earning').lines.push({ id: 'paycheck-line-earnings-regular', label: 'Regular', amount: monthly(info.grossSalary), mode: 'amount' });
-  if (info.taxes > 0) byKind('tax').lines.push({ id: 'paycheck-line-tax', label: 'Taxes', amount: monthly(info.taxes), mode: 'amount' });
+  byKind('earning').lines.push({ id: 'paycheck-line-earnings-regular', label: 'Regular', amount: perPeriod(info.grossSalary), mode: 'amount' });
+  if (info.taxes > 0) byKind('tax').lines.push({ id: 'paycheck-line-tax', label: 'Taxes', amount: perPeriod(info.taxes), mode: 'amount' });
 
   if (info.healthBenefits > 0) {
-    byKind('pretax').lines.push({ id: 'paycheck-line-benefits', label: 'Health Benefits', amount: monthly(info.healthBenefits), mode: 'amount' });
+    byKind('pretax').lines.push({ id: 'paycheck-line-benefits', label: 'Health Benefits', amount: perPeriod(info.healthBenefits), mode: 'amount' });
   }
   if (info.retirement > 0) {
-    byKind('pretax').lines.push({ id: 'paycheck-line-retirement', label: 'Retirement', amount: monthly(info.retirement), mode: 'amount', accountId: info.retirementAccountId ?? null, bucket: 'retirement' });
+    byKind('pretax').lines.push({ id: 'paycheck-line-retirement', label: 'Retirement', amount: perPeriod(info.retirement), mode: 'amount', accountId: info.retirementAccountId ?? null, bucket: 'retirement' });
   }
   if (info.hsaContribution > 0) {
-    byKind('pretax').lines.push({ id: 'paycheck-line-hsa', label: 'HSA', amount: monthly(info.hsaContribution), mode: 'amount', accountId: info.hsaAccountId ?? null, bucket: 'hsa' });
+    byKind('pretax').lines.push({ id: 'paycheck-line-hsa', label: 'HSA', amount: perPeriod(info.hsaContribution), mode: 'amount', accountId: info.hsaAccountId ?? null, bucket: 'hsa' });
   }
 
   if (info.otherBenefits > 0) {
-    byKind('posttax').lines.push({ id: 'paycheck-line-other', label: 'Other Benefits', amount: monthly(info.otherBenefits), mode: 'amount' });
+    byKind('posttax').lines.push({ id: 'paycheck-line-other', label: 'Other Benefits', amount: perPeriod(info.otherBenefits), mode: 'amount' });
   }
   if ((info.livingExpenses ?? 0) > 0) {
-    byKind('posttax').lines.push({ id: 'paycheck-line-living', label: 'Living Expenses', amount: monthly(info.livingExpenses), mode: 'amount' });
+    byKind('posttax').lines.push({ id: 'paycheck-line-living', label: 'Living Expenses', amount: perPeriod(info.livingExpenses), mode: 'amount' });
   }
 
   if (info.retirementMatch > 0) {
-    byKind('employer').lines.push({ id: 'paycheck-line-retirement-match', label: 'Retirement Match', amount: monthly(info.retirementMatch), mode: 'amount', accountId: info.retirementAccountId ?? null, bucket: 'retirement' });
+    byKind('employer').lines.push({ id: 'paycheck-line-retirement-match', label: 'Retirement Match', amount: perPeriod(info.retirementMatch), mode: 'amount', accountId: info.retirementAccountId ?? null, bucket: 'retirement' });
   }
   if (info.hsaEmployerMatch > 0) {
-    byKind('employer').lines.push({ id: 'paycheck-line-hsa-match', label: 'HSA Match', amount: monthly(info.hsaEmployerMatch), mode: 'amount', accountId: info.hsaAccountId ?? null, bucket: 'hsa' });
+    byKind('employer').lines.push({ id: 'paycheck-line-hsa-match', label: 'HSA Match', amount: perPeriod(info.hsaEmployerMatch), mode: 'amount', accountId: info.hsaAccountId ?? null, bucket: 'hsa' });
   }
   if ((info.employerHsaDeposit ?? 0) > 0) {
-    byKind('employer').lines.push({ id: 'paycheck-line-employer-hsa', label: 'Employer HSA Deposit', amount: monthly(info.employerHsaDeposit ?? 0), mode: 'amount', accountId: info.hsaAccountId ?? null, bucket: 'hsa' });
+    byKind('employer').lines.push({ id: 'paycheck-line-employer-hsa', label: 'Employer HSA Deposit', amount: perPeriod(info.employerHsaDeposit ?? 0), mode: 'amount', accountId: info.hsaAccountId ?? null, bucket: 'hsa' });
   }
 
   return { payFrequency: 'monthly', categories };

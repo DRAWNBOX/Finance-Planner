@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { defaultScenario } from '../defaultScenario';
+import { createDefaultScenario } from '../defaultScenario';
 import type { HousingEntry, Scenario } from '../types';
 import { resolveDateMarkers, yearMonthFromMarkerDate } from './dateMarkers';
+
+// Canonical fixture: explicit reference date keeps the factory wall-clock free.
+const defaultScenario: Scenario = createDefaultScenario(new Date(2025, 0, 1));
 
 const makeHousing = (overrides: Partial<HousingEntry> = {}): HousingEntry => ({
   id: 'h1',
@@ -111,7 +114,6 @@ describe('resolveDateMarkers', () => {
               startDate: '2030-01-01',
               endDate: '2030-01-02',
               accountId: null,
-              poolId: null,
               notes: '',
               originType: 'manual',
               importSourceId: null,

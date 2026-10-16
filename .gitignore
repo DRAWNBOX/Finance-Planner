@@ -46,3 +46,8 @@ sample expenses/
 
 # Deepwork session state
 .slim/deepwork/
+
+# Playwright test artifacts (do NOT ignore e2e/ source)
+test-results/
+playwright-report/
+.playwright/

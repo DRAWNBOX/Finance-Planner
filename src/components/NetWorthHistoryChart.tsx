@@ -1,106 +1,64 @@
 import { memo } from 'react';
 import { formatCurrency } from '../engine/projection';
-import type { NetWorthHistoryEntry } from '../types';
+import type { MeasurementBasis, NetWorthHistoryEntry } from '../types';
 import { useRenderCount } from '../utils/perfTools';
 
 interface NetWorthHistoryChartProps {
   entries: NetWorthHistoryEntry[];
+  /** Optional selector. Legacy entries always retain their asset-only meaning. */
+  measurement?: MeasurementBasis;
 }
 
 const formatShort = (value: string) => {
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return parsed.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-export const NetWorthHistoryChart = memo(({ entries }: NetWorthHistoryChartProps) => {
+export const NetWorthHistoryChart = memo(({ entries, measurement }: NetWorthHistoryChartProps) => {
   useRenderCount('NetWorthHistoryChart');
-  if (entries.length === 0) {
-    return <p className="subtle">No net worth history yet. Update balances to start tracking.</p>;
-  }
+  if (entries.length === 0) return <p className="subtle">No balance history yet. Update balances to start tracking.</p>;
 
-  const sortedEntries = [...entries].sort((a, b) => a.date.localeCompare(b.date));
-  const width = 760;
-  const height = 320;
-  const padding = { top: 20, right: 24, bottom: 46, left: 90 };
-  const values = sortedEntries.map((entry) => Math.max(0, entry.totalNetWorth));
-  const maxValue = Math.max(...values, 1);
-  const yStep =
-    maxValue <= 100_000
-      ? 10_000
-      : maxValue <= 1_000_000
-        ? 50_000
-        : maxValue <= 2_000_000
-          ? 100_000
-          : maxValue <= 10_000_000
-            ? 500_000
-            : 1_000_000;
-  const roundedMaxValue = Math.max(yStep, Math.ceil(maxValue / yStep) * yStep);
-  const plotWidth = width - padding.left - padding.right;
-  const plotHeight = height - padding.top - padding.bottom;
-  const pointFor = (index: number) => {
-    const x = padding.left + (index / Math.max(sortedEntries.length - 1, 1)) * plotWidth;
-    const y = padding.top + plotHeight - (Math.max(0, sortedEntries[index].totalNetWorth) / Math.max(roundedMaxValue, 1)) * plotHeight;
-    return { x, y };
+  const series = [...new Set(entries.map((entry) => entry.measurement ?? 'assetOnly'))];
+  // Never put asset-only and signed net worth on a shared scale. The parent may
+  // select a basis; otherwise prefer signed net worth when it exists.
+  const defaultBasis = series.includes('assetsMinusLiabilities') ? 'assetsMinusLiabilities' : series[0];
+  const selected = [measurement && series.includes(measurement) ? measurement : defaultBasis];
+  const titles: Record<MeasurementBasis, string> = {
+    assetOnly: 'Account/assets history', assetsMinusLiabilities: 'Net worth history', accountAssets: 'Account assets history'
   };
-
-  const linePath = sortedEntries
-    .map((_, index) => {
-      const point = pointFor(index);
-      return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`;
-    })
-    .join(' ');
-  const yTicks = Array.from({ length: Math.floor(roundedMaxValue / yStep) + 1 }, (_, index) => index * yStep).reverse();
-  const xTickIndexes = sortedEntries
-    .map((_, index) => index)
-    .filter((index) => index === 0 || index === sortedEntries.length - 1 || index % Math.max(1, Math.floor(sortedEntries.length / 6)) === 0);
-
-  return (
-    <div className="chart-shell">
-      <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="Net worth history over time">
-        {yTicks.map((tick) => {
-          const y = padding.top + plotHeight - (tick / Math.max(roundedMaxValue, 1)) * plotHeight;
-          return (
-            <g key={tick}>
-              <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="chart-grid-line" />
-              <text x={padding.left - 12} y={y + 4} textAnchor="end" className="chart-axis-label">
-                {formatCurrency(tick)}
-              </text>
-            </g>
-          );
-        })}
-
-        {xTickIndexes.map((index) => {
-          const point = pointFor(index);
-          return (
-            <g key={`history-${sortedEntries[index].id}`}>
-              <line x1={point.x} x2={point.x} y1={padding.top} y2={height - padding.bottom} className="chart-grid-line faint" />
-              <text x={point.x} y={height - padding.bottom + 18} textAnchor="middle" className="chart-axis-label">
-                {formatShort(sortedEntries[index].date)}
-              </text>
-            </g>
-          );
-        })}
-
-        <path d={linePath} className="chart-line" />
-        {sortedEntries.map((entry, index) => {
-          const point = pointFor(index);
-          return <circle key={entry.id} cx={point.x} cy={point.y} r={3} className="chart-point" />;
-        })}
-        <text x={width / 2} y={height - 8} textAnchor="middle" className="chart-title">
-          Date
-        </text>
-        <text x={18} y={height / 2} textAnchor="middle" className="chart-title" transform={`rotate(-90, 18, ${height / 2})`}>
-          Net Worth ($)
-        </text>
-      </svg>
-    </div>
-  );
+  const width = 760, height = 320, padding = { top: 24, right: 24, bottom: 46, left: 92 };
+  const plotWidth = width - padding.left - padding.right, plotHeight = height - padding.top - padding.bottom;
+  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+  const values = sorted.filter((e) => selected.includes(e.measurement ?? 'assetOnly')).map((e) => e.totalNetWorth);
+  const min = Math.min(0, ...values), max = Math.max(0, ...values);
+  const span = max - min || 1;
+  const step = Math.pow(10, Math.floor(Math.log10(span / 4)));
+  const tickStep = Math.max(1, Math.ceil(span / 4 / step) * step);
+  const low = Math.floor(min / tickStep) * tickStep, high = Math.ceil(max / tickStep) * tickStep;
+  const y = (v: number) => padding.top + ((high - v) / Math.max(high - low, 1)) * plotHeight;
+  const x = (i: number) => padding.left + (i / Math.max(sorted.length - 1, 1)) * plotWidth;
+  const zeroY = y(0);
+  return <div className="chart-shell" style={{ overflowX: 'auto' }}>
+    <p className="subtle" aria-live="polite">{selected.map((s) => titles[s]).join(' · ')}</p>
+    <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label={`${selected.map((s) => titles[s]).join(' and ')} over time`}>
+      {Array.from({ length: Math.round((high - low) / tickStep) + 1 }, (_, i) => low + i * tickStep).map((tick) => <g key={tick}>
+        <line x1={padding.left} x2={width - padding.right} y1={y(tick)} y2={y(tick)} className="chart-grid-line" />
+        <text x={padding.left - 10} y={y(tick) + 4} textAnchor="end" className="chart-axis-label">{formatCurrency(tick)}</text>
+      </g>)}
+      <line x1={padding.left} x2={width - padding.right} y1={zeroY} y2={zeroY} stroke="currentColor" strokeDasharray="4 3" />
+      {selected.map((basis) => {
+        const points = sorted.map((entry, i) => ({ entry, i })).filter(({ entry }) => (entry.measurement ?? 'assetOnly') === basis);
+        const path = points.map(({ entry, i }, n) => `${n ? 'L' : 'M'} ${x(i)} ${y(entry.totalNetWorth)}`).join(' ');
+        return <g key={basis}>
+          {points.length > 1 && <path d={path} className="chart-line" />}
+          {points.map(({ entry, i }) => <circle key={entry.id} cx={x(i)} cy={y(entry.totalNetWorth)} r={4} className="chart-point" tabIndex={0}>
+            <title>{`${titles[basis]} — ${formatShort(entry.date)}: ${formatCurrency(entry.totalNetWorth)}`}</title>
+          </circle>)}
+        </g>;
+      })}
+      {sorted.map((entry, i) => <text key={`date-${entry.id}`} x={x(i)} y={height - padding.bottom + 18} textAnchor="middle" className="chart-axis-label">{formatShort(entry.date)}</text>)}
+      <text x={width / 2} y={height - 8} textAnchor="middle" className="chart-title">Date</text>
+      <text x={18} y={height / 2} textAnchor="middle" className="chart-title" transform={`rotate(-90, 18, ${height / 2})`}>Value ($)</text>
+    </svg>
+  </div>;
 });

@@ -12,6 +12,15 @@ Status legend:
 - `implemented` — code exists in the current baseline.
 - `not-started` — no implementation yet (Phases 1+).
 - `blocked` — contract unresolved; implementation cannot proceed.
+- `P1-scoped` — Phase 1 config/type/default/codec/command contract implemented and covered by the focused Phase-1 suite (`npx vitest run src/commands.test.ts src/codec.test.ts src/storage.test.ts`, 87/87); the row's end-to-end target acceptance (engine/App integration, CA/GUI evidence) is owned by a later phase and is **not** verified here.
+- `P1-scoped (partial)` — only the Phase 1 portion of the row is implemented/tested; the remaining acceptance is owned by the later task named in the row.
+- `P2-scoped` — Phase 2 kernel module implemented and covered by the focused Phase-2 engine suite (`npx vitest run src/engine/dates.test.ts src/engine/money.test.ts src/engine/state.test.ts src/engine/taxes.test.ts src/engine/funding.test.ts src/engine/configuration.test.ts src/engine/scheduler.test.ts src/engine/projection.test.ts src/engine/valuation.test.ts`, 191/191); the row's end-to-end target acceptance (feature processors/reporting/GUI/benchmarks) is owned by a later phase and is **not** verified here.
+- `P2-scoped (partial)` — only the Phase 2 portion of the row is implemented/tested; the remaining acceptance is owned by the later task named in the row. Evidence is the focused kernel subset only (see `refactor/phase2_handoff.md` §4).
+- `P3-scoped (partial)` — only the Phase 3 portion of the row is implemented/tested, by the focused feature-stream and/or paired-editor suites (see `refactor/phase3_handoff.md` §4). The row's end-to-end target acceptance (App/GUI wiring, P4 reporting, P5 integration, benchmarks) is owned by a later phase and is **not** verified here. **No GUI-A row is marked complete.** The parent independently re-ran the focused tallies after the final source corrections: engine **397/397** across 18 files, paired editors **42/42** across 8, codec/commands/storage/paycheck/expenseImport **117/117**. The full-suite/build gate remains the final verifier's.
+- `P4-scoped (partial)` — only the Phase 4 portion of the row is implemented/tested, by the focused reporting/adapter/component suites (see `refactor/phase4_handoff.md` §4). The row's end-to-end target acceptance (App/GUI wiring, combined cross-feature behavior, benchmarks) is owned by a later phase and is **not** verified here. **No GUI-A row is marked complete.** Reporting/audit (`buildProjectionReport`), D18 display dollars, D20 trajectory freeze and the migrated `ChartPanel`/`SavingsStackedChart`/`ResultsTable`/`NetWorthHistoryChart`/`TrajectoryComparisonChart` are implemented and focused-tested, but **not App-mounted** (`App.tsx` still passes legacy props and does not compile). The **post-hardening final verifier** recorded the focused engine **517/517** (19 files; `reporting` 26), `src/components` **57/57** (13 files), the selected subset `viewAdapters` 38 + `trajectoryFreeze` 14 + `codec` 55 + `storage` 12 = **119/119** (4 files), the whole suite **759 pass / 91 fail** (850 total; only `App.test.tsx` 81 + `dateMarkers.test.ts` 10) and the build **182 TS errors** (none Phase-4 source). **Superseded by `P5-scoped (partial)` where Phase 5 has landed; retained here for rows the P5 cutover did not touch and as Phase-4 provenance.**
+- `P5-scoped (partial)` — the Phase-5 integrated-candidate portion of the row is implemented/tested (see `refactor/phase5_handoff.md`). Evidence: one `projectFeatureScenario` + one immutable report (`phase5Acceptance.test.ts` 6), cross-feature CA fixtures (`phase5CrossFeature.test.ts` 27), canonical App command/render path (`App.test.tsx` 43), schema-v3 save cutover with grouped housing policies, record-local malformed-entry warnings, optional allocation-cap preservation and guarded coalesced autosave, plus early P7 removal of unreferenced modules. **Local and independently reproduced gates:** `npm run test -- --run --reporter=default` **55 files / 1073 tests passed**, `npm run build` passes (624.57 kB chunk-size advisory; 175.06 kB gzip JS / 84.04 kB CSS), `git diff --check` passes. **Bounded local Chromium browser gate:** `npm run test:e2e -- --project=chromium` **33 tests passed** (42.7s; Playwright Test 1.64.1, isolated Chromium over the real dev server; `refactor/phase5_handoff.md` §13) — this is **not** CI-wired and **not** a PS/B-P production-browser benchmark. Per-G browser ledger: `refactor/gui_browser_coverage.md` (40 rows; not row-by-row certified). Row-specific **slice-level** GUI-A browser evidence (never matrix certification): A01/A02 smoke navigation + account edit reload/reset + no-career render; A03 dated career cap/overflow clone isolation; A04 $200 purchase primary + two ordered fallbacks; A05 unfunded pending acquisition $0, underwater sale signed negative net worth, property-free rent; A06 permanent-0% card July 334¢ shortfall shown as `$3` with D16 warning leading (no fallback/exhaustion); A07 selected-account planner week $25/$25/$15 with October close $85 and occurred import excluded; A08 fixed 6% today's-dollars toggle and measure selector; A09 marker propagation to base + cloned timeline; A10 canonical trajectory save/select/rename/delete/reload and legacy refusal. Verifier checked fixture SHA-256 in an earlier pass and confirmed D16 quote-time resolved source order, CA01 overlap/cap, CA06 adaptive 0% payoff, D26 reconciliation, selected-week monthly closes/quoted weekly outcomes, career clone isolation, cap codec and deflation invariants. App-mounted warnings, purchase source detail and canonical signed-cents trajectory are tested; G20/G22 grouped funding and housing results are engine/editor/App-tested. The full GUI-A/G and CA matrix is **not** blanket-certified by this invariant review; per-card weekly schedule completeness and full-matrix browser checks remain. Phase-6 performance/browser and Phase-8 release checks remain open.
+
+Browser expansion evidence (still `P5-scoped (partial)`): `e2e/account-reference-guards.spec.ts` pins inactive-plan reference cleanup and future-version save suppression; `cards-crud.spec.ts` pins ordinary plan CRUD/timeline isolation; `networth-signed.spec.ts` pins signed −$100 net worth versus $0 account assets; `purchases-partial.spec.ts` pins zero-debit skip and long-term partial; `planner-editing.spec.ts` pins move/copy identity with occurred imports view-only; `account-policy-order.spec.ts` pins account colour / withdrawal-fallback / display-order persistence with the input-derived $300 close and no pool controls; `career-payroll-destinations.spec.ts` pins one payroll's gross→net with distinct 401K/employer/percent/fixed/remainder destinations; `housing-group-policy.spec.ts` pins an explicit per-group override beating the global default plus an explicit-empty override leaving the rent unpaid and persisting. The first expanded run's planned-copy `sourceSign:null` round-trip failure was fixed in the v3 codec and covered in `codec.test.ts`/`storage.test.ts`; a second failure was an overstrict D16 test count (eligible exhaustion may coexist with shortfall). Final focused 4/4 and full Chromium 33/33 pass. No CI wiring, no Phase-6 benchmarks, and no blanket GUI/CA certification.
 
 Owners (workstreams, refactor/implementation_plan.md §2): S=Schema/config, K=Kernel, I=Income, O=Obligations, R=Reporting, U=UI, P=Performance, Q=Quality.
 
@@ -21,170 +30,172 @@ Owners (workstreams, refactor/implementation_plan.md §2): S=Schema/config, K=Ke
 
 | ID | Owner | Task | Test/Evidence | Status |
 |---|---|---|---|---|
-| F01 | S+K | P1.1/P1.5/P5.1 | CA08/CA11/CA12, GUI-A01/A02/A09 | not-started |
-| F02 | K | P2.1/P5.1 | CA08 | not-started |
-| F03 | I | P3I.1/P3I.3 | CA01/CA11, GUI-A03/A09 | not-started |
-| F04 | I | P3I.2/P3I.3 | CA01, GUI-A03 | not-started |
-| F05 | I | P3I.2 | CA01/CA11, GUI-A03 | not-started |
-| F06 | I | P3I.3/P3I.4 | CA01/CA11 | not-started |
-| F07 | O | P3S.1 | CA03/CA10 | not-started |
-| F08 | K+O | P2.4/P3S.1 | CA03/CA04/CA12 | not-started |
-| F09 | K | P2.3 | CA04/CA12 | not-started |
-| F10 | O | P3S.2 | CA07, GUI-A02/A08 | not-started |
-| F11 | O+K | P3H.1/P3S.2/P4.2 | CA08/CA13 | not-started |
-| F12 | O | P3S.1 | CA03/CA10, GUI-A04 | not-started |
-| F13 | O | P3S.1 | CA03/CA10 | not-started |
-| F14 | O | P3D.3 | CA05/CA06 | not-started |
-| F15 | O | P3D.1 | CA05/CA06, GUI-A05/A06 | not-started |
-| F16 | O | P3D.2 | CA05/CA06, GUI-A05/A06 | not-started |
-| F17 | O | P3H.1/P3H.3 | CA05/CA09, GUI-A05 | not-started |
-| F18 | O | P3H.1/P3H.4 | CA05/CA09, GUI-A05 | not-started |
-| F19 | I+O | P3I.5/P3S.1 | CA01/CA10 | not-started |
-| F20 | I | P3I.5 | CA01 | not-started |
+| F01 | S+K | P1.1/P1.5/P5.1 | CA08/CA11/CA12, GUI-A01/A02/A09 | P5-scoped (partial) — P5.1 single orchestration + one report; `phase5Acceptance`/`phase5CrossFeature` CA08/CA12; App 43/43, complete GUI matrix not independently reviewed |
+| F02 | K | P2.1/P5.1 | CA08 | P5-scoped (partial) — P2.1 primitives + P5.1 full-horizon composed run; CA08 cross-feature; 960-month aggregate benchmark still P6.2/PS20 |
+| F03 | I | P3I.1/P3I.3/P5.2 | CA01/CA11, GUI-A03/A09 | P5-scoped (partial) — month-scoped selection + App-mounted `AccountCareerPlanEditor` via canonical commands; CA01 focused + cross-feature; full GUI-A03 matrix not reviewed |
+| F04 | I | P3I.2/P3I.3/P5.2 | CA01, GUI-A03 | P5-scoped (partial) — payroll compile/post App-wired; CA01 cross-feature (`phase5CrossFeature`); full GUI-A03 matrix not reviewed |
+| F05 | I | P3I.2/P5.3 | CA01/CA11, GUI-A03 | P5-scoped (partial) — granular-paycheck posting + schema-v3 prune of the flat cache; CA01 cross-feature; full GUI-A03 matrix not reviewed |
+| F06 | I | P3I.3/P3I.4/P5.2 | CA01/CA11 | P5-scoped (partial) — ordered allocations/remainder and incoming cap/overflow policy App-editable, composed CA01 50_000¢ cap + 10_000¢ overflow, UI clear-vs-zero cap save/reload; remaining row-specific assertions not certified |
+| F07 | O | P3S.1/P5.2 | CA03/CA10 | P5-scoped (partial) — purchases/cashflow App-wired; `PurchaseFundingResults` now shows observed source allocation/net/gross and zero-debit state; full GUI matrix not reviewed |
+| F08 | K+O | P2.4/P3S.1/P5.1 | CA03/CA04/CA12 | P5-scoped (partial) — funding/taxes kernel + composed orchestration; quote-time `resolvedSourceOrder` preserves global primary/actual secondary D16 provenance; CA03/CA04 cross-feature and CA12 report tested |
+| F09 | K | P2.3/P5.1 | CA04/CA12 | P5-scoped (partial) — eligibility/D5 solver + P5.1 composed; CA04 cross-feature (gross=net+tax+penalty, HSA waiver) |
+| F10 | O | P3S.2/P5.2 | CA07, GUI-A02/A08 | P5-scoped (partial) — `retirement.ts` + App-mounted `RetirementSpendingEditor`; CA07 cross-feature; full GUI-A02/A08 matrix not reviewed |
+| F11 | O+K | P3H.1/P3S.2/P4.2/P5.1 | CA08/CA13 | P5-scoped (partial) — housing appreciation + retirement + P4.2 report; CA08/CA13 cross-feature; App suite passes |
+| F12 | O | P3S.1/P5.2 | CA03/CA10, GUI-A04 | P5-scoped (partial) — purchase editor plus one-report funding disclosure App-mounted; $200 split $100+$60+$40, $500 no-fund skip and explicit unresolved source App-tested; full GUI-A04 matrix not reviewed |
+| F13 | O | P3S.1/P5.2 | CA03/CA10 | P5-scoped (partial) — career monthly withdrawals/cashflow outflows App-wired; CA10 cross-feature |
+| F14 | O | P3D.3/P5.1 | CA05/CA06 | P5-scoped (partial) — `loans.ts` + P5.1 composed; CA05 cross-feature (full/partial/zero funding) |
+| F15 | O | P3D.1/P5.2 | CA05/CA06, GUI-A05/A06 | P5-scoped (partial) — ordinary card schedule + App-mounted `CardPlanEditor`; CA06 cross-feature; GUI-A05/A06 App slices pass; full matrix not reviewed |
+| F16 | O | P3D.2/P5.2 | CA05/CA06, GUI-A05/A06 | P5-scoped (partial) — permanent-0% payoff App-mounted; CA06 cross-feature fully funded `$33.34/$33.33/$33.33` plus Feb zero-fund→Mar recomputed $66.66 residual/no duplicate payoff |
+| F17 | O | P3H.1/P3H.3/P5.2 | CA05/CA09, GUI-A05 | P5-scoped (partial) — housing groups + App `HousingEditor` and read-only `HousingResults`; CA09 cross-feature, G20/G22 ordered policy and selected pending/sale/rental report cases pass |
+| F18 | O | P3H.1/P3H.4/P5.2 | CA05/CA09, GUI-A05 | P5-scoped (partial) — atomic sale/disposition + held acquisition App-mounted (property-free rentals); CA09 cross-feature |
+| F19 | I+O | P3I.5/P3S.1/P5.2 | CA01/CA10 | P5-scoped (partial) — other income + outflows App-wired; CA01/CA10 cross-feature |
+| F20 | I | P3I.5/P5.2 | CA01 | P5-scoped (partial) — dated cashflow/life-event inflows App-wired; CA01 cross-feature |
 | F21 | S | P1/P7 (retain removal) | CA11, existing removal regressions | implemented (baseline) |
-| F22 | O | P3S.3/P3S.4 | CA10/CA11, GUI-A07 | not-started |
-| F23 | S | P1.4 | CA08/CA11/CA12, GUI-A09 | not-started |
-| F24 | R | P4.1/P4.3 | CA02/CA12 | not-started |
-| F25 | R+U | P4.4/P4.5 | CA02/CA12, GUI-A08/A10 | not-started |
-| F26 | S | P1.3/P5.3 | CA11, GUI-A01/A09/A10 | not-started |
+| F22 | O | P3S.3/P3S.4/P5.2 | CA10/CA11, GUI-A07 | P5-scoped (partial) — planner recurrence + occurred import provenance App-mounted; selected-account monthly closes and exact-date quoted planner week requested/paid-all/paid-from-account from one report (App $25/$25/$15) tested. No fabricated weekly balance or per-card completeness claim |
+| F23 | S | P1.4/P5.2 | CA08/CA11/CA12, GUI-A09 | P5-scoped (partial) — commands/registry + App single write path; timeline-write/isolation App tests pass |
+| F24 | R | P4.1/P4.3/P5.2 | CA02/CA12 | P5-scoped (partial) — journal/reporting selectors consumed by mounted views; CA02/CA12 cross-feature; App suite passes |
+| F25 | R+U | P4.4/P4.5/P5.2 | CA02/CA12, GUI-A08/A10 | P5-scoped (partial) — viewAdapters + migrated charts/table App-mounted; canonical trajectory comparison App test passes; full GUI matrix not reviewed |
+| F26 | S | P1.3/P5.3 | CA11, GUI-A01/A09/A10 | P5-scoped (partial) — schema-v3 cutover prunes the flat `paycheckInfo` and persists group policies; guarded coalesced autosave/pagehide and App save/reset tests pass |
 
 ## R01–R26 — Risks (refactor/feature_specification.md §issue-risk-register)
 
 | ID | Owner | Task | Test/Evidence | Status |
 |---|---|---|---|---|
-| R01 | K+O | P3I.3/P3S.1/P5.1 | CA01/CA02 | not-started |
-| R02 | O | P3D.3/P3H.1 | CA05 | not-started |
+| R01 | K+O | P3I.3/P3S.1/P5.1 | CA01/CA02 | P5-scoped (partial) — P3 income/obligation streams + P5 composed CA01/CA02 fixtures and report-backed App; row-specific full review pending |
+| R02 | O | P3D.3/P3H.1 | CA05 | P3-scoped (partial) — `loans.ts` (D13 accrual) + `housing.ts` mortgage via the same helper; CA05 focused |
 | R03 | S | P1/P7 | existing removal regressions | implemented (baseline) |
-| R04 | I | P3I.3 | CA01 | not-started |
-| R05 | S | P1.1/P1.5 | CA11/CA09 | not-started |
-| R06 | O+U | P3D.1/P3D.2/P3D.4 | CA06, GUI-A06 | not-started |
-| R07 | R | P4.1/P4.2 | CA02 | not-started |
-| R08 | U+R | P4.5/P5.2 | CA12 | not-started |
-| R09 | O | P3S.3/P3S.4 | CA10 | not-started |
-| R10 | K | P2.3 | CA04 | not-started |
-| R11 | I | P3I.1/P3I.2 | CA01 | not-started |
-| R12 | K | P2.1 | CA08/CA13 | not-started |
-| R13 | R | P4.1/P4.3 | CA02 | not-started |
-| R14 | O | P3H.2/P3H.4 | CA09 | not-started |
+| R04 | I | P3I.3 | CA01 | P3-scoped (partial) — `income.ts` bounded ordered allocations, remainder, cap/overflow; CA01 focused |
+| R05 | S | P1.1/P1.5 | CA11/CA09 | P1-scoped (partial) — P1.1/P1.5 opening identity done; CA09 held deposit pending P3H |
+| R06 | O+U | P3D.1/P3D.2/P3D.4 | CA06, GUI-A06 | P5-scoped (partial) — both card types, standalone editor and ordinary/0%/fallback App cases pass; complete GUI-A06 matrix not reviewed |
+| R07 | R | P4.1/P4.2 | CA02 | P5-scoped (partial) — D15 journal + reporting reconciliation/signed net worth; report App-mounted and CA02 cross-feature fixture passes; audit-deficit inventory pending |
+| R08 | U+R | P4.5/P5.2 | CA12 | P5-scoped (partial) — report-backed charts/table and warning/trajectory App slices pass; full CA12/GUI matrix not certified |
+| R09 | O | P3S.3/P3S.4 | CA10 | P5-scoped (partial) — planner occurrence/provenance + CA10 focused/cross-feature; App occurred-import view-only test passes |
+| R10 | K | P2.3 | CA04 | P2-scoped (partial) — P2.3 D5 solver + separately rounded tax/penalty done; CA04 focused cases pass; PS06 benchmark pending |
+| R11 | I | P3I.1/P3I.2 | CA01 | P3-scoped (partial) — `income.ts` month-scoped selection (D14) + separate destination posting (D9); CA01 focused |
+| R12 | K | P2.1 | CA08/CA13 | P2-scoped (partial) — P2.1 date/money primitives done; CA08/CA13 focused kernel cases pass; full P2.7 horizon/benchmark acceptance pending |
+| R13 | R | P4.1/P4.3 | CA02 | P5-scoped (partial) — D15 journal/report query indexes + CA02 close-grid fixture; report App-mounted; full audit-deficit review pending |
+| R14 | O | P3H.2/P3H.4 | CA09 | P5-scoped (partial) — housing held deposit/atomic sale focused and cross-feature tested; property-free rental and pending property App tests pass |
 | R15 | Q | P0.1 (repro only) | TC01 baseline | reproduced (see P0.1) |
-| R16 | S | P1.3 | CA11 | not-started |
-| R17 | R+U | P4.4 | CA12 | not-started |
+| R16 | S | P1.3 | CA11 | P1-scoped — codec normalizers/pruning covered by focused suite |
+| R17 | R+U | P4.4 | CA12 | P5-scoped (partial) — D18 adapters App-mounted; month-close chart/stacked/table consistency and current-dollar toggle tested; full browser/preview CA12 matrix pending |
 | R18 | S+K | P1.1/P7.1 | CA11 | not-started |
-| R19 | U | P1.6/P5.2 | GUI-A01–A10 | not-started |
+| R19 | U | P1.6/P5.2 | GUI-A01–A10 | P5-scoped (partial) — canonical App routes and 43/43 RTL tests pass, plus a 33-test bounded Chromium gate (slice-level, not CI-wired; ledger `refactor/gui_browser_coverage.md`); row-by-row GUI-A01–A10/full browser matrix not certified |
 | R20 | P | P6.1–P6.6 | PS01–PS20 | not-started |
-| R21 | K+P | P2.1/P2.3 | CA08/PS20/CA13 | not-started |
+| R21 | K+P | P2.1/P2.3 | CA08/PS20/CA13 | P2-scoped (partial) — P2.1/P2.3 done; CA08/CA13 focused safe-cent unit cases pass; PS20 long-growth benchmark pending P6 |
 | R22 | Q | P0.6 | TC02/TC03; CA07 editable percentage and later-start basis pending | P0.6-done (target implementation pending) |
-| R23 | S | P1.3 | CA11/TC05–TC08 | not-started |
+| R23 | S | P1.3 | CA11/TC05–TC08 | P1-scoped — codec/CA11/TC05–TC08 covered by focused suite |
 | R24 | S+K | P7.5 | MD01–MD11 | not-started |
-| R25 | O | P3H.2 | CA09 | contract-frozen (ADR-020) |
-| R26 | K | P2.3 | CA04 | contract-frozen (ADR-020) |
+| R25 | O | P3H.2 | CA09 | P5-scoped (partial) — held-deposit acquisition headless/CA09 tested; App housing editor/pending property mounted; full GUI-A05 matrix not reviewed |
+| R26 | K | P2.3 | CA04 | P2-scoped (partial) — P2.3 implements the non-qualified extra-penalty waiver at 65 (and rejects a >120 waiver age); CA04 focused cases pass; benchmark pending P6 |
 
 ## G01–G40 — GUI compatibility (refactor/gui_compatibility_audit.md)
 
+Per-G browser evidence is `refactor/gui_browser_coverage.md` (40-row ledger grouped by GUI-A01–A10). Rows below record slice-level Chromium evidence only — **never** row-by-row certification.
+
 | ID | Owner | Task | Test/Evidence | Status |
 |---|---|---|---|---|
-| G01 | S | P1.3/P1.6 | CA11, GUI-A01 | not-started |
-| G02 | U | P5.2 | GUI-A02 | not-started |
-| G03 | U+S | P7.2 | GUI-A01 | not-started |
-| G04 | S+U | P1.1/P1.6 | GUI-A01 | not-started |
-| G05 | U | P3S.5 | GUI-A02 | not-started |
-| G06 | U+R | P4.5 | GUI-A02 | not-started |
-| G07 | U | P3I.6/P3S.5 | GUI-A01 | not-started |
-| G08 | S | P1.1/P1.5 | GUI-A08 | not-started |
-| G09 | U | P3I.6 | GUI-A03 | not-started |
-| G10 | U+R | P4.5 | GUI-A03 | not-started |
-| G11 | U | P3I.6 | GUI-A03 | not-started |
-| G12 | U | P3I.6 | GUI-A03 | not-started |
-| G13 | U | P1.4/P3I.6 | GUI-A09 | not-started |
-| G14 | U | P3I.6 | GUI-A04 | not-started |
-| G15 | U | P3S.5 | GUI-A03 | not-started |
-| G16 | U+S | P1.6/P3S.5/P3D.4/P3H.5 | GUI-A04 | not-started |
-| G17 | U+R | P4.5 | GUI-A04 | not-started |
-| G18 | U+R | P4.5 | GUI-A05 | not-started |
-| G19 | U | P3D.4 | GUI-A05 | not-started |
-| G20 | U | P3H.5 | GUI-A05 | not-started |
-| G21 | U+R | P4.5/P3H.5 | GUI-A05 | not-started |
-| G22 | U | P3H.5 | GUI-A05 | not-started |
-| G23 | U | P3D.4 | GUI-A06 | not-started |
-| G24 | U+R | P4.5/P3D.4 | GUI-A06 | not-started |
-| G25 | U | P3S.5 | GUI-A07 | not-started |
-| G26 | U+R | P4.5/P3S.5 | GUI-A07 | not-started |
-| G27 | U | P3S.5 | GUI-A07 | not-started |
-| G28 | U | P3S.4/P3S.5 | GUI-A07 | not-started |
-| G29 | U | P4.5 | GUI-A08 | not-started |
-| G30 | U | P4.5 | GUI-A08 | not-started |
-| G31 | U+R | P4.3/P4.5 | GUI-A02/A08 | not-started |
-| G32 | U+R | P4.5 | GUI-A08 | not-started |
-| G33 | U+R | P4.5 | GUI-A08 | not-started |
-| G34 | U+R | P4.4 | GUI-A08 | not-started |
-| G35 | U+R | P4.5 | GUI-A08 | not-started |
-| G36 | U+R | P4.6 | GUI-A10 | not-started |
-| G37 | U | P1.4/P5.2 | GUI-A09 | not-started |
-| G38 | U | P1.4/P5.2 | GUI-A09 | not-started |
-| G39 | U | P4.5/P5.2 | GUI-A02/A09 | not-started |
-| G40 | U | P4.5 | GUI-A10 | not-started |
+| G01 | S | P1.3/P1.6/P5.3 | CA11, GUI-A01 | P5-scoped (partial) — codec v3, canonical writes, App save/reload/reset/pagehide; browser: an account display colour, a withdrawal `allowAutomaticFallback` policy and a display-order swap persist through `pagehide`/reload with the input-derived $300 close unchanged (`account-policy-order.spec.ts`), two account rates + a retirement override + the global funding primary survive an unrelated edit/reload (`accounts-careers.spec.ts`), HSA deletion cleans base/inactive refs, and newer-version bytes survive auto edit/pagehide. Loan funding policies / liability snapshots / account-only source fields round-trip through unrelated edits not browser-reviewed |
+| G02 | U | P5.2 | GUI-A02 | P5-scoped (partial) — no-career chart/table/warnings App test passes; full GUI-A02 matrix not reviewed |
+| G03 | U+S | P5.3/P7.2 | GUI-A01 | P5-scoped (partial) — early P7 removed unused modules; App suite passes; row-specific GUI check outstanding |
+| G04 | S+U | P1.1/P1.6/P5.2 | GUI-A01 | P5-scoped (partial) — canonical account editor App-mounted with add/remove/reset/persistence tests; browser: two base `Annual return` fields + one `Retirement return` edit survive reload (`accounts-careers.spec.ts`) and the Checking display colour persists (`account-policy-order.spec.ts`). Account withdrawal/eligibility settings and the retirement-override decision not browser-reviewed |
+| G05 | U | P3S.5/P5.2 | GUI-A02 | P5-scoped (partial) — planner and retirement editors App-mounted; row-specific GUI review pending |
+| G06 | U+R | P4.5/P5.2 | GUI-A02 | P5-scoped (partial) — report selectors App-mounted and no-career App test passes |
+| G07 | U | P3I.6/P3S.5/P5.2 | GUI-A01 | P5-scoped (partial) — career/expense editors App-mounted; browser: a display-order swap (Move down) persists and leaves the Timeline closing net worth unchanged at the input-derived $300 (`account-policy-order.spec.ts`). Separate deposit/payment/fallback order controls not browser-reviewed |
+| G08 | S | P1.1/P1.5/P5.2 | GUI-A08 | P5-scoped (partial) — signed net-worth history App-mounted; row-specific GUI review pending |
+| G09 | U | P3I.6/P5.2 | GUI-A03 | P5-scoped (partial) — `AccountCareerPlanEditor` App-mounted; dated plan edit/switch/reload App-tested and standalone editor tested; browser: a July payroll posts percent (Emergency Fund $170) + fixed (HSA $30) allocations and remainder (Checking $1,500) to distinct accounts (`career-payroll-destinations.spec.ts`); full GUI-A03 matrix not reviewed |
+| G10 | U+R | P4.5/P5.2 | GUI-A03 | P5-scoped (partial) — career projections consume the report; browser reads the per-account report cells with a zero-payroll 2027 negative control (`career-payroll-destinations.spec.ts`); Starting Balance / From previous career / Balance at end of period local-forecast fields remain unasserted |
+| G11 | U | P3I.6/P5.2 | GUI-A03 | P5-scoped (partial) — dated pay-plan/allocation controls App-mounted; $500 max-balance/overflow destination plus cleared/absent and explicit 0 persist through reload without mutating Initial; browser: paycheck modal `Gross / period $2,000` + `Net / period $1,700` + `Taxes $2,400` with distinct per-account postings (`career-payroll-destinations.spec.ts`); full GUI-A03 matrix not reviewed |
+| G12 | U | P3I.6/P5.2 | GUI-A03 | P5-scoped (partial) — career editor App-mounted; App duplicate deep-clones nested Initial/dater pay plans and editing clone's cap/overflow persists without modifying original; browser: the remainder posts to Checking $1,500 and the cap/overflow edit persists (`career-payroll-destinations`/`accounts-careers`); net-pay remainder summary + deposit-day control still pending |
+| G13 | U | P1.4/P3I.6/P5.2 | GUI-A09 | P5-scoped (partial) — canonical commands + App timeline/delete flow; row-specific cleanup review pending |
+| G14 | U | P3I.6/P5.2 | GUI-A04 | P5-scoped (partial) — `AccountExpensesPlanner` App-mounted and standalone-tested; GUI-A04 matrix not reviewed |
+| G15 | U | P3S.5/P5.2 | GUI-A03 | P5-scoped (partial) — `RetirementSpendingEditor` App-mounted and standalone-tested; GUI-A03 matrix not reviewed |
+| G16 | U+S | P1.6/P3S.5/P3D.4/P3H.5/P5.2 | GUI-A04 | P5-scoped (partial) — purchase/card/funding editors App-mounted; per-source $100+$60+$40 committed purchase, fallback badge and no-fund skip tested; full GUI-A04 matrix not reviewed |
+| G17 | U+R | P4.5/P5.2 | GUI-A04 | P5-scoped (partial) — report-only requested/paid/unpaid and net/gross/tax/penalty; browser $500 no-debit skip and long-term July $100/August $50 partial shortfall, no phantom negative; full preview matrix not reviewed |
+| G18 | U+R | P4.5/P5.2 | GUI-A05 | P5-scoped (partial) — selected housing results show requested/paid/unpaid and retained mortgage close from one report; $1,438.92 PI paid $1,000 App-tested, long-term partial browser-tested; broader loan UI matrix not reviewed |
+| G19 | U | P3D.4/P5.2 | GUI-A05 | P5-scoped (partial) — `CardPlanEditor`/`LoanEditor` App-mounted; loan/card App slices pass |
+| G20 | U | P3H.5/P5.2 | GUI-A05 | P5-scoped (partial) — `HousingEditor` plus `HousingResults` App-mounted; property-free rental, pending property, underwater sale and ordered group funding App/engine cases pass; browser: an explicit per-group override (Checking primary + Emergency Fund fallback) funds a $150 rent $100+$50 with a `Fallback used` warning and no shortfall (`housing-group-policy.spec.ts`), plus a property-free $1,500 rent funded from Checking |
+| G21 | U+R | P4.5/P3H.5/P5.2 | GUI-A05 | P5-scoped (partial) — requested/paid/unpaid rental rows, pending acquisition and underwater-sale retained debt/signed net worth App-tested from report; acquired-then-sold neutral status unit-tested only |
+| G22 | U | P3H.5/P5.2 | GUI-A05 | P5-scoped (partial) — schema-v3 ordered per-group `FundingPolicy` **persisted** base/timeline; primary+fallback, explicit empty, property-free rental and timeline isolation engine/editor/App-tested; read-only housing report panel added; browser: clearing a rent override to explicit empty leaves the rent unpaid although the global default could pay and persists through `pagehide`/reload (`housing-group-policy.spec.ts`); acquired-then-sold neutral status remains synthetic-unit only. Full GUI-A05 matrix not reviewed |
+| G23 | U | P3D.4/P5.2 | GUI-A06 | P5-scoped (partial) — ordinary/0% card editor App-mounted; browser ordinary expected-payment add/duplicate/edit/remove/save/reload with no phantom linked liability and named-timeline isolation |
+| G24 | U+R | P4.5/P3D.4/P5.2 | GUI-A06 | P5-scoped (partial) — card payoff/shortfall schedules App-tested; browser July 0% partial D16 warning and ordinary-plan CRUD, future missed-payment target remains unit/composed tested |
+| G25 | U | P3S.5/P5.2 | GUI-A07 | P5-scoped (partial) — planner/retirement editors App-mounted; full GUI-A07 matrix not reviewed |
+| G26 | U+R | P4.5/P3S.5/P5.2 | GUI-A07 | P5-scoped (partial) — selected-week 12-month report closes for selected account + display threshold; exact 7-day quoted planner outcomes joined by definition/occurrence id with dedup show requested, committed paid-all and selected-account net paid separately (App $25/$25/$15, occurred import excluded); browser: the selected-account planner week reports $25/$25/$15 with October close $85 and the occurred import excluded. Weekly grid is planned only, not funded balance; per-card completeness/full browser matrix not certified |
+| G27 | U | P3S.5/P5.2 | GUI-A07 | P5-scoped (partial) — planner controls App-mounted; browser keyboard move updates original occurrence once and copy creates distinct planned id, persisted provenance null while occurred $99 import stays unquoted/view-only. Full browser matrix not reviewed |
+| G28 | U | P3S.4/P3S.5/P5.2 | GUI-A07 | P5-scoped (partial) — import provenance parser focused-tested and occurred view-only App test passes |
+| G29 | U | P4.5/P5.2 | GUI-A08 | P5-scoped (partial) — `ChartPanel`/`ResultsTable` App-mounted with real-result tests |
+| G30 | U | P4.5/P5.2 | GUI-A08 | P5-scoped (partial) — yearly/monthly selectors App-mounted; full GUI-A08 matrix not reviewed |
+| G31 | U+R | P4.3/P4.5/P5.2 | GUI-A02/A08 | P5-scoped (partial) — exact shortfall and distinct fallback warning App-tested |
+| G32 | U+R | P4.5/P5.2 | GUI-A08 | P5-scoped (partial) — `SavingsStackedChart` App-mounted; full GUI-A08 matrix not reviewed |
+| G33 | U+R | P4.5/P5.2 | GUI-A08 | P5-scoped (partial) — net-worth/asset/debt series App-mounted; browser $100 configured liability keeps signed net worth −$100 while account assets stay $0 and chart measure changes; activity tooltip audit detail still partial |
+| G34 | U+R | P4.4/P5.2 | GUI-A08 | P5-scoped (partial) — 6% date-based factor component-tested at realistic month-closing dates; stacked chart now uses `month.closingDate`; App toggle tested, browser matrix not reviewed |
+| G35 | U+R | P4.5/P5.2 | GUI-A08 | P5-scoped (partial) — `ReportDisplayConsistency.test.tsx` 3/3 aligns chart, stacked tooltip and table at 2026-06-30/2027-03-31, with nominal data unchanged and signed NW distinct from account assets; browser tooltip/summary matrix pending |
+| G36 | U+R | P4.6/P5.2 | GUI-A10 | P5-scoped (partial) — canonical signed-cents trajectory save/compare/delete/reload and legacy refusal **App-tested**; browser GUI-A10 matrix not reviewed |
+| G37 | U | P1.4/P5.2 | GUI-A09 | P5-scoped (partial) — timeline clone/selection App-tested; browser HSA deletion clears global/inactive funding refs without redirect, a card clone remains timeline-local, a dated pay-plan rename stays isolated (`accounts-careers.spec.ts`), and a shared marker reaches both base + clone (`markers-timelines.spec.ts`); full GUI-A09 matrix not reviewed |
+| G38 | U | P1.4/P5.2 | GUI-A09 | P5-scoped (partial) — marker add/remove App-tested; commands fixture resolves/removes shared marker across base and two inactive timelines with month/day precision and sibling preservation, DateMarkersEditor 5/5; browser: a marker change propagates to the base plan and a cloned named timeline; remaining date-link domains review pending |
+| G39 | U | P4.5/P5.2 | GUI-A02/A09 | P5-scoped (partial) — mounted views + selection App-tested; full GUI matrix not reviewed |
+| G40 | U | P4.5/P5.2 | GUI-A10 | P5-scoped (partial) — new DateOrMarkerInput 11/11 and BufferedNumberInput 10/10 assert selected source, keyboard and Escape-cancel/Enter-commit; browser: DateOrMarkerInput `aria-pressed` toggle and BufferedNumberInput keyboard commit/cancel; remaining browser focus matrix not reviewed |
 
 ## GUI-A01–A10 — GUI acceptance (refactor/gui_compatibility_audit.md)
 
 | ID | Owner | Task | Test/Evidence | Status |
 |---|---|---|---|---|
-| GUI-A01 | U+Q | P1.6/P5.4 | G01/G03/G04/G07 | not-started |
-| GUI-A02 | U+Q | P5.4 | G02/G05/G06/G31/G39 | not-started |
-| GUI-A03 | U+Q | P3I.6/P5.4 | G09–G15 | not-started |
-| GUI-A04 | U+Q | P3S.5/P5.4 | G14/G16/G17/G35 | not-started |
-| GUI-A05 | U+Q | P3D.4/P3H.5/P5.4 | G18–G22 | not-started |
-| GUI-A06 | U+Q | P3D.4/P5.4 | G23/G24/G30/G38 | not-started |
-| GUI-A07 | U+Q | P3S.5/P5.4 | G25–G28 | not-started |
-| GUI-A08 | U+Q | P4.5/P5.4 | G08/G29/G32–G36 | not-started |
-| GUI-A09 | U+Q | P1.4/P5.4 | G13/G37/G38/G39 | not-started |
-| GUI-A10 | U+Q | P4.6/P5.4 | G36/G38/G40 | not-started |
+| GUI-A01 | U+Q | P1.6/P5.2/P5.4 | G01/G03/G04/G07 | P5-scoped (partial) — App 43/43: canonical account add/remove/reset, persistence and guards; browser: account colour / withdrawal-fallback / display-order persist with the input-derived $300 close and no pool controls (`account-policy-order.spec.ts`), two rates + a retirement override survive an unrelated edit/reload, HSA deletion cleans base/inactive refs and future-version bytes are preserved through auto edit/pagehide. Full GUI-A01 matrix not independently reviewed |
+| GUI-A02 | U+Q | P5.2/P5.4 | G02/G05/G06/G31/G39 | P5-scoped (partial) — no-career chart/table/warnings App test passes; browser seed renders no-career chart/table/warnings cleanly; full GUI-A02 matrix not reviewed |
+| GUI-A03 | U+Q | P3I.6/P5.2/P5.4 | G09–G15 | P5-scoped (partial) — dated plan edit/switch/reload, cap/overflow and career duplicate/nested clone isolation App-tested; composed CA01 overlap, cap, oversubscription and distinct match posting pin math; browser: one July payroll posts gross→net with distinct 401K/employer/percent/fixed/remainder destinations (`career-payroll-destinations.spec.ts`) and a dated cap/overflow persists across a cloned timeline. Reorder/remaining browser controls not fully certified |
+| GUI-A04 | U+Q | P3S.5/P5.2/P5.4 | G14/G16/G17/G35 | P5-scoped (partial) — App 3-source $200, $500 zero-fund and unresolved; browser verifies $200 split, $500 no-debit and two-month $100→$50 long-term partial with D16 first shortfall (exhaustion may coexist). Full fallback-control/tooltip matrix not certified |
+| GUI-A05 | U+Q | P3D.4/P3H.5/P5.2/P5.4 | G18–G22 | P5-scoped (partial) — selected housing results show property-free rental, pending acquisition, $1,438.92 monthly PI with only $1,000 paid/interest retained, and underwater sale debt/signed negative net worth; group funding fallback/empty override/timeline isolation App-tested; browser: an explicit per-group override (Checking+Emergency Fund) funds a $150 rent with a `Fallback used` warning and no shortfall, clearing it to explicit empty leaves the rent unpaid and persists (`housing-group-policy.spec.ts`), an unfunded pending acquisition stays pending at $0, an underwater sale shows a signed negative net worth and a property-free $1,500 rent funds from Checking. Acquired-then-sold status unit-only; complete housing/loan matrix not certified |
+| GUI-A06 | U+Q | P3D.4/P5.2/P5.4 | G23/G24/G30/G38 | P5-scoped (partial) — ordinary/0%/marker/account-fallback App tests pass; browser ordinary-plan add/duplicate/edit/remove/save/reload + timeline clone without phantom liability; 0% July 334¢ shortfall displays `$3` and leads D16 warnings, no fallback fabricated (exhaustion may coexist). Full GUI-A06 matrix not certified |
+| GUI-A07 | U+Q | P3S.5/P5.2/P5.4 | G25–G28 | P5-scoped (partial) — planner/importer App-mounted; browser exact-week $25 requested/$25 paid-all/$15 paid-from-account + October close $85, keyboard move/copy changed one vs two occurrences, imported sibling view-only and planned copy clears sign. No invented weekly funded curve; full per-card/browser GUI-A07 matrix not certified |
+| GUI-A08 | U+Q | P4.5/P5.2/P5.4 | G08/G29/G32–G36 | P5-scoped (partial) — chart/table/stacked month-close 6% deflation; browser 6% toggle/measure plus a distinct negative signed −$100 net worth vs $0 account-assets view from configured liability. Full activity tooltip/accessibility matrix not certified |
+| GUI-A09 | U+Q | P1.4/P5.2/P5.4 | G13/G37/G38/G39 | P5-scoped (partial) — timeline CRUD/isolation, marker add/remove and housing policy isolation App tests pass; commands fixture checks shared marker across two inactive timelines and DateMarkersEditor controls; browser: a marker change propagates to the base plan and a cloned named timeline, and accessible date/marker controls with keyboard commit/cancel. Full GUI-A09 matrix not certified |
+| GUI-A10 | U+Q | P4.6/P5.2/P5.4 | G36/G38/G40 | P5-scoped (partial) — canonical signed-cents trajectory save/rename/compare/delete/reload and legacy incompatibility App-tested; Date/Marker pressed state and buffered Escape cancel component-tested; browser: canonical trajectory save/select/rename/delete/reload via accessible controls, plus legacy archival/refusal. Browser accessibility matrix not certified |
 
 ## TC01–TC13 — Testing/correctness findings (refactor/testing_correctness_audit.md)
 
 | ID | Owner | Task | Test/Evidence | Status |
 |---|---|---|---|---|
-| TC01 | Q | P0.1 (repro) | App.test.tsx:519 loan-row | reproduced |
+| TC01 | Q | P0.1 (repro) | Historical pool-era `App.test.tsx:519` loan-row; see Phase-0 reproduction record | reproduced (historical only; removed from current App suite, not a current regression assertion) |
 | TC02 | Q | P0.6 | projection.test.ts four_percent branch | P0.6-done (branch exercised) |
 | TC03 | Q | P0.6 | projection.test.ts minimum-warning | P0.6-done (warning asserted) |
 | TC04 | Q | P0.1/P5.5 | B01–B09 archived snapshots | baseline |
-| TC05 | S+Q | P1.3/P1.7 | CA11 | not-started |
-| TC06 | S+Q | P1.2/P1.7 | CA11 | not-started |
-| TC07 | S+Q | P1.3/P1.7 | CA11 | not-started |
-| TC08 | S+Q | P1.7 | CA11 | not-started |
+| TC05 | S+Q | P1.3/P1.7 | CA11 | P1-scoped — deterministic ID repair covered by focused suite |
+| TC06 | S+Q | P1.2/P1.7 | CA11 | P1-scoped — factory/reset isolation covered by focused suite |
+| TC07 | S+Q | P1.3/P1.7 | CA11 | P5-scoped (partial) — codec/storage record-local recovery with warning, siblings kept, non-blocking canonical save; planned copy `sourceSign:null` stays null while imported sign preserved; browser newer-version bytes survive automatic edit/pagehide. Whole corrupt payloads remain guarded |
+| TC08 | S+Q | P1.7 | CA11 | P1-scoped — round-trip/idempotence/unrelated-edit preservation covered by focused suite |
 | TC09 | Q | P7.4 | CA03–CA06 | not-started |
-| TC10 | Q | P2.7/P3 | CA01–CA13 | not-started |
-| TC11 | K+Q | P2.1 | CA08 | not-started |
-| TC12 | Q | P3S.4/P6.6 | parser/browser evidence | not-started |
-| TC13 | K+Q | P2.3/P6.7 | CA04/CA08/CA13 | not-started |
+| TC10 | Q | P2.7/P3 | CA01–CA13 | P5-scoped (partial) — P2/P3 focused suites plus P5 `phase5CrossFeature` 27/27 and `phase5Acceptance` 6/6, reporting/codec and App 43/43; gap audit complete, uncovered branches remain |
+| TC11 | K+Q | P2.1 | CA08 | P5-scoped (partial) — P2 date/cents and P5 CA08 cross-feature focused pass; aggregate PS20 benchmark pending P6 |
+| TC12 | Q | P3S.4/P6.6 | parser/browser evidence | P5-scoped (partial) — expense import parser/provenance focused + App occurred view-only test pass; browser evidence pending P6.6 |
+| TC13 | K+Q | P2.3/P6.7 | CA04/CA08/CA13 | P2-scoped (partial) — P2.3 solver properties + focused CA04/CA08/CA13 cases pass; P6.7 benchmark pending |
 
 ## CA01–CA13 — Correctness acceptance (refactor/testing_correctness_audit.md)
 
 | ID | Owner | Task | Test/Evidence | Status |
 |---|---|---|---|---|
-| CA01 | I+Q | P3I.3/P5.5 | Planned: fixed-date paycheck totals, distinct employee/employer destinations, ordered net allocations and remainder; oversubscription and career breaks reconcile to actual postings (F03–F07/R01/R04). | contract-frozen (P0) |
-| CA02 | R+Q | P4.2/P4.7 | Planned: each account close = opening + postings; annual flows = sum of actual months; total assets − liabilities = signed net worth (R07/R13). | contract-frozen (P0) |
-| CA03 | K+Q | P2.4/P2.7 | Planned: primary/fallback order, deduplication, eligibility and replenishment; partial, zero-funded, invalid and stale atomic commits; held deposit only for actual funding (CA09). | contract-frozen (P0) |
-| CA04 | K+Q | P2.3/P2.7 | Planned: independent taxable $1,000 gross→$970 net, $1,000 net→$1,030.93 gross, $0.17→$0.01 tax; separate rounded gross-based penalty, minimal/partial quote with ≤256 candidates or explicit diagnostic; qualified HSA, retired under-65 versus working 65+, custom penalty and birthday boundary (ADR-021). | contract-frozen (P0) |
-| CA05 | O+Q | P3D.3/P3H.1 | Planned: fixed-date debt interest/principal examples with full, partial and zero funding; principal reduces cash and debt equally, interest remains due, excess payment capped (R02). | contract-frozen (P0) |
-| CA06 | O+Q | P3D.1/P3D.2 | Planned: ordinary start through start+11 = twelve expenses/no debt; $100 0% over three fully funded dates = $33.34/$33.33/$33.33, recompute after partial payment, residual payoff once and retained debt (ADR-021). | contract-frozen (P0) |
-| CA07 | O+Q | P3S.2 | Planned: per-source rate new-item 4%, editable 0/6%, $100k observed balance→$4k/$6k initial target; later-start source uses own selected-date balance, min/max/inflation and warning versus depletion (ADR-021). | contract-frozen (P0) |
-| CA08 | K+Q | P2.1/P2.7 | Planned: independent account APYs/override, partial-month exponent, leap/day-31 and inclusive horizon cases; 960-month safe-cent and aggregate overflow diagnostics (PS20). | contract-frozen (P0) |
-| CA09 | O+Q | P3H.2 | Planned: independent $30k held toward $60k, then explicit $30k completion into $300k property/$240k mortgage; no pending ownership costs or duplicate deposit/property, retained sale deficiency. | contract-frozen (P0) |
-| CA10 | O+Q | P3S.1/P3S.3 | Planned: one obligation per dated manual/recurring occurrence, inclusive day-31 dates and partial unpaid; occurred imports remain view-only with older anchor or moved display date. | contract-frozen (P0) |
-| CA11 | S+Q | P1.7 | Planned: storage/App factory and reset isolation, absent versus empty/0/false/null, local malformed recovery, future-version block without overwrite, round-trip/pruning, inactive plans, reference cleanup and liability IDs (TC05–TC08). | contract-frozen (P0) |
-| CA12 | R+U+Q | P4.4/P4.5 | Planned: App/context checks for net-worth default, account-assets view, exact shortage warning versus eligible exhaustion, actual-funded previews, consistent current-dollar tooltips and frozen comparisons (GUI-A08/A10). | contract-frozen (P0) |
-| CA13 | P+Q | P6.7 | Planned: fixed-date deterministic/reference-versus-optimized ordered IDs, sources, cents and closes; cancelled/stale revisions never replace accepted results (B-P1–B-P8). | contract-frozen (P0) |
+| CA01 | I+Q | P3I.3/P5.5 | Planned: fixed-date paycheck totals, distinct employee/employer destinations, ordered net allocations and remainder; oversubscription and career breaks reconcile to actual postings (F03–F07/R01/R04). | P5-scoped (partial) — composed 5-month Initial→2026-04 fixture pins distinct employee/employer matches, percent/fixed allocations and 1_075_000¢ close; ordered 105_000¢ requests vs 90_000¢ net full/full/partial/skip; most-recent-started career wins overlap without double payroll; 50_000¢ cap sends exactly 10_000¢ overflow once. App edits/reloads dated cap. Nonmonthly-frequency and employer HSA composed branches remain |
+| CA02 | R+Q | P4.2/P4.7/P5.5 | Planned: each account close = opening + postings; annual flows = sum of actual months; total assets − liabilities = signed net worth (R07/R13). | P5-scoped (partial) — cross-feature close grid `[100_000,150_000,250_000]¢`, composed 24-month annual Σactual months/year stocks 1_030_000¢/2_110_000¢; D26 per-posting expected signed Δ = Σaccount + Σproperty/deposit − Σliability with live principal and pure spending, opening −300_000¢ → close −270_000¢, residual 0. Full nonzero property/interest per-posting inventory remains |
+| CA03 | K+Q | P2.4/P2.7/P5.5 | Planned: primary/fallback order, deduplication, eligibility and replenishment; partial, zero-funded, invalid and stale atomic commits; held deposit only for actual funding (CA09). | P5-scoped (partial) — cross-feature primary-first split `10_000/20_000¢`, atomic no-op and P2 focused; purchase $200 3-source full plus zero-fund App cases; D16 resolved order keeps global primary distinct from committed fallback. Complete CA03 branch review pending |
+| CA04 | K+Q | P2.3/P2.7/P5.5 | Planned: independent taxable $1,000 gross→$970 net, $1,000 net→$1,030.93 gross, $0.17→$0.01 tax; separate rounded gross-based penalty, minimal/partial quote with ≤256 candidates or explicit diagnostic; qualified HSA, retired under-65 versus working 65+, custom penalty and birthday boundary (ADR-021). | P5-scoped (partial) — cross-feature gross = net + tax + penalty, default 20% HSA penalty and 65 waiver/gross-up; `taxes.test.ts` 30/30 now pins custom **10%** penalty/age-**60** waiver (before/on birthday), $1,000 gross → 20_000¢ tax + 10_000¢ penalty + 70_000¢ net; custom net→gross identity. PS06 benchmark pending P6 |
+| CA05 | O+Q | P3D.3/P3H.1/P5.5 | Planned: fixed-date debt interest/principal examples with full, partial and zero funding; principal reduces cash and debt equally, interest remains due, excess payment capped (R02). | P5-scoped (partial) — cross-feature full (`190_000/110_000¢`), partial (short `6_000¢`), zero (no debit/no postings); P3 loans tests; App loan editor mounts. Complete CA05 review pending |
+| CA06 | O+Q | P3D.1/P3D.2/P5.5 | Planned: ordinary start through start+11 = twelve expenses/no debt; $100 0% over three fully funded dates = $33.34/$33.33/$33.33, recompute after partial payment, residual payoff once and retained debt (ADR-021). | P5-scoped (partial) — cross-feature fully funded `[3334,3333,3333]¢`, ordinary card 12×`1_000¢` and a composed Jan3334 funded/Feb3333 unmet/Mar6666 residual paid once, coincident payoff no second quote/posting; App funded/shortfall/ordinary CRUD pass. Other card/browser branches remain |
+| CA07 | O+Q | P3S.2/P5.5 | Planned: per-source rate new-item 4%, editable 0/6%, $100k observed balance→$4k/$6k initial target; later-start source uses own selected-date balance, min/max/inflation and warning versus depletion (ADR-021). | P5-scoped (partial) — `phase5CrossFeature` 4% frozen at first share `33_333¢`, Σ `400_000¢`, close `9_600_000¢`; explicit 0% stays zero; prior P3 `retirement.test.ts`. Reporting/warning pending |
+| CA08 | K+Q | P2.1/P2.7/P5.5 | Planned: independent account APYs/override, partial-month exponent, leap/day-31 and inclusive horizon cases; 960-month safe-cent and aggregate overflow diagnostics (PS20). | P5-scoped (partial) — `phase5CrossFeature` exact 6.5% APY (1-month `5_262¢`, 24-month `1_134_226¢` ≠ naive single-round), clipped `16/31` month `2_712¢`; `projection.test.ts` 42/42 now pins a 5% retirement override on the clipped 2026-01-16 month (2_101¢ growth) and a **-100% persisted percentage** wiping a $10k account to 0 without liability. Other leap/day-31 primitives are focused-tested; cross-feature day-31 recurrence belongs to **CA10**; PS20 benchmark pending P6 |
+| CA09 | O+Q | P3H.2/P5.5 | Planned: independent $30k held toward $60k, then explicit $30k completion into $300k property/$240k mortgage; no pending ownership costs or duplicate deposit/property, retained sale deficiency. | P5-scoped (partial) — cross-feature Jan held `3_000_000¢`, Feb atomic completion to property `30_000_000¢`/mortgage `24_000_000¢`/NW `6_000_000¢`; App housing editor/pending property/rental tests pass. Full CA09 review pending |
+| CA10 | O+Q | P3S.1/P3S.3/P5.5 | Planned: one obligation per dated manual/recurring occurrence, inclusive day-31 dates and partial unpaid; occurred imports remain view-only with older anchor or moved display date. | P5-scoped (partial) — `phase5CrossFeature` CA10 one dated occurrence; its day-31 planner/spending clamp is currently placed under the CA08 describe (line ~544), plus `planner.test.ts`/`spending.test.ts` recurrence cases. App occurred import view-only test passes; full row review pending |
+| CA11 | S+Q | P1.7/P5.3 | Planned: storage/App factory and reset isolation, absent versus empty/0/false/null, local malformed recovery, future-version block without overwrite, round-trip/pruning, inactive plans, reference cleanup and liability IDs (TC05–TC08). | P5-scoped (partial) — schema-v3 codec pruning/recovery, optional cap absence vs 0, planned `sourceSign:null` vs imported actual sign saved byte-stably; App/commands shared marker/reference cleanup; browser future-version guard and inactive-timeline account delete. Full CA11 matrix review pending |
+| CA12 | R+U+Q | P4.4/P4.5/P5.5 | Planned: App/context checks for net-worth default, account-assets view, exact shortage warning versus eligible exhaustion, actual-funded previews, consistent current-dollar tooltips and frozen comparisons (GUI-A08/A10). | P5-scoped (partial) — cross-feature immutable report/exact D16 warning; reporting D16 global-primary-only/no fallback, two committed secondaries, unknown primary and uncommitted quote tests; App-funded purchase detail/warnings/toggle/trajectory; chart/stacked/table same month-close 6% factor. Full browser/preview matrix not certified |
+| CA13 | P+Q | P6.7/P5.5 | Planned: fixed-date deterministic/reference-versus-optimized ordered IDs, sources, cents and closes; cancelled/stale revisions never replace accepted results (B-P1–B-P8). | P5-scoped (partial) — cross-feature byte-identical plans/postings/closes/diagnostics and an **exact date-major mandatory-before-discretionary loan→card→planner→purchase order**, explicitly not lexicographically sorted; D26 pins all five mandatory bands. P6.7 reference/optimized equivalence, cancellation and benchmarks pending |
 
 ## MD01–MD11 — Maintainability/documentation (refactor/maintainability_documentation_audit.md)
 
 | ID | Owner | Task | Test/Evidence | Status |
 |---|---|---|---|---|
-| MD01 | S+K | P7.1/P7.3 | Planned: module/dependency review confirms one rule owner, one projection facade and one atomic state writer; search for competing financial authorities. | not-started |
-| MD02 | S | P1.3 | Planned: load/edit/save/reset and marker/chain tests share one normalizer/reference registry; unrelated edits preserve fields (CA11/GUI-A09). | not-started |
-| MD03 | U+R | P4.5/P5.2 | Planned: compare card/career/housing/planner previews with the same context/revision's audit and selectors (CA12/GUI-A03/A05/A07). | not-started |
-| MD04 | S | P1.1 | Planned: canonical type/codec review for account IDs, units and version; consumer search and build after obsolete pool/source aliases are removed (CA11). | not-started |
+| MD01 | S+K | P7.1/P7.3 | Planned: module/dependency review confirms one rule owner, one projection facade and one atomic state writer; search for competing financial authorities. | P2-scoped (partial) — P2.2 sole `commitChanges` + P2.7 single `projectScenario` facade now exist; competing-authority search/removal pending P7.1/P7.3 |
+| MD02 | S | P1.3 | Planned: load/edit/save/reset and marker/chain tests share one normalizer/reference registry; unrelated edits preserve fields (CA11/GUI-A09). | P5-scoped (partial) — codec + commands registry; App timeline/marker/reset/persistence tests pass; full linked-reference GUI matrix not reviewed |
+| MD03 | U+R | P4.5/P5.2 | Planned: compare card/career/housing/planner previews with the same context/revision's audit and selectors (CA12/GUI-A03/A05/A07). | P5-scoped (partial) — App consumes one report for displayed card/housing/planner results; cross-view audit comparison review pending |
+| MD04 | S | P1.1 | Planned: canonical type/codec review for account IDs, units and version; consumer search and build after obsolete pool/source aliases are removed (CA11). | P5-scoped (partial) — account-only types/codec, early obsolete-consumer removal and green build; full P7 consumer search pending |
 | MD05 | S+K | P7.3 | Planned: search all callers before deleting duplicate/dead helpers, then compile/build and inspect remaining consumers; no assumed lint suite. | not-started |
-| MD06 | S | P1.2 | Planned: two independent factory/load/reset instances plus absent/empty/0/false/null and local-error recovery tests (CA11). | not-started |
+| MD06 | S | P1.2 | Planned: two independent factory/load/reset instances plus absent/empty/0/false/null and local-error recovery tests (CA11). | P1-scoped — independent factories + absent/empty/0/false/null + recovery covered by focused suite |
 | MD07 | Q | P0.6/P7.4 | P0.6 four-percent branch and minimum-warning tests; planned independently calculated CA fixtures and review of obsolete titles/legacy setup (TC02–TC04). | not-started |
 | MD08 | S+Q | P7.5 | Planned: cross-check AGENTS/CODEMAP/TEST_MAP paths and listed suites against actual runtime files after cutover; correct obsolete migration/import claims. | not-started |
 | MD09 | S+Q | P7.5 | Planned: compare README diagrams and tracking route with runtime; verify documented install/dev/test/build commands and current-versus-target status. | not-started |
@@ -197,10 +208,10 @@ Owners (workstreams, refactor/implementation_plan.md §2): S=Schema/config, K=Ke
 |---|---|---|---|---|
 | PS01 | P | P6.2 | Planned: B-P8 run counts and cache hits for financial versus view-only edits; named-context correctness and bounded cache. | not-started |
 | PS02 | S+P | P1.3/P6.2 | Planned: B-P6 timeline-count scaling, localized reference invalidation and CA11 inactive-plan preservation; no eager all-timeline recomputation. | not-started |
-| PS03 | P+K | P2.6/P6.3 | Planned: B-P3 sparse date seeking and B-P4 dense E/active-schedule counts; no pre-anchor expansion. | not-started |
-| PS04 | K | P2.4/P2.5 | Planned: B-P5 candidate checks K for 1/2/10/100 sources; CA03 eligibility and replenishment after earlier exhaustion. | not-started |
-| PS05 | K | P2.2 | Planned: B-P5 touched-entity/sparse-overlay counts with no full-ledger copy per quote; CA03 invalid/stale atomic no-op. | not-started |
-| PS06 | K | P2.3 | Planned: CA04/TC13 minimal-gross, separately rounded penalty and reconciliation properties; B-P5 high-safe inputs prove rounding-error bracket checks ≤256 candidates or emit explicit unsupported diagnostic (ADR-021). | not-started |
+| PS03 | P+K | P2.6/P6.3 | Planned: B-P3 sparse date seeking and B-P4 dense E/active-schedule counts; no pre-anchor expansion. | P2-scoped (partial) — P2.6 scheduler sparse-seek/stable-order unit cases pass; B-P3/B-P4 benchmark pending P6 |
+| PS04 | K | P2.4/P2.5 | Planned: B-P5 candidate checks K for 1/2/10/100 sources; CA03 eligibility and replenishment after earlier exhaustion. | P2-scoped (partial) — P2.4/P2.5 quote/source-order unit cases pass; B-P5 benchmark pending P6 |
+| PS05 | K | P2.2 | Planned: B-P5 touched-entity/sparse-overlay counts with no full-ledger copy per quote; CA03 invalid/stale atomic no-op. | P2-scoped (partial) — P2.2 sparse-overlay/atomic no-op unit cases pass; B-P5 touched-entity benchmark pending P6 |
+| PS06 | K | P2.3 | Planned: CA04/TC13 minimal-gross, separately rounded penalty and reconciliation properties; B-P5 high-safe inputs prove rounding-error bracket checks ≤256 candidates or emit explicit unsupported diagnostic (ADR-021). | P2-scoped (partial) — P2.3 solver ≤256/bracket/reconciliation unit cases pass; B-P5 high-safe benchmark pending P6 |
 | PS07 | R | P4.1 | Planned: B-P2/B-P4 audit bytes per emitted event E; query full trace by source/account/month without truncation (CA02). | not-started |
 | PS08 | P | P6.3 | Planned: B-P2/B-P4 worker transport latency/bytes, main+worker peak heap and paged complete-audit retrieval. | not-started |
 | PS09 | P | P6.3 | Planned: B-P8 rapid revisions measure cancellation-to-stop and stale rejection; B-P1/B-P2 input responsiveness, no partial commit. | not-started |
@@ -208,13 +219,13 @@ Owners (workstreams, refactor/implementation_plan.md §2): S=Schema/config, K=Ke
 | PS11 | U | P6.4 | Planned: B-P7 visible table/audit cell counts, scroll and focus latency, keyboard navigation and full-data export. | not-started |
 | PS12 | U | P6.4 | Planned: B-P7 chart geometry/hover/paint latency; preserved extrema and flags, coordinated stack totals and exact detail values. | not-started |
 | PS13 | U | P6.4 | Planned: B-P7 planner account/category/week index and visible-cell counts; scroll cost as weeks/categories grow. | not-started |
-| PS14 | K | P2.5 | Planned: B-P2 compilation counts per career/pay-plan boundary and account rate; CA08 unchanged date/rate results. | not-started |
+| PS14 | K | P2.5 | Planned: B-P2 compilation counts per career/pay-plan boundary and account rate; CA08 unchanged date/rate results. | P2-scoped (partial) — P2.5 compilation unit cases pass; B-P2 compile-count benchmark pending P6 |
 | PS15 | R | P4.3 | Planned: B-P2/B-P4 warning deduplication and reconciliation operation counts; CA02 monthly closing identity. | not-started |
 | PS16 | U+R | P4.4/P6.4 | Planned: B-P7 current-dollar toggle/visible-window cost and reused nominal result; CA12 date/units match chart, table and tooltip. | not-started |
 | PS17 | U | P6.2 | Planned: B-P8 UI-only edits reuse financial result; count React commits and recalculations without deep JSON comparisons. | not-started |
 | PS18 | P | P6.3/P6.5 | Planned: B-P6 import/history/trajectory payload and parse/preview time; retained original provenance and bounded displayed preview. | not-started |
 | PS19 | P | P6.1 | Planned: B-P8 hundred-edit bounded diagnostic log; B-P1/B-P2 stage metrics with p50/p95/sample count. | not-started |
-| PS20 | K | P2.1/P6.7 | Planned: CA08/CA13 long-growth runtime and aggregate safe-cent cases; B-P5 high-safe inputs and explicit unsupported-range diagnostics. | not-started |
+| PS20 | K | P2.1/P6.7 | Planned: CA08/CA13 long-growth runtime and aggregate safe-cent cases; B-P5 high-safe inputs and explicit unsupported-range diagnostics. | P2-scoped (partial) — P2.1 safe-cent + 960-occurrence unit cases pass; CA08/CA13 long-growth benchmark pending P6 |
 
 ## B-P1–B-P8 — Benchmark profiles (refactor/performance_scalability_audit.md)
 

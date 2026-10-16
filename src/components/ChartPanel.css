@@ -1,0 +1,23 @@
+.report-chart { color: #24332f; font-family: 'Avenir Next', Avenir, sans-serif; }
+.report-chart__key { display: flex; align-items: center; gap: .55rem; justify-content: flex-end; font-size: .78rem; color: #62716b; padding: .25rem .5rem .6rem; }
+.key-net, .key-debt { width: 1.4rem; height: 3px; background: #167c70; margin-left: .5rem; }
+.key-debt { background: #cf7752; border-top: 1px dashed #fff; }
+.report-chart__canvas { position: relative; min-width: 0; }
+.report-chart svg { display: block; width: 100%; height: auto; overflow: visible; outline-offset: 3px; }
+.report-chart svg:focus-visible { outline: 2px solid #167c70; border-radius: 4px; }
+.grid-line { stroke: #e6ebe8; stroke-width: 1; }
+.zero-line { stroke: #71817b; stroke-width: 1.5; }
+.axis-label { fill: #77847f; font-size: 11px; }
+.net-line { fill: none; stroke: #167c70; stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.debt-line { fill: none; stroke: #cf7752; stroke-width: 2; stroke-dasharray: 6 4; stroke-linejoin: round; }
+.flag-label { font-size: 10px; font-weight: 700; cursor: pointer; }
+.hover-rule { stroke: #788780; stroke-width: 1; stroke-dasharray: 3 4; }
+.hover-dot { fill: #fff; stroke: #167c70; stroke-width: 3; }
+.chart-tooltip { position: absolute; right: .75rem; top: .5rem; display: grid; gap: .22rem; background: rgba(255,255,255,.96); border: 1px solid #dce5e0; border-radius: 8px; box-shadow: 0 5px 20px #183b2a18; padding: .65rem .8rem; font-size: .76rem; pointer-events: none; }
+.chart-tooltip strong { color: #36544a; font-size: .8rem; }
+.tooltip-event { color: #a45638; font-weight: 600; }
+.chart-empty { padding: 2.5rem 1rem; color: #67756f; text-align: center; background: #f6f8f6; border: 1px dashed #ccd6d0; border-radius: 8px; }
+.chart-range, .flag-color { display: flex; justify-content: flex-end; gap: 1rem; margin: .6rem .4rem; color: #66746e; font-size: .78rem; }
+.chart-range input, .flag-color input { margin-left: .35rem; }
+@media (max-width: 560px) { .report-chart__key { justify-content: flex-start; } .chart-tooltip { position: static; margin: .4rem; } .axis-label { font-size: 9px; } }
+@media (prefers-reduced-motion: no-preference) { .net-line, .debt-line { animation: chart-arrive .55s ease-out both; } @keyframes chart-arrive { from { opacity: .25; } to { opacity: 1; } } }

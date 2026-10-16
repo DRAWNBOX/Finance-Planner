@@ -1,0 +1,26 @@
+.housing-funding-groups { display: grid; gap: .75rem; }
+.housing-funding-groups > h3 { margin: 0; }
+.housing-funding-groups > p { margin: -.4rem 0 .25rem; color: var(--text-muted, #69727c); }
+.housing-funding-group { min-width: 0; border: 1px solid var(--border-color, #d8dce1); border-radius: .7rem; padding: .75rem .9rem; background: color-mix(in srgb, var(--surface, white) 92%, #e9edf1); }
+.housing-funding-group summary { cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: .75rem; font-weight: 650; }
+.housing-funding-state { color: var(--text-muted, #69727c); font-size: .78rem; font-weight: 500; }
+.housing-funding-state.is-override { color: var(--accent, #176b5b); }
+.housing-funding-toggle { margin: .8rem 0; }
+.housing-date-field { display: grid; align-content: start; gap: .35rem; }
+.housing-funding-group .funding-policy { margin-top: .65rem; }
+@media (max-width: 640px) {
+  .housing-funding-group { padding: .65rem; }
+  .housing-funding-group summary { align-items: flex-start; }
+}
+.housing-results { margin-top: 1.5rem; padding: clamp(1rem, 3vw, 1.6rem); border: 1px solid var(--border-color, #d8dce1); border-radius: 1rem; background: linear-gradient(135deg, color-mix(in srgb, var(--surface, white) 92%, #e8f1ed), var(--surface, white)); box-shadow: 0 12px 30px rgb(25 45 39 / 7%); }
+.housing-results__eyebrow { margin: 0 0 .35rem; color: var(--accent, #176b5b); font-size: .72rem; font-weight: 750; letter-spacing: .12em; }
+.housing-results h2 { margin: 0 0 1rem; font-size: clamp(1.2rem, 2vw, 1.6rem); }
+.housing-results__status { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1rem; padding: .9rem 1rem; border-left: 3px solid var(--accent, #176b5b); background: color-mix(in srgb, var(--surface, white) 84%, #e8f1ed); }
+.housing-results__table-wrap { overflow-x: auto; margin-top: 1rem; }
+.housing-results table { width: 100%; border-collapse: collapse; text-align: right; }
+.housing-results caption { padding: .75rem 0; text-align: left; font-weight: 700; }
+.housing-results th, .housing-results td { padding: .65rem .5rem; border-bottom: 1px solid var(--border-color, #d8dce1); }
+.housing-results th:first-child { text-align: left; }
+.housing-results__note, .housing-results__warning { line-height: 1.55; }
+.housing-results__note { color: var(--text-muted, #69727c); }
+.housing-results__warning { padding: .75rem 1rem; border-radius: .6rem; background: color-mix(in srgb, #a43d31 9%, var(--surface, white)); color: #87362d; }

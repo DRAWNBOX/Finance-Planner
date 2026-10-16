@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useEffect, useState } from 'react';
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 
 interface BufferedNumberInputProps {
   value: number;
@@ -22,12 +22,17 @@ export const BufferedNumberInput = ({
   onCommit
 }: BufferedNumberInputProps) => {
   const [draftValue, setDraftValue] = useState(String(value));
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
     setDraftValue(String(value));
   }, [value]);
 
   const commitDraft = () => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      return;
+    }
     if (draftValue.trim() === '' || Number.isNaN(Number(draftValue))) {
       setDraftValue(String(value));
       return;
@@ -41,7 +46,10 @@ export const BufferedNumberInput = ({
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter' || event.key === 'Escape') {
       if (event.key === 'Escape') {
+        cancelledRef.current = true;
         setDraftValue(String(value));
+      } else {
+        cancelledRef.current = false;
       }
 
       event.currentTarget.blur();

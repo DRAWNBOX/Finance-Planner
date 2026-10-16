@@ -46,6 +46,7 @@ export const DateOrMarkerInput = ({
         <button
           type="button"
           className={usingMarker ? 'date-or-marker-option' : 'date-or-marker-option active'}
+          aria-pressed={!usingMarker}
           disabled={disabled}
           onClick={() => onChange(value, null)}
         >
@@ -54,6 +55,7 @@ export const DateOrMarkerInput = ({
         <button
           type="button"
           className={usingMarker ? 'date-or-marker-option active' : 'date-or-marker-option'}
+          aria-pressed={usingMarker}
           disabled={disabled || markers.length === 0}
           title={markers.length === 0 ? 'Create a date marker first' : 'Use a date marker'}
           onClick={() => onChange(value, selectedMarker?.id ?? markers[0]?.id ?? null)}

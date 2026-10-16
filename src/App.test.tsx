@@ -1,2500 +1,1638 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+/**
+ * Phase 5 P5.4 — Q-owned App integration acceptance (GUI-A01–A10 / G01–G40).
+ *
+ * These are independent RTL flows over the Stage-2 canonical `App` shell:
+ * canonical `createConfigurationCommands` writes, one `projectFeatureScenario`
+ * projection, controlled localStorage, and a fixed reference date.
+ *
+ * Scope + honesty notes:
+ * - The historical 83 pool-era tests are intentionally replaced; the originals
+ *   remain in Git HEAD. No assertion depends on removed pool controls, negative
+ *   hypothetical purchase balances, or legacy card modes.
+ * - GUI-A05/A06 card-plan acceptance is covered end-to-end against the real
+ *   `CardPlanEditor` mount: ordinary add/edit/duplicate/remove with base-vs-timeline
+ *   isolation and save/reload, the one linked global 0%-card liability with zero
+ *   opening debt (and a pinned `initialBalance`, never double-counted), the funded
+ *   `$100`/3-installment and partial-shortfall schedules read back from the one
+ *   `projectFeatureScenario(...).report`, marker-linked dates, and account-source
+ *   fallback with no pool aliases.
+ * - GUI-A10 canonical signed-cents save/compare and legacy incompatibility are
+ *   tested against the mounted `TrajectoryComparisonChart`; this focused RTL suite
+ *   does not certify the entire GUI-A01–A10/G01–G40 browser matrix.
+ * - Shortfall/exhaustion/fallback language is asserted verbatim from the engine
+ *   selector (`projectFeatureScenario(...).report`) with no invented strings.
+ */
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { createDefaultCareerEntry } from './defaultScenario';
-import { loadAppState } from './storage';
+import {
+  createDefaultHousingEntry,
+  createDefaultOrdinaryCardSchedule,
+  createDefaultRentalEntry,
+  createDefaultScenario,
+  createDefaultZeroInterestCardPlan
+} from './defaultScenario';
+import { createCareerPayPlan, createDefaultPaycheck } from './paycheck';
+import { decodeAppState, encodeAppState, createDefaultUiState } from './storage';
+import { projectFeatureScenario } from './engine/featureHandlers';
+import { createCanonicalTrajectorySnapshot } from './trajectoryFreeze';
+import { canonicalAnnualPointsFromReport } from './trajectoryReportAdapter';
+import type { CanonicalTrajectorySnapshot, ExpenseEntry, Scenario, TrajectorySnapshot } from './types';
 
-const makeBirthDate = (yearsAgo: number) => {
-  const date = new Date();
-  date.setFullYear(date.getFullYear() - yearsAgo);
+const KEY = 'finance-planner-state';
+const FIXED_DATE = new Date('2026-06-15T12:00:00.000Z');
+const CHECKING = 'checking-account-default';
+const EMERGENCY = 'emergencyFund-account-default';
+const INVESTMENTS = 'investments-account-default';
+const displayCents = (cents: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(cents / 100);
 
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
+const freshScenario = (mutate: (scenario: Scenario) => void = () => {}) => {
+  const scenario = createDefaultScenario(FIXED_DATE);
+  mutate(scenario);
+  return scenario;
 };
 
-const parseCurrency = (value: string) => Number(value.replace(/[^0-9.-]/g, ''));
-const parseFirstNumber = (value: string) => Number((value.match(/\d+/) ?? ['0'])[0]);
+/** Write controlled canonical bytes before the App mounts (App reads on mount). */
+const persistScenario = (scenario: Scenario) => {
+  const { json } = encodeAppState({ scenario, ui: createDefaultUiState() }, FIXED_DATE);
+  window.localStorage.setItem(KEY, json);
+};
 
-describe('App', () => {
+/** The exact scenario the App hydrates from, so expected numbers are not invented. */
+const decodeStored = (): Scenario => decodeAppState(window.localStorage.getItem(KEY), FIXED_DATE).scenario;
+
+const renderApp = () => render(<App />);
+const clickButton = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+
+describe('App integration (Phase 5 GUI acceptance)', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_DATE);
     window.localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
-  it('keeps the graph visible and shows the results table', () => {
-    render(<App />);
+  // GUI-A09 / G39 — navigation, section mount, timeline manager -----------------
+  it('renders the four top sections and switches each section sub-tab', () => {
+    persistScenario(freshScenario());
+    renderApp();
 
-    expect(screen.getByRole('img', { name: /portfolio value over time/i })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Career' })).toBeInTheDocument();
+    for (const name of ['Options', 'Finances Prediction', 'Net Worth', 'Expenses']) {
+      expect(screen.getAllByRole('button', { name }).length).toBeGreaterThan(0);
+    }
+
+    clickButton('Net Worth');
+    expect(screen.getByRole('heading', { name: 'Accounts & funding' })).toBeInTheDocument();
+
+    clickButton('Expenses');
+    expect(screen.getByRole('heading', { name: 'Plan expenses by account' })).toBeInTheDocument();
+
+    clickButton('Finances Prediction');
+    expect(screen.getByRole('heading', { name: 'Career plan' })).toBeInTheDocument();
+    clickButton('Timeline');
+    expect(screen.getByRole('region', { name: 'Projection results' })).toBeInTheDocument();
+    clickButton('Warnings');
+    expect(screen.getByRole('heading', { name: 'Plan checks' })).toBeInTheDocument();
+    clickButton('Trajectory');
+    expect(screen.getByRole('heading', { name: 'Trajectory manager' })).toBeInTheDocument();
+    expect(screen.getByText('No trajectories saved yet')).toBeInTheDocument();
+    clickButton('Date markers');
+    expect(screen.getByText(/No date markers yet/)).toBeInTheDocument();
   });
 
-  it('shows net income as the results-table income column', () => {
-    render(<App />);
+  it('adds, renames, confirms deletion, and isolates a named timeline', () => {
+    persistScenario(freshScenario());
+    renderApp();
 
-    expect(screen.getByRole('columnheader', { name: 'Net income' })).toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: 'Salary' })).not.toBeInTheDocument();
+    expect(screen.getByText(/One plan, with room to explore/)).toBeInTheDocument();
+    clickButton('＋ Add timeline');
+    expect(screen.getByText('Showing Timeline 1')).toBeInTheDocument();
+
+    clickButton('Rename Timeline 1');
+    fireEvent.change(screen.getByLabelText('Timeline name'), { target: { value: 'Aggressive' } });
+    clickButton('Save');
+    expect(screen.getByText('Showing Aggressive')).toBeInTheDocument();
+
+    // Cancelling the confirmation keeps the timeline.
+    clickButton('Delete Aggressive');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    clickButton('Keep timeline');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByText('Showing Aggressive')).toBeInTheDocument();
+
+    // Explicit delete returns to the original plan and the empty state.
+    clickButton('Delete Aggressive');
+    clickButton('Delete timeline');
+    expect(screen.getByText('Showing the original plan')).toBeInTheDocument();
+    expect(screen.getByText(/One plan, with room to explore/)).toBeInTheDocument();
   });
 
-  it('shows the finances prediction graph, table, and summary on Options', () => {
-    render(<App />);
+  it('writes purchases to the active timeline without touching the base plan', () => {
+    persistScenario(freshScenario());
+    renderApp();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSummary = screen.getByText(/Ending balance at age/i).textContent;
+    clickButton('Finances Prediction');
+    clickButton('＋ Add timeline');
+    clickButton('Purchases & expenses');
+    clickButton('＋ Add one-time purchase');
+    expect(screen.queryByText(/No purchases or loans yet/)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+    const timelineValue = (within(screen.getByLabelText('Selected timeline') as HTMLSelectElement).getByRole('option', { name: 'Timeline 1' }) as HTMLOptionElement).value;
 
-    expect(screen.getByRole('img', { name: /portfolio value over time/i })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Career' })).toBeInTheDocument();
-    expect(screen.getByText(/Ending balance at age/i).textContent).toBe(financeSummary);
+    // Switch to the base plan: its purchases are untouched.
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: '' } });
+    expect(screen.getByText(/No purchases or loans yet/)).toBeInTheDocument();
+
+    // Switch back: the timeline edit is preserved.
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: timelineValue } });
+    expect(screen.queryByText(/No purchases or loans yet/)).not.toBeInTheDocument();
   });
 
-  it('removes standalone contribution controls and prunes their obsolete saved configuration', () => {
-    const state = loadAppState();
-    window.localStorage.setItem('finance-planner-state', JSON.stringify({
-      ...state,
-      scenario: { ...state.scenario, contribution: { yearlyContribution: 17500, yearlyIncreaseRate: 2.9 } }
+  // GUI-A02 — valid no-career plans still project ------------------------------
+  it('renders chart, table and warnings with no enabled careers', () => {
+    persistScenario(freshScenario((scenario) => {
+      scenario.careerPlan = { ...scenario.careerPlan, enabled: false, entries: [] };
     }));
-    render(<App />);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+    renderApp();
 
-    expect(screen.queryByText('Yearly Contribution')).not.toBeInTheDocument();
-    expect(screen.queryByText('Yearly % Increase')).not.toBeInTheDocument();
-    expect(JSON.parse(window.localStorage.getItem('finance-planner-state')!).scenario).not.toHaveProperty('contribution');
-    expect(screen.getByRole('columnheader', { name: 'Career Savings' })).toBeInTheDocument();
+    clickButton('Finances Prediction');
+    expect(screen.getByText('No careers are needed for a valid plan. Add one whenever you want to include pay and deposits.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Start with a career' })).toBeInTheDocument();
+
+    clickButton('Timeline');
+    expect(screen.getByRole('region', { name: 'Projection chart' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Projection results' })).toBeInTheDocument();
+
+    clickButton('Warnings');
+    expect(screen.getByRole('heading', { name: 'Plan checks' })).toBeInTheDocument();
   });
 
-  it('shows an inline editor when an add-on checkbox is enabled', () => {
-    render(<App />);
+  // GUI-A01 / G04 — first-launch zeros, account CRUD, reset --------------------
+  it('starts every account at $0 opening, 0% return and no retirement override', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Net Worth');
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
-
-    fireEvent.click(screen.getAllByRole('checkbox', { name: 'Social Security' })[0]);
-
-    expect(screen.getAllByText('Social Security').length).toBeGreaterThan(0);
-    expect(screen.getByDisplayValue('24000')).toBeInTheDocument();
+    const openings = screen.getAllByLabelText(/Opening balance/);
+    const returns = screen.getAllByLabelText(/Annual return/);
+    const retirement = screen.getAllByLabelText(/Retirement return/);
+    expect(openings).toHaveLength(5);
+    openings.forEach((input) => expect(input).toHaveValue(0));
+    returns.forEach((input) => expect(input).toHaveValue(0));
+    retirement.forEach((input) => expect(input).toHaveValue(null));
   });
 
-  it('persists the global inflation toggle state', () => {
-    render(<App />);
+  it('preserves an account rate through an unrelated edit and a reload', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Net Worth');
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+    fireEvent.change(screen.getAllByLabelText(/Annual return/)[0], { target: { value: '6.5' } });
+    fireEvent.change(screen.getAllByLabelText('Account name')[0], { target: { value: 'Main' } });
+    window.dispatchEvent(new Event('pagehide'));
 
-    const inflationToggle = screen.getByRole('checkbox', { name: 'Enable inflation' });
-    expect(inflationToggle).toBeChecked();
+    cleanup();
+    renderApp();
+    clickButton('Net Worth');
 
-    fireEvent.click(inflationToggle);
-    expect(inflationToggle).not.toBeChecked();
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"inflationEnabled":false');
+    expect(screen.getAllByLabelText(/Annual return/)[0]).toHaveValue(6.5);
+    expect(screen.getAllByLabelText('Account name')[0]).toHaveValue('Main');
+    expect(screen.getAllByLabelText(/Retirement return/)[0]).toHaveValue(null);
   });
 
-  it('disables inflation-related controls when global inflation is off', () => {
-    render(<App />);
+  it('adds and removes an account, then resets the plan to first-launch zeros', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Net Worth');
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+    expect(screen.getAllByLabelText('Account name')).toHaveLength(5);
+    clickButton('＋ Add account');
+    expect(screen.getAllByLabelText('Account name')).toHaveLength(6);
 
-    const inflationToggle = screen.getByRole('checkbox', { name: 'Enable inflation' });
-    fireEvent.click(inflationToggle);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove account' })[0]);
+    const confirmation = screen.getByRole('alert');
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Remove account' }));
+    expect(screen.getAllByLabelText('Account name')).toHaveLength(5);
 
-    const inflationControl = screen.getByText('Inflation Rate %').closest('label') as HTMLElement;
-    const inflationRateInput = within(inflationControl).getByRole('spinbutton');
+    fireEvent.change(screen.getAllByLabelText(/Annual return/)[0], { target: { value: '6.5' } });
+    // Flush the debounced edit so the "preserved bytes" assertion is stable.
+    window.dispatchEvent(new Event('pagehide'));
+    const beforeReset = window.localStorage.getItem(KEY);
 
-    expect(inflationRateInput).toBeDisabled();
+    // GUI-A01 — cancelling the reset keeps the edited plan and the exact stored bytes.
+    clickButton('Reset plan');
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Keep my plan' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText(/Annual return/)[0]).toHaveValue(6.5);
+    expect(window.localStorage.getItem(KEY)).toBe(beforeReset);
+
+    // Confirming the reset restores first-launch zeros.
+    clickButton('Reset plan');
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Reset plan' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText(/Annual return/)[0]).toHaveValue(0);
+    expect(screen.getAllByLabelText('Account name')[0]).toHaveValue('Checking');
   });
 
-  it('re-enables inflation controls and preserves checked states', () => {
-    render(<App />);
+  // GUI-A09 / G14 — orphaned funding reference is never silently redirected -----
+  it('keeps an orphaned global funding reference visible without redirecting it', () => {
+    persistScenario(freshScenario((scenario) => {
+      scenario.fundingPolicy = { primaryAccountId: 'ghost', fallbackAccountIds: ['also-ghost'] };
+    }));
+    renderApp();
+    clickButton('Net Worth');
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
-
-    const inflationToggle = screen.getByRole('checkbox', { name: 'Enable inflation' });
-    const inflationRateInput = screen.getByRole('spinbutton');
-    expect(inflationRateInput).toHaveValue(2.9);
-
-    fireEvent.click(inflationToggle);
-    fireEvent.click(inflationToggle);
-
-    expect(inflationRateInput).toBeEnabled();
-    expect(inflationRateInput).toHaveValue(2.9);
+    expect(screen.getByRole('combobox', { name: 'Primary account' })).toHaveValue('ghost');
+    expect(screen.getByText(/will not be redirected automatically/i)).toBeInTheDocument();
   });
 
-  it('derives current age from date of birth and persists the option', () => {
-    render(<App />);
+  // GUI-A03 / G09–G11 — granular paycheck owns the plan and reloads -------------
+  it('persists a granular paycheck amount on the initial plan across a reload', () => {
+    persistScenario(freshScenario());
+    renderApp();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getByRole('checkbox', { name: /Use current age from birthday/i }));
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
+    clickButton('Finances Prediction');
+    clickButton('Edit paycheck');
+    const modal = screen.getByRole('heading', { name: 'Configure Paycheck' }).closest('.paycheck-modal') as HTMLElement;
+    fireEvent.change(within(modal).getAllByRole('spinbutton')[2], { target: { value: '6000' } });
+    clickButton('Save Paycheck');
+    expect(screen.queryByRole('heading', { name: 'Configure Paycheck' })).not.toBeInTheDocument();
+    window.dispatchEvent(new Event('pagehide'));
 
-    const dateInput = screen.getByLabelText('Date of Birth');
-    fireEvent.change(dateInput, { target: { value: makeBirthDate(40) } });
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const currentAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
-
-    expect(currentAgeInput).toHaveValue(40);
-    expect(currentAgeInput).toBeDisabled();
-
-    const stored = window.localStorage.getItem('finance-planner-state');
-
-    expect(stored).toContain('"useBirthdayBasedStartAge":true');
-    expect(stored).toContain('"dateOfBirth"');
+    cleanup();
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Edit paycheck');
+    const reloaded = screen.getByRole('heading', { name: 'Configure Paycheck' }).closest('.paycheck-modal') as HTMLElement;
+    expect(within(reloaded).getAllByRole('spinbutton')[2]).toHaveValue(6000);
   });
 
-  it('resets scenario from options tab only after confirmation', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm');
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
-    expect(screen.getByLabelText('Date of Birth')).toBeInTheDocument();
-
-    confirmSpy.mockReturnValue(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Reset Scenario' }));
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(screen.getByLabelText('Date of Birth')).toBeInTheDocument();
-
-    confirmSpy.mockReturnValue(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Reset Scenario' }));
-    expect(screen.getByText('Career Timeline')).toBeInTheDocument();
-
-    confirmSpy.mockRestore();
-  });
-
-  it('shows finances prediction sub-tabs and defaults to careers content', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    expect(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' })).toBeInTheDocument();
-    expect(within(financeSubTabsElement).getByRole('button', { name: 'Careers' })).toBeInTheDocument();
-    expect(within(financeSubTabsElement).getByRole('button', { name: 'Timeline Management' })).toBeInTheDocument();
-    expect(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' })).toBeInTheDocument();
-    expect(screen.getByText('Career Timeline')).toBeInTheDocument();
-    expect(screen.queryByText('Large Purchases Table')).not.toBeInTheDocument();
-  });
-
-  it('switches finances prediction content by sub-tab', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-    expect(screen.getByText('Large Purchases Table')).toBeInTheDocument();
-
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Timeline Management' }));
-    expect(screen.queryByText('Future Life Events')).not.toBeInTheDocument();
-    expect(screen.queryByText('Future Retirement')).not.toBeInTheDocument();
-
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
-    expect(screen.queryByText('Retirement Calculator')).not.toBeInTheDocument();
-    expect(screen.getByText('Future Retirement')).toBeInTheDocument();
-    expect(screen.getByText(/Current age from Options:/i)).toBeInTheDocument();
-    expect(screen.getByText(/Career-derived retirement age:/i)).toBeInTheDocument();
-    expect(screen.getByText(/Retirement horizon:/i)).toBeInTheDocument();
-    expect(screen.getByText(/Retirement assets:/i)).toBeInTheDocument();
-
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-    expect(screen.getByText('Large Purchases Table')).toBeInTheDocument();
-    expect(screen.getByText('Loans Table')).toBeInTheDocument();
-  });
-
-  it('shows graph and results table in purchases and expenses sub-tab', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    expect(screen.getByRole('img', { name: /portfolio value over time/i })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Career' })).toBeInTheDocument();
-
-    const portfolioGraphBefore = screen.getByRole('img', { name: /portfolio value over time/i });
-    const initialPortfolioFlagCount = portfolioGraphBefore.querySelectorAll('.chart-flag-stem').length;
-
-    const addPurchaseButton = screen.getByRole('button', { name: '+ Purchase' });
-    fireEvent.click(addPurchaseButton);
-    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
-    fireEvent.click(addPurchaseButton);
-    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
-
-    const portfolioGraph = screen.getByRole('img', { name: /portfolio value over time/i });
-    const updatedPortfolioFlagCount = portfolioGraph.querySelectorAll('.chart-flag-stem').length;
-    expect(updatedPortfolioFlagCount).toBeGreaterThan(initialPortfolioFlagCount);
-    expect(portfolioGraph.querySelectorAll('.chart-flag-callout').length).toBe(updatedPortfolioFlagCount);
-
-    fireEvent.click(screen.getByRole('radio', { name: 'Stacked Savings Graph' }));
-    const stackedGraph = screen.getByRole('img', { name: /stacked savings balances over time/i });
-    expect(stackedGraph.querySelectorAll('.chart-flag-stem').length).toBe(updatedPortfolioFlagCount);
-    expect(stackedGraph.querySelectorAll('.chart-flag-callout').length).toBe(updatedPortfolioFlagCount);
-  });
-
-  it('renders expenses as a top-level tab to the right of net worth', () => {
-    render(<App />);
-
-    const topTabs = screen.getAllByRole('button').filter((button) =>
-      ['Options', 'Finances Prediction', 'Net Worth', 'Expenses'].includes(button.textContent ?? '')
-    );
-    const labels = topTabs.map((button) => button.textContent);
-    expect(labels).toEqual(['Options', 'Finances Prediction', 'Net Worth', 'Expenses']);
-  });
-
-  it('hides graph and results table in expenses tab and shows planner UI', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Expenses' })[0]);
-
-    expect(screen.queryByRole('img', { name: /portfolio value over time/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: 'Career' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add Event' })).toBeInTheDocument();
-    expect(screen.getByText('Import Sources (Audit + Rollback)')).toBeInTheDocument();
-  });
-
-  it('imports expense csv source and removes only entries from that source', async () => {
-    render(<App />);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Expenses' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Add Event' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Create Event' }));
-
-    const csv = ['Date,Description,Amount,Account', '2027-01-15,Movies,45.25,Checking'].join('\n');
-    const file = new File([csv], 'expenses.csv', { type: 'text/csv' });
-    const fileInput = document.querySelector('input[type="file"][accept=".csv,.pdf"]') as HTMLInputElement;
-    fireEvent.change(fileInput, { target: { files: [file] } });
-
-    await waitFor(() => {
-      expect(screen.getByText(/expenses\.csv/i)).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /Remove Source \+ Imported Entries/i }));
-
-    await waitFor(() => {
-      const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-      expect(stored).toContain('"originType":"manual"');
-      expect(stored).not.toContain('"fileName":"expenses.csv"');
-    });
-  });
-
-  it('shows weekly planning matrix with per-account categories and chart controls', () => {
-    render(<App />);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Expenses' })[0]);
-
-    expect(screen.getAllByRole('combobox').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Weekly Spend + Balance Overlay')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Balance').length).toBeGreaterThan(0);
-    expect(screen.getByText(/Last updated account balance:/i)).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Subscription')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Gas')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Purchases')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Fun')).toBeInTheDocument();
-
-    const addCategoryInput = screen.getByPlaceholderText('e.g. Groceries');
-    fireEvent.change(addCategoryInput, { target: { value: 'Travel' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add Category' }));
-    expect(screen.getByDisplayValue('Travel')).toBeInTheDocument();
-  });
-
-  it('updates retirement horizon when changing retirement years in finances prediction', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
-
-    const retirementAgeInput = within(screen.getByText('Retirement Age').closest('label')!).getByRole('spinbutton');
-    const retirementYearsInput = within(screen.getByText('Retirement Years').closest('label')!).getByRole('spinbutton');
-
-    fireEvent.change(retirementYearsInput, { target: { value: '12' } });
-    fireEvent.blur(retirementYearsInput);
-
-    const retirementAge = Number((retirementAgeInput as HTMLInputElement).value);
-    const expectedHorizon = retirementAge + 12;
-    const horizonText = screen.getByText(/Retirement horizon:/i).textContent ?? '';
-
-    expect(parseFirstNumber(horizonText)).toBe(expectedHorizon);
-  });
-
-  it('shows minimum yearly withdrawal control in finances prediction retirement', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
-
-    expect(screen.getAllByText('Minimum Yearly Withdrawal').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Start Age')).toBeInTheDocument();
-  });
-
-  it('shares minimum yearly withdrawal value between retirement tabs', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const initialFinanceSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(initialFinanceSubTabs).toBeTruthy();
-    const initialFinanceSubTabsElement = initialFinanceSubTabs as HTMLElement;
-    fireEvent.click(within(initialFinanceSubTabsElement).getByRole('button', { name: 'Retirement' }));
-
-    const retirementMinimumControl = screen
-      .getAllByText('Minimum Yearly Withdrawal')
-      .map((element) => element.closest('label'))
-      .filter(Boolean)[0] as HTMLElement;
-    const retirementMinimumInput = within(retirementMinimumControl).getByRole('spinbutton') as HTMLInputElement;
-    fireEvent.change(retirementMinimumInput, { target: { value: '25000' } });
-    fireEvent.blur(retirementMinimumInput);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Retirement' }));
-
-    const futureRetirementMinimumControls = screen
-      .getAllByText('Minimum Yearly Withdrawal')
-      .map((element) => element.closest('label'))
-      .filter(Boolean) as HTMLElement[];
-    const hasSyncedValue = futureRetirementMinimumControls.some((control) => {
-      const input = within(control).getByRole('spinbutton');
-      return (input as HTMLInputElement).value === '25000';
-    });
-
-    expect(hasSyncedValue).toBe(true);
-  });
-
-  it('uses year-month inputs and funding source dropdown for purchases', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
-    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
-
-    expect(screen.getByLabelText('Purchase Year')).toBeInTheDocument();
-    expect(screen.getByLabelText('Purchase Month')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Purchase Year Up' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Purchase Year Down' })).toBeInTheDocument();
-
-    const purchaseYearInput = screen.getByLabelText('Purchase Year') as HTMLInputElement;
-    const startingYear = Number(purchaseYearInput.value);
-    fireEvent.click(screen.getByRole('button', { name: 'Purchase Year Up' }));
-    expect(purchaseYearInput).toHaveValue(String(startingYear + 1));
-    expect(screen.getByRole('columnheader', { name: 'Pay From' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Amount' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Account Balance After Purchase' })).toBeInTheDocument();
-    const fundingSource = screen.getByLabelText('Purchase Funding Source');
-    expect(fundingSource).toBeInTheDocument();
-    expect(within(fundingSource).getByRole('option', { name: 'Income' })).toBeInTheDocument();
-  });
-
-  it('shows account balance after purchase and N/A for income-funded large purchases', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
-    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
-
-    const row = screen.getByDisplayValue('Large Purchase').closest('tr') as HTMLTableRowElement;
-    const fundingSource = within(row).getByLabelText('Purchase Funding Source') as HTMLSelectElement;
-    const nonIncomeOption = within(fundingSource)
-      .getAllByRole('option')
-      .find((option) => (option as HTMLOptionElement).value.startsWith('account:')) as HTMLOptionElement | undefined;
-    expect(nonIncomeOption).toBeDefined();
-
-    fireEvent.change(fundingSource, { target: { value: nonIncomeOption!.value } });
-
-    const accountCellText = within(row).getAllByRole('cell')[7].textContent ?? '';
-    expect(accountCellText).toMatch(/^-?\$[0-9,]+$/);
-
-    fireEvent.change(fundingSource, { target: { value: 'income' } });
-    const incomeCellText = within(row).getAllByRole('cell')[7].textContent ?? '';
-    expect(incomeCellText).toMatch(/^\$/);
-  });
-
-  it('supports long-term monthly purchases with start date and duration/end-date scheduling', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    expect(screen.getByText('Long-Term Purchases (Monthly)')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '+ Long-Term Purchase' }));
-
-    expect(screen.getByLabelText('Long-Term Start Year')).toBeInTheDocument();
-    expect(screen.getByLabelText('Long-Term Start Month')).toBeInTheDocument();
-    expect(screen.queryByRole('combobox', { name: 'Long-Term End Mode' })).not.toBeInTheDocument();
-
-    const longTermNameInput = screen.getByDisplayValue('Long-Term Purchase');
-    const longTermRow = longTermNameInput.closest('tr') as HTMLTableRowElement;
-    const endYearInput = within(longTermRow).getByLabelText('Long-Term End Year') as HTMLInputElement;
-    fireEvent.change(endYearInput, { target: { value: '2032' } });
-    fireEvent.blur(endYearInput);
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"longTermPurchases"');
-    expect(stored).toContain('"endMode":"endDate"');
-  });
-
-  it('supports adding loans in the purchases and expenses tab', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    expect(screen.getByText('Loans Table')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '+ Loan' }));
-
-    expect(screen.getByDisplayValue('Loan')).toBeInTheDocument();
-    expect(screen.getByLabelText('Loan Start Year')).toBeInTheDocument();
-    const paymentSource = screen.getByLabelText('Loan Payment Source');
-    expect(paymentSource).toBeInTheDocument();
-    fireEvent.change(paymentSource, { target: { value: 'income' } });
-    expect((paymentSource as HTMLSelectElement).value).toBe('income');
-    expect(within(paymentSource).getByRole('option', { name: 'Income' })).toBeInTheDocument();
-    expect(screen.getByText(/^\d+\.\d yr$/)).toBeInTheDocument();
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"loans"');
-    expect(stored).toContain('"paymentSourceAccount":"income"');
-  });
-
-  it('marks loan rows red when the selected account cannot fund the loan', async () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Loan' }));
-
-    const loanRow = screen.getByDisplayValue('Loan').closest('tr') as HTMLTableRowElement;
-    const minimumPaymentInput = within(loanRow).getAllByRole('spinbutton')[4] as HTMLInputElement;
-    fireEvent.change(minimumPaymentInput, { target: { value: '500000' } });
-    fireEvent.blur(minimumPaymentInput);
-
-    await waitFor(() => {
-      expect(loanRow.className).toContain('invalid');
-    });
-    expect(loanRow.getAttribute('title') ?? '').toContain('selected payment source account cannot fund this loan');
-
-    fireEvent.change(within(loanRow).getByLabelText('Loan Payment Source'), { target: { value: 'income' } });
-
-    await waitFor(() => {
-      expect(loanRow.className).toContain('invalid');
-    });
-  });
-
-  it('keeps long-term purchase duration and end date synchronized', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-    fireEvent.click(screen.getByRole('button', { name: '+ Long-Term Purchase' }));
-
-    const row = screen.getByDisplayValue('Long-Term Purchase').closest('tr') as HTMLTableRowElement;
-    const startYearInput = within(row).getByLabelText('Long-Term Start Year') as HTMLInputElement;
-    const startMonthInput = within(row).getByLabelText('Long-Term Start Month') as HTMLSelectElement;
-    const durationInput = within(row).getAllByRole('spinbutton')[0] as HTMLInputElement;
-    const endYearInput = within(row).getByLabelText('Long-Term End Year') as HTMLInputElement;
-    const endMonthInput = within(row).getByLabelText('Long-Term End Month') as HTMLSelectElement;
-
-    fireEvent.change(durationInput, { target: { value: '6' } });
-    fireEvent.blur(durationInput);
-
-    const startYear = Number(startYearInput.value);
-    const startMonth = Number(startMonthInput.value);
-    const endSerialFromDuration = startYear * 12 + (startMonth - 1) + 6 - 1;
-    const expectedEndYear = Math.floor(endSerialFromDuration / 12);
-    const expectedEndMonth = (endSerialFromDuration % 12) + 1;
-
-    expect(endYearInput).toHaveValue(String(expectedEndYear));
-    expect(endMonthInput).toHaveValue(String(expectedEndMonth).padStart(2, '0'));
-
-    fireEvent.change(endYearInput, { target: { value: String(expectedEndYear + 1) } });
-    fireEvent.blur(endYearInput);
-
-    const updatedEndSerial = (expectedEndYear + 1) * 12 + (expectedEndMonth - 1);
-    const expectedDuration = Math.max(1, updatedEndSerial - (startYear * 12 + (startMonth - 1)) + 1);
-
-    expect(durationInput).toHaveValue(expectedDuration);
-  });
-
-  it('marks purchase rows red when selected pay-from account balance after purchase is negative', async () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
-    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
-
-    const purchaseNameInput = screen.getByDisplayValue('Large Purchase');
-    const purchaseRow = purchaseNameInput.closest('tr') as HTMLTableRowElement;
-    expect(purchaseRow.className).toContain('purchase-row');
-
-    const fundingSource = within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement;
-    const accountOption = within(fundingSource)
-      .getAllByRole('option')
-      .find((option) => (option as HTMLOptionElement).value.startsWith('account:')) as HTMLOptionElement;
-    fireEvent.change(fundingSource, { target: { value: accountOption.value } });
-
-    const accountBalanceCellText = within(purchaseRow).getAllByRole('cell')[7].textContent ?? '';
-    const isNegative = accountBalanceCellText.trim().startsWith('-$');
-    if (isNegative) {
-      expect(purchaseRow.className).toContain('invalid');
-      expect(purchaseRow.getAttribute('title') ?? '').toContain('goes negative');
-    } else {
-      expect(purchaseRow.className).not.toContain('invalid');
-    }
-
-    fireEvent.change(fundingSource, { target: { value: 'income' } });
-    await waitFor(() => {
-      expect((within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement).value).toBe('income');
-    });
-    const incomeRow = screen.getByDisplayValue('Large Purchase').closest('tr')!;
-    if (isNegative) {
-      expect(incomeRow.className).toContain('invalid');
-      expect(incomeRow.getAttribute('title') ?? '').toContain('goes negative');
-    }
-  });
-
-  it('updates account balance after purchase when amount changes and keeps income rows as N/A', async () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
-    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
-
-    const purchaseRow = screen.getByDisplayValue('Large Purchase').closest('tr') as HTMLTableRowElement;
-    const fundingSource = within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement;
-    const accountOption = within(fundingSource)
-      .getAllByRole('option')
-      .find((option) => (option as HTMLOptionElement).value.startsWith('account:')) as HTMLOptionElement;
-    fireEvent.change(fundingSource, { target: { value: accountOption.value } });
-    await waitFor(() => {
-      expect((within(purchaseRow).getByLabelText('Purchase Funding Source') as HTMLSelectElement).value).toBe(accountOption.value);
-    });
-
-    const balanceCell = within(purchaseRow).getAllByRole('cell')[7];
-    const amountInput = purchaseRow.querySelector('input[type="number"]') as HTMLInputElement;
-    expect(amountInput).toBeTruthy();
-    fireEvent.change(amountInput, { target: { value: '2500' } });
-    fireEvent.blur(amountInput);
-
-    await waitFor(() => {
-      expect((purchaseRow.querySelector('input[type="number"]') as HTMLInputElement).value).toBe('2500');
-      const afterText = within(purchaseRow).getAllByRole('cell')[7].textContent ?? '';
-      expect(afterText).toMatch(/^-?\$[0-9,]+$/);
-    });
-
-    fireEvent.change(fundingSource, { target: { value: 'income' } });
-    const incomeCellText2 = within(purchaseRow).getAllByRole('cell')[7].textContent ?? '';
-    expect(incomeCellText2).toMatch(/^\$/);
-  });
-
-  it('adds a timeline that duplicates purchases and switches between them', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
-    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
-    expect(screen.getByDisplayValue('Large Purchase')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add Timeline' }));
-
-    const timelineChip = screen.getByRole('button', { name: 'Timeline 1' });
-    expect(timelineChip).toBeInTheDocument();
-    expect(timelineChip.className).toContain('active');
-    expect(screen.getByRole('button', { name: 'Default' })).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Large Purchase')).toBeInTheDocument();
-  });
-
-  it('shows a chronological, non-draggable timeline with monthly leftover income', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Timeline Management' }));
-
-    expect(screen.getByText('Career and Housing Timeline')).toBeInTheDocument();
-    expect(document.querySelector('.timeline-chip')).not.toHaveAttribute('draggable');
-    expect(screen.getByText('Monthly Income Waterfall')).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Leftover' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Show full range' })).toBeInTheDocument();
-  });
-
-  it('keeps timeline purchases independent from the default set', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Purchase' }));
-    fireEvent.click(within(document.querySelector('.expense-modal')!).getByText('Uncategorized'));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add Timeline' }));
-
-    const nameInput = screen.getByDisplayValue('Large Purchase');
-    fireEvent.change(nameInput, { target: { value: 'Timeline Purchase' } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
-    expect(screen.getByDisplayValue('Large Purchase')).toBeInTheDocument();
-    expect(screen.queryByDisplayValue('Timeline Purchase')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Timeline 1' }));
-    expect(screen.getByDisplayValue('Timeline Purchase')).toBeInTheDocument();
-  });
-
-  it('copies an existing timeline from the manage modal', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add Timeline' }));
-    expect(screen.getByRole('button', { name: 'Timeline 1' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Timelines' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
-
-    expect(screen.getByDisplayValue('Timeline 1 (copy)')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Timeline 1')).toBeInTheDocument();
-  });
-
-  it('keeps housing independent across timelines', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Housing Expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add Timeline' }));
-    expect(screen.getByRole('button', { name: 'Timeline 1' }).className).toContain('active');
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
-    expect(screen.getByDisplayValue('My Home')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
-    expect(screen.queryByDisplayValue('My Home')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Timeline 1' }));
-    expect(screen.getByDisplayValue('My Home')).toBeInTheDocument();
-  });
-
-  it('shows per-expense payment source selectors in the housing editor', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Housing Expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
-
-    expect(screen.getByLabelText('PMI Source')).toBeInTheDocument();
-    expect(screen.getByLabelText('Taxes & Insurance Source')).toBeInTheDocument();
-    expect(screen.getByLabelText('HOA & Maintenance Source')).toBeInTheDocument();
-  });
-
-  it('shows mortgages and rentals as chips and supports duplicate', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Housing Expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
-    fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
-
-    expect(screen.getByRole('button', { name: 'My Home' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Apartment' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Duplicate Housing' }));
-    expect(screen.getByRole('button', { name: 'Apartment Copy' })).toBeInTheDocument();
-  });
-
-  it('disables use-previous-end when the previous housing has no end date', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Housing Expenses' }));
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
-    fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
-
-    const usePrevious = screen.getByRole('checkbox', { name: 'Use the month after the previous housing end date as the start date' });
-    expect(usePrevious).toBeInTheDocument();
-    expect(usePrevious).toBeDisabled();
-  });
-
-  const openHousingSubTab = () => {
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs') as HTMLElement;
-    fireEvent.click(within(financeSubTabs).getByRole('button', { name: 'Housing Expenses' }));
-    return financeSubTabs;
-  };
-
-  it('links a housing start date to a selected career', () => {
-    render(<App />);
-    openHousingSubTab();
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
-
-    const startYear = screen.getByLabelText('Start Year') as HTMLInputElement;
-    fireEvent.change(startYear, { target: { value: '2030' } });
-    fireEvent.blur(startYear);
-    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2030');
-
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Link start date to a career' }));
-
-    const careerSelect = screen.getByLabelText('Start Career') as HTMLSelectElement;
-    expect(within(careerSelect).getByRole('option', { name: 'Current Career' })).toBeInTheDocument();
-    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2025');
-    expect(screen.getByLabelText('Start Year')).toBeDisabled();
-    expect(screen.getByLabelText('Start Month')).toBeDisabled();
-  });
-
-  it('links a housing end date to a selected career', () => {
-    render(<App />);
-    openHousingSubTab();
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
-
-    const endYear = screen.getByLabelText('End Year') as HTMLInputElement;
-    fireEvent.change(endYear, { target: { value: '2035' } });
-    fireEvent.blur(endYear);
-    expect((screen.getByLabelText('End Year') as HTMLInputElement).value).toBe('2035');
-
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Link end date to a career' }));
-
-    expect(screen.getByLabelText('End Career')).toBeInTheDocument();
-    expect((screen.getByLabelText('End Year') as HTMLInputElement).value).toBe('2045');
-    expect(screen.getByLabelText('End Year')).toBeDisabled();
-  });
-
-  it('follows career date changes after linking a housing start date', () => {
-    render(<App />);
-    const financeSubTabs = openHousingSubTab();
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Link start date to a career' }));
-    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2025');
-
-    fireEvent.click(within(financeSubTabs).getByRole('button', { name: 'Careers' }));
-    const careerStartYear = screen.getByLabelText('Start Year') as HTMLInputElement;
-    fireEvent.change(careerStartYear, { target: { value: '2028' } });
-    fireEvent.blur(careerStartYear);
-
-    fireEvent.click(within(financeSubTabs).getByRole('button', { name: 'Housing Expenses' }));
-    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2028');
-  });
-
-  it('makes the career start link mutually exclusive with the previous-end chain', () => {
-    render(<App />);
-    openHousingSubTab();
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
-    const sellYear = screen.getByLabelText('Sell Year') as HTMLInputElement;
-    fireEvent.change(sellYear, { target: { value: '2030' } });
-    fireEvent.blur(sellYear);
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Rental' }));
-
-    const usePrevious = screen.getByRole('checkbox', { name: 'Use the month after the previous housing end date as the start date' });
-    expect(usePrevious).not.toBeDisabled();
-    fireEvent.click(usePrevious);
-    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2030');
-    expect((screen.getByLabelText('Start Month') as HTMLSelectElement).value).toBe('02');
-
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Link start date to a career' }));
-
-    const usePreviousAfter = screen.getByRole('checkbox', { name: 'Use the month after the previous housing end date as the start date' });
-    expect(usePreviousAfter).toBeDisabled();
-    expect(usePreviousAfter).not.toBeChecked();
-    expect((screen.getByLabelText('Start Year') as HTMLInputElement).value).toBe('2025');
-  });
-
-  it('maps saved future retirement tab state into Careers', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: {
-            currentAssets: 500000,
-            equityAllocation: 75,
-            fixedIncomeAllocation: 25,
-            fixedIncomeDuration: 'one_year'
-          },
-          contribution: {
-            yearlyContribution: 17500,
-            yearlyIncreaseRate: 2.9
-          },
-          careerPlan: {
-            enabled: true,
-            entries: [
-              {
-                id: 'career-1-default',
-                label: 'Current Career',
-                enabled: true,
-                usePreviousCareerStartAge: false,
-                startAge: 45,
-                endAge: 65,                annualRaiseRate: 3.5,
-                savingsRate: 10,
-                employerMatchRate: 3,
-                bonusRate: 8,
-                bonusSavingsRate: 50,
-                emergencyFundContributionRate: 2,
-                hsaContributionRate: 3,
-                investmentsContributionRate: 6,
-                retirement401kContributionRate: 6,
-                emergencyFundSavingsMonthly: false,
-                hsaSavingsMonthly: false,
-                investmentsSavingsMonthly: false,
-                retirement401kSavingsMonthly: false,
-                emergencyFundStartBalanceMode: 'auto',
-                hsaStartBalanceMode: 'auto',
-                investmentsStartBalanceMode: 'auto',
-                retirement401kStartBalanceMode: 'auto',
-                emergencyFundManualStartBalance: 0,
-                hsaManualStartBalance: 0,
-                investmentsManualStartBalance: 0,
-                retirement401kManualStartBalance: 0
-              }
-            ]
-          },
-          savingsTracker: {
-            annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 }
-          },
-          netWorth: {
-            accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
-            asOfDate: ''
-          },
-          futureRetirement: {
-            useCareerEndAge: true,
-            retirementAge: 65,
-            retirementYears: 30
-          },
-          withdrawal: {
-            mode: 'specified',
-            firstYearAmount: 40000,
-            inflationAdjusted: true
-          },
-          returnMode: 'manual',
-          manualReturns: {
-            inflationRate: 2.9,
-            preRetirementEquityReturn: 5,
-            postRetirementEquityReturn: 5,
-            fixedIncomeReturn: 2.9
-          },
-          cashflowItems: [],
-          lifeEvents: []
-        },
-        ui: {
-          activeTab: 'futureRetirement',
-          selectedCareerId: 'career-1-default'
-        }
-      })
-    );
-
-    render(<App />);
-
-    expect(screen.getAllByRole('button', { name: 'Finances Prediction' }).find((button) => button.classList.contains('active'))).toBeDefined();
-  });
-
-  it('defaults minimum yearly withdrawal to zero for older saved scenarios', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: {
-            currentAssets: 500000,
-            equityAllocation: 75,
-            fixedIncomeAllocation: 25,
-            fixedIncomeDuration: 'one_year'
-          },
-          contribution: {
-            yearlyContribution: 17500,
-            yearlyIncreaseRate: 2.9
-          },
-          careerPlan: {
-            enabled: true,
-            entries: []
-          },
-          savingsTracker: {
-            annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 }
-          },
-          netWorth: {
-            accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
-            asOfDate: ''
-          },
-          futureRetirement: {
-            useCareerEndAge: true,
-            retirementAge: 65,
-            retirementYears: 30
-          },
-          withdrawal: {
-            mode: 'specified',
-            firstYearAmount: 40000,
-            inflationAdjusted: true
-          },
-          returnMode: 'manual',
-          manualReturns: {
-            inflationRate: 2.9,
-            preRetirementEquityReturn: 5,
-            postRetirementEquityReturn: 5,
-            fixedIncomeReturn: 2.9
-          },
-          cashflowItems: [],
-          lifeEvents: []
-        },
-        ui: {
-          activeTab: 'retirement',
-          careersSubTab: 'retirement',
-          selectedCareerId: ''
-        }
-      })
-    );
-
-    render(<App />);
-
-    const controls = screen
-      .getAllByText('Minimum Yearly Withdrawal')
-      .map((element) => element.closest('label'))
-      .filter(Boolean) as HTMLElement[];
-    const hasZeroValue = controls.some((control) => {
-      const input = within(control).getByRole('spinbutton') as HTMLInputElement;
-      return input.value === '0';
-    });
-
-    expect(hasZeroValue).toBe(true);
-  });
-
-  it('normalizes career timeline ages from saved state so start is always before end', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: {
-            currentAssets: 500000,
-            equityAllocation: 75,
-            fixedIncomeAllocation: 25,
-            fixedIncomeDuration: 'one_year'
-          },
-          contribution: {
-            yearlyContribution: 17500,
-            yearlyIncreaseRate: 2.9
-          },
-          careerPlan: {
-            enabled: true,
-            entries: [
-              {
-                id: 'career-1-default',
-                label: 'Current Career',
-                enabled: true,
-                usePreviousCareerStartAge: false,
-                startAge: 65,
-                endAge: 45,                annualRaiseRate: 3.5,
-                savingsRate: 10,
-                employerMatchRate: 3,
-                bonusRate: 8,
-                bonusSavingsRate: 50,
-                emergencyFundContributionRate: 2,
-                hsaContributionRate: 3,
-                investmentsContributionRate: 6,
-                retirement401kContributionRate: 6,
-                emergencyFundSavingsMonthly: false,
-                hsaSavingsMonthly: false,
-                investmentsSavingsMonthly: false,
-                retirement401kSavingsMonthly: false,
-                emergencyFundStartBalanceMode: 'auto',
-                hsaStartBalanceMode: 'auto',
-                investmentsStartBalanceMode: 'auto',
-                retirement401kStartBalanceMode: 'auto',
-                emergencyFundManualStartBalance: 0,
-                hsaManualStartBalance: 0,
-                investmentsManualStartBalance: 0,
-                retirement401kManualStartBalance: 0
-              }
-            ]
-          },
-          savingsTracker: {
-            annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 }
-          },
-          netWorth: {
-            accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
-            asOfDate: ''
-          },
-          futureRetirement: {
-            useCareerEndAge: true,
-            retirementAge: 65,
-            retirementYears: 30
-          },
-          withdrawal: {
-            mode: 'specified',
-            firstYearAmount: 40000,
-            inflationAdjusted: true
-          },
-          returnMode: 'manual',
-          manualReturns: {
-            inflationRate: 2.9,
-            preRetirementEquityReturn: 5,
-            postRetirementEquityReturn: 5,
-            fixedIncomeReturn: 2.9
-          },
-          cashflowItems: [],
-          lifeEvents: []
-        },
-        ui: {
-          activeTab: 'careers',
-          selectedCareerId: 'career-1-default'
-        }
-      })
-    );
-
-    render(<App />);
-
-    expect(screen.getByText(/Selected timeline:/i)).toHaveTextContent('45');
-    expect(screen.getByText(/Selected timeline:/i)).toHaveTextContent('65');
-  });
-
-  it('can derive a career start age from the previous career', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
-    fireEvent.click(screen.getByRole('checkbox', { name: /Use the month after the previous career end/i }));
-
-    const startAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
-
-    expect(startAgeInput).toHaveValue(65);
-    expect(startAgeInput).toBeDisabled();
-  });
-
-  it('uses the month after the previous career end when using previous career start age', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Current Career' }));
-
-    const endYearInput = screen.getByLabelText('End Year');
-    const endMonthInput = screen.getByLabelText('End Month');
-    fireEvent.change(endYearInput, { target: { value: '2030' } });
-    fireEvent.blur(endYearInput);
-    fireEvent.change(endMonthInput, { target: { value: '03' } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Career 2' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /Use the month after the previous career end/i }));
-
-    const startYearInput = screen.getByLabelText('Start Year');
-    const startMonthInput = screen.getByLabelText('Start Month');
-
-    expect(startYearInput).toHaveValue('2030');
-    expect(startMonthInput).toHaveValue('04');
-
-    const startAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
-    expect(startAgeInput).toHaveValue(49);
-  });
-
-  it('can derive a career start age from birthday and lock the start age input', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
-
-    const dateInput = screen.getByLabelText('Date of Birth');
-    fireEvent.change(dateInput, { target: { value: makeBirthDate(30) } });
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getByRole('checkbox', { name: /Use current age from birthday/i }));
-
-    const startAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
-
-    expect(startAgeInput).toHaveValue(30);
-    expect(startAgeInput).toBeDisabled();
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"useBirthdayBasedStartAge":true');
-  });
-
-  it('keeps birthday-based start age and previous-career start age mutually exclusive', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Career 2' }));
-
-    const previousCareerCheckbox = screen.getByRole('checkbox', { name: /Use the month after the previous career end/i });
-    const birthdayCheckbox = screen.getByRole('checkbox', { name: /Use current age from birthday/i });
-
-    fireEvent.click(previousCareerCheckbox);
-    expect(previousCareerCheckbox).toBeChecked();
-
-    fireEvent.click(birthdayCheckbox);
-
-    expect(birthdayCheckbox).toBeChecked();
-    expect(previousCareerCheckbox).not.toBeChecked();
-    expect(previousCareerCheckbox).toBeDisabled();
-  });
-
-  it('normalizes legacy saved careers without birthday-based start age to false', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: {
-            currentAssets: 500000,
-            equityAllocation: 75,
-            fixedIncomeAllocation: 25,
-            fixedIncomeDuration: 'one_year'
-          },
-          contribution: {
-            yearlyContribution: 17500,
-            yearlyIncreaseRate: 2.9
-          },
-          careerPlan: {
-            enabled: true,
-            entries: [
-              {
-                id: 'career-1-default',
-                label: 'Current Career',
-                enabled: true,
-                usePreviousCareerStartAge: false,
-                startAge: 45,
-                endAge: 65,                annualRaiseRate: 3.5,
-                savingsRate: 10,
-                employerMatchRate: 3,
-                bonusRate: 8,
-                bonusSavingsRate: 50,
-                emergencyFundContributionRate: 2,
-                hsaContributionRate: 3,
-                investmentsContributionRate: 6,
-                retirement401kContributionRate: 6,
-                emergencyFundSavingsMonthly: false,
-                hsaSavingsMonthly: false,
-                investmentsSavingsMonthly: false,
-                retirement401kSavingsMonthly: false,
-                emergencyFundStartBalanceMode: 'auto',
-                hsaStartBalanceMode: 'auto',
-                investmentsStartBalanceMode: 'auto',
-                retirement401kStartBalanceMode: 'auto',
-                emergencyFundManualStartBalance: 0,
-                hsaManualStartBalance: 0,
-                investmentsManualStartBalance: 0,
-                retirement401kManualStartBalance: 0
-              }
-            ]
-          },
-          savingsTracker: {
-            annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 }
-          },
-          netWorth: {
-            accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
-            asOfDate: ''
-          },
-          futureRetirement: {
-            useCareerEndAge: true,
-            retirementAge: 65,
-            retirementYears: 30
-          },
-          withdrawal: {
-            mode: 'specified',
-            firstYearAmount: 40000,
-            inflationAdjusted: true
-          },
-          returnMode: 'manual',
-          manualReturns: {
-            inflationRate: 2.9,
-            preRetirementEquityReturn: 5,
-            postRetirementEquityReturn: 5,
-            fixedIncomeReturn: 2.9
-          },
-          cashflowItems: [],
-          lifeEvents: []
-        },
-        ui: {
-          activeTab: 'careers',
-          selectedCareerId: 'career-1-default'
-        }
-      })
-    );
-
-    render(<App />);
-
-    const birthdayCheckbox = screen.getByRole('checkbox', { name: /Use current age from birthday/i });
-    expect(birthdayCheckbox).not.toBeChecked();
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"useBirthdayBasedStartAge":false');
-  });
-
-  it('falls back to resolved current age when birthday-based start age is enabled with an invalid birth date', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 47, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: true, dateOfBirth: 'invalid-date' },
-          portfolio: {
-            currentAssets: 500000,
-            equityAllocation: 75,
-            fixedIncomeAllocation: 25,
-            fixedIncomeDuration: 'one_year'
-          },
-          contribution: {
-            yearlyContribution: 17500,
-            yearlyIncreaseRate: 2.9
-          },
-          careerPlan: {
-            enabled: true,
-            entries: [
-              {
-                id: 'career-1-default',
-                label: 'Current Career',
-                enabled: true,
-                usePreviousCareerStartAge: false,
-                useBirthdayBasedStartAge: true,
-                startAge: 35,
-                endAge: 65,                annualRaiseRate: 3.5,
-                savingsRate: 10,
-                employerMatchRate: 3,
-                bonusRate: 8,
-                bonusSavingsRate: 50,
-                emergencyFundContributionRate: 2,
-                hsaContributionRate: 3,
-                investmentsContributionRate: 6,
-                retirement401kContributionRate: 6,
-                emergencyFundSavingsMonthly: false,
-                hsaSavingsMonthly: false,
-                investmentsSavingsMonthly: false,
-                retirement401kSavingsMonthly: false,
-                emergencyFundStartBalanceMode: 'auto',
-                hsaStartBalanceMode: 'auto',
-                investmentsStartBalanceMode: 'auto',
-                retirement401kStartBalanceMode: 'auto',
-                emergencyFundManualStartBalance: 0,
-                hsaManualStartBalance: 0,
-                investmentsManualStartBalance: 0,
-                retirement401kManualStartBalance: 0
-              }
-            ]
-          },
-          savingsTracker: {
-            annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 }
-          },
-          netWorth: {
-            accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
-            asOfDate: ''
-          },
-          futureRetirement: {
-            useCareerEndAge: true,
-            retirementAge: 65,
-            retirementYears: 30
-          },
-          withdrawal: {
-            mode: 'specified',
-            firstYearAmount: 40000,
-            inflationAdjusted: true
-          },
-          returnMode: 'manual',
-          manualReturns: {
-            inflationRate: 2.9,
-            preRetirementEquityReturn: 5,
-            postRetirementEquityReturn: 5,
-            fixedIncomeReturn: 2.9
-          },
-          cashflowItems: [],
-          lifeEvents: []
-        },
-        ui: {
-          activeTab: 'careers',
-          selectedCareerId: 'career-1-default'
-        }
-      })
-    );
-
-    render(<App />);
-
-    const startAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
-    expect(startAgeInput).toHaveValue(47);
-    expect(startAgeInput).toBeDisabled();
-  });
-
-  it('duplicates careers and confirms before removing careers', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Duplicate Career' })[0]);
-
-    expect(screen.getByRole('button', { name: 'Current Career Copy' })).toBeInTheDocument();
-
-    const removeButton = screen.getByRole('button', { name: 'Remove Career' });
-
-    expect(removeButton.className).toContain('danger-button');
-
-    fireEvent.click(removeButton);
-    expect(confirmSpy).toHaveBeenCalled();
-
-    confirmSpy.mockRestore();
-  });
-
-  it('honors an explicit id passed to createDefaultCareerEntry', () => {
-    const entry = createDefaultCareerEntry(1, 45, 65, 'career-explicit-id');
-    expect(entry.id).toBe('career-explicit-id');
-    expect(createDefaultCareerEntry(1, 45, 65).id).toBe('career-2-default');
-  });
-
-  it('keeps career ids unique when re-adding after a removal', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Current Career' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Career' }));
-
-    fireEvent.click(screen.getAllByRole('button', { name: '+ Career' })[0]);
-
-    const stored = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
-    const ids = (stored.scenario?.careerPlan?.entries ?? []).map((entry: { id: string }) => entry.id) as string[];
-    expect(ids.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(ids).size).toBe(ids.length);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Career 2' })[0]);
-    fireEvent.change(screen.getByDisplayValue('Career 2'), { target: { value: 'Alpha' } });
-
-    expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Career 2' })).toBeInTheDocument();
-
-    confirmSpy.mockRestore();
-  });
-
-  it('repairs duplicate career ids when loading saved state', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          careerPlan: {
-            enabled: true,
-            entries: [
-              { id: 'career-2-default', label: 'Career 2', enabled: true, startAge: 50, endAge: 54 },
-              { id: 'career-2-default', label: 'Career 2', enabled: true, startAge: 55, endAge: 59 }
-            ]
-          }
-        },
-        ui: { activeTab: 'careers', selectedCareerId: 'career-2-default' }
-      })
-    );
-
-    const state = loadAppState();
-    const ids = state.scenario.careerPlan.entries.map((entry) => entry.id);
-    expect(ids.length).toBe(2);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  it('configures paycheck line items in the paycheck modal', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Configure Paycheck' }));
-
-    expect(screen.getByRole('heading', { name: 'Configure Paycheck' })).toBeInTheDocument();
-
-    const statutory = screen.getByText('Statutory').closest('section') as HTMLElement;
-    fireEvent.click(within(statutory).getByRole('button', { name: '+ Item' }));
-
-    const row = within(statutory).getByLabelText(/Line label/).closest('.paycheck-line-row') as HTMLElement;
-    fireEvent.change(within(row).getByLabelText(/Line label/), { target: { value: 'Federal Income Tax' } });
-    fireEvent.change(within(row).getAllByRole('spinbutton')[0], { target: { value: '100' } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save Paycheck' }));
-
-    const stored = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
-    const paycheck = stored.scenario.careerPlan.entries[0].paycheck;
-    const statutoryCategory = paycheck.categories.find((category: { label: string }) => category.label === 'Statutory');
-    expect(statutoryCategory.lines[0].label).toBe('Federal Income Tax');
-    expect(statutoryCategory.lines[0].amount).toBe(100);
-  });
-
-  it('adds and edits a net pay plan', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    expect(screen.getByRole('tab', { name: 'Initial' })).toHaveAttribute('aria-selected', 'true');
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Pay Plan' }));
-
-    const nameInput = screen.getByLabelText('Pay plan name') as HTMLInputElement;
-    fireEvent.change(nameInput, { target: { value: 'Promotion' } });
-
-    const stored = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
-    const plans = stored.scenario.careerPlan.entries[0].payPlans;
-    expect(plans).toHaveLength(1);
-    expect(plans[0].label).toBe('Promotion');
-    expect(plans[0].effectiveYearMonth).toMatch(/^\d{4}-\d{2}$/);
-    expect(plans[0].paycheck).toBeTruthy();
-
-    expect(screen.getByRole('tab', { name: /Promotion/ })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Initial' })).toHaveAttribute('aria-selected', 'false');
-  });
-
-  it('shows savings tracker controls and can switch to the stacked savings graph', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    expect(screen.getAllByText('Emergency Fund').length).toBeGreaterThan(0);
-    expect(screen.getByText('Balance at end of period')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('radio', { name: 'Stacked Savings Graph' }));
-
-    expect(screen.getByRole('img', { name: /stacked savings balances over time/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Filter All' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Unfilter All' })).toBeInTheDocument();
-  });
-
-  it('shows per-career cap controls and persists max balance + overflow fallback', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    expect(screen.getByText('Max Balance')).toBeInTheDocument();
-    expect(screen.getByText('Overflow Fallback')).toBeInTheDocument();
-
-    const emergencyLabel = screen
-      .getAllByText('Emergency Fund')
-      .find((node) => node.classList.contains('career-savings-cell')) as HTMLElement;
-    const emergencyRow = emergencyLabel.closest('.career-savings-row') as HTMLElement;
-    const emergencyInputs = within(emergencyRow).getAllByRole('spinbutton');
-    const maxBalanceInput = emergencyInputs[emergencyInputs.length - 1] as HTMLInputElement;
-    fireEvent.change(maxBalanceInput, { target: { value: '12345' } });
-    fireEvent.blur(maxBalanceInput);
-
-    const fallbackSelect = within(emergencyRow).getByRole('combobox') as HTMLSelectElement;
-    fireEvent.change(fallbackSelect, { target: { value: 'hsa-account-default' } });
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"maxBalance":12345');
-    expect(stored).toContain('"overflowFallbackAccountId":"hsa-account-default"');
-  });
-
-  it('toggles a fixed deposit to increase with the paycheck', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    const findEmergencyRow = () => {
-      const label = screen
-        .getAllByText('Emergency Fund')
-        .find((node) => node.classList.contains('career-savings-cell')) as HTMLElement;
-      return label.closest('.career-savings-row') as HTMLElement;
+  it('edits and reloads a dated pay plan allocation without changing the initial plan', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Finances Prediction');
+
+    clickButton('＋ Pay plan');
+    const planTab = screen.getByRole('tab', { name: 'Plan 2' });
+    fireEvent.click(planTab);
+    const effectiveMonth = document.querySelector('input[type="month"]') as HTMLInputElement;
+    fireEvent.change(effectiveMonth, { target: { value: '2026-04' } });
+    clickButton('＋ Add destination');
+
+    const allocationAccount = screen.getByLabelText('Allocation account 1');
+    const distinctAccount = freshScenario().netWorth.accounts.find(account => account.id !== CHECKING)!;
+    fireEvent.change(allocationAccount, { target: { value: distinctAccount.id } });
+    fireEvent.change(screen.getByLabelText('Allocation type 1'), { target: { value: 'fixedAmount' } });
+    fireEvent.change(screen.getByLabelText('Allocation amount 1'), { target: { value: '125' } });
+    fireEvent.change(screen.getByLabelText('Maximum account balance 1'), { target: { value: '500' } });
+    const overflowAccount = freshScenario().netWorth.accounts.find(account => account.id !== distinctAccount.id && account.id !== CHECKING)!;
+    fireEvent.change(screen.getByLabelText('Overflow account 1'), { target: { value: overflowAccount.id } });
+    fireEvent.change(screen.getByRole('combobox', { name: /remainder account/i }), { target: { value: CHECKING } });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Initial' }));
+    expect(screen.getByLabelText('Allocation amount 1')).not.toHaveValue(125);
+    fireEvent.click(screen.getByRole('tab', { name: 'Plan 2' }));
+    expect(screen.getByLabelText('Allocation account 1')).toHaveValue(distinctAccount.id);
+    expect(screen.getByLabelText('Allocation amount 1')).toHaveValue(125);
+
+    window.dispatchEvent(new Event('pagehide'));
+    const storedCareer = decodeStored().careerPlan.entries[0];
+    const datedPlan = storedCareer.payPlans?.find(plan => plan.label === 'Plan 2');
+    expect(datedPlan?.effectiveYearMonth).toBe('2026-04');
+    expect(datedPlan?.depositPlan).toMatchObject({ remainderAccountId: CHECKING });
+    expect(datedPlan?.depositPlan?.allocations).toContainEqual(expect.objectContaining({
+      sourceId: distinctAccount.id,
+      mode: 'fixedAmount',
+      fixedAmount: 125,
+      maxBalance: 500,
+      overflowFallbackAccountId: overflowAccount.id
+    }));
+    expect(storedCareer.depositPlan?.allocations).not.toContainEqual(expect.objectContaining({ sourceId: distinctAccount.id, fixedAmount: 125 }));
+
+    cleanup();
+    renderApp();
+    clickButton('Finances Prediction');
+    fireEvent.click(screen.getByRole('tab', { name: 'Plan 2' }));
+    expect(document.querySelector('input[type="month"]')).toHaveValue('2026-04');
+    expect(screen.getByLabelText('Allocation account 1')).toHaveValue(distinctAccount.id);
+    expect(screen.getByLabelText('Allocation amount 1')).toHaveValue(125);
+    expect(screen.getByLabelText('Maximum account balance 1')).toHaveValue(500);
+    expect(screen.getByLabelText('Overflow account 1')).toHaveValue(overflowAccount.id);
+    expect(screen.getByRole('combobox', { name: /remainder account/i })).toHaveValue(CHECKING);
+
+    fireEvent.change(screen.getByLabelText('Maximum account balance 1'), { target: { value: '' } });
+    window.dispatchEvent(new Event('pagehide'));
+    const clearedAllocation = decodeStored().careerPlan.entries[0].payPlans?.find(item => item.label === 'Plan 2')?.depositPlan?.allocations[0];
+    expect(clearedAllocation).toBeDefined();
+    expect(clearedAllocation).not.toHaveProperty('maxBalance');
+    expect(clearedAllocation?.overflowFallbackAccountId).toBe(overflowAccount.id);
+
+    cleanup();
+    renderApp();
+    clickButton('Finances Prediction');
+    fireEvent.click(screen.getByRole('tab', { name: 'Plan 2' }));
+    expect(screen.getByLabelText('Maximum account balance 1')).toHaveValue(null);
+    expect(screen.getByLabelText('Overflow account 1')).toHaveValue(overflowAccount.id);
+
+    fireEvent.change(screen.getByLabelText('Maximum account balance 1'), { target: { value: '0' } });
+    window.dispatchEvent(new Event('pagehide'));
+    const zeroAllocation = decodeStored().careerPlan.entries[0].payPlans?.find(item => item.label === 'Plan 2')?.depositPlan?.allocations[0];
+    expect(zeroAllocation?.maxBalance).toBe(0);
+    expect(zeroAllocation?.overflowFallbackAccountId).toBe(overflowAccount.id);
+
+    cleanup();
+    renderApp();
+    clickButton('Finances Prediction');
+    fireEvent.click(screen.getByRole('tab', { name: 'Plan 2' }));
+    expect(screen.getByLabelText('Maximum account balance 1')).toHaveValue(0);
+    expect(screen.getByLabelText('Overflow account 1')).toHaveValue(overflowAccount.id);
+  }, 15000);
+
+  // GUI-A03 / G12–G13 — real-render duplicate career isolation with a nested
+  // pay plan + allocation cap. This is a config/save-path test: it asserts the
+  // canonical command writes two independent careers and reloads them separately.
+  // It makes no projection/math claim about overlapping enabled careers.
+  it('duplicates a career into an isolated clone whose nested pay-plan edits never reach the original', () => {
+    const datedPlan = createCareerPayPlan('Dated Plan', '2026-08', createDefaultPaycheck(0), []);
+    datedPlan.depositPlan = {
+      allocations: [{
+        id: 'dated-alloc', enabled: true, sourceType: 'account', sourceId: EMERGENCY,
+        contributionRate: 3, savingsMonthly: false, monthlyWithdrawal: 0, mode: 'percentOfSalary', fixedAmount: 0
+      }],
+      remainderAccountId: CHECKING,
+      postingDay: 1
     };
-
-    fireEvent.click(within(findEmergencyRow()).getByTitle('Percent of salary'));
-
-    fireEvent.click(within(findEmergencyRow()).getByLabelText('Increase with paycheck Emergency Fund'));
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"mode":"fixedAmount"');
-    expect(stored).toContain('"increaseWithPaycheck":true');
-  });
-
-  it('persists the expenses (monthly withdrawals by account) grid', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    const row = screen.getByText('Emergency Fund Monthly Withdrawal').closest('label') as HTMLElement;
-    const input = within(row).getByRole('spinbutton');
-    fireEvent.change(input, { target: { value: '123' } });
-    fireEvent.blur(input);
-
-    fireEvent.click(within(row).getByLabelText('Increase withdrawal with paycheck Emergency Fund'));
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"monthlyWithdrawal":123');
-    expect(stored).toContain('"increaseWithdrawalWithPaycheck":true');
-  });
-
-  it('persists the income fallback account selects', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    const primary = screen.getByText('Primary Fallback').closest('label') as HTMLElement;
-    fireEvent.change(within(primary).getByRole('combobox'), { target: { value: 'investments-account-default' } });
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"incomeFallbackAccountId":"investments-account-default"');
-  });
-
-  it('clears an income fallback when its account is removed and shows a note', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const primary = screen.getByText('Primary Fallback').closest('label') as HTMLElement;
-    fireEvent.change(within(primary).getByRole('combobox'), { target: { value: 'hsa-account-default' } });
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
-    const bankTable = screen
-      .getAllByRole('table')
-      .find((table) => within(table).queryByRole('columnheader', { name: 'Type' })) as HTMLElement;
-    const hsaRow = within(bankTable)
-      .getAllByRole('row')
-      .find((row) => (within(row).queryAllByRole('textbox') as HTMLInputElement[]).some((input) => input.value === 'HSA')) as HTMLElement;
-    fireEvent.click(within(hsaRow).getByRole('button', { name: 'Remove' }));
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).not.toContain('"incomeFallbackAccountId":"hsa-account-default"');
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    expect(screen.getByText(/income fallback account no longer exists/i)).toBeInTheDocument();
-
-    confirmSpy.mockRestore();
-  });
-
-  it('keeps careers table balances aligned with the portfolio graph totals', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    const resultsTable = screen.getAllByRole('table').find((table) =>
-      within(table).queryByRole('columnheader', { name: 'Career' })
-    );
-
-    expect(resultsTable).toBeDefined();
-
-    const dataRows = within(resultsTable!).getAllByRole('row').slice(1);
-    const firstProjectedRowCells = within(dataRows[1]).getAllByRole('cell');
-    const emergencyFund = parseCurrency(firstProjectedRowCells[6].textContent ?? '');
-    const hsa = parseCurrency(firstProjectedRowCells[7].textContent ?? '');
-    const investments = parseCurrency(firstProjectedRowCells[8].textContent ?? '');
-    const retirement401k = parseCurrency(firstProjectedRowCells[9].textContent ?? '');
-    const endBalance = parseCurrency(firstProjectedRowCells[14].textContent ?? '');
-    const accountSum = emergencyFund + hsa + investments + retirement401k;
-
-    expect(Math.abs(endBalance - accountSum)).toBeLessThanOrEqual(3);
-
-    const summaryEndingText = screen.getByText(/Ending balance at age/i).textContent ?? '';
-    const summaryEndingBalanceMatch = summaryEndingText.match(/\$[0-9,]+/g);
-    const summaryEndingBalance = parseCurrency(summaryEndingBalanceMatch?.[summaryEndingBalanceMatch.length - 1] ?? '0');
-    const lastRowCells = within(dataRows[dataRows.length - 1]).getAllByRole('cell');
-    const lastTableEndBalance = parseCurrency(lastRowCells[14].textContent ?? '');
-
-    expect(lastTableEndBalance).toBe(summaryEndingBalance);
-  });
-
-  it('stores net worth balances with an as-of date in local storage', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
-
-    const bankAccountHeader = screen.getByRole('columnheader', { name: 'Balance' });
-    const bankAccountTable = bankAccountHeader.closest('table') as HTMLTableElement;
-    const emergencyFundInput = bankAccountTable.querySelector(
-      'tbody tr td input[type="text"][value="Emergency Fund"]'
-    ) as HTMLInputElement;
-    const emergencyFundRow = emergencyFundInput.closest('tr') as HTMLTableRowElement;
-    const emergencyFundBalanceInput = within(emergencyFundRow).getAllByRole('spinbutton')[1];
-    fireEvent.change(emergencyFundBalanceInput, { target: { value: '25000' } });
-    fireEvent.blur(emergencyFundBalanceInput);
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-
-    expect(stored).toContain('"id":"emergencyFund-account-default"');
-    expect(stored).toContain('"balance":25000');
-    expect(stored).toContain('"asOfDate"');
-  });
-
-  it('saves a dated net worth snapshot with current account balances', async () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
-
-    const bankAccountHeader = screen.getByRole('columnheader', { name: 'Balance' });
-    const bankAccountTable = bankAccountHeader.closest('table') as HTMLTableElement;
-    const emergencyFundInput = bankAccountTable.querySelector(
-      'tbody tr td input[type="text"][value="Emergency Fund"]'
-    ) as HTMLInputElement;
-    const emergencyFundRow = emergencyFundInput.closest('tr') as HTMLTableRowElement;
-    const emergencyFundBalanceInput = within(emergencyFundRow).getAllByRole('spinbutton')[1];
-    fireEvent.change(emergencyFundBalanceInput, { target: { value: '25000' } });
-    fireEvent.blur(emergencyFundBalanceInput);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save Account Balance' }));
-
-    const today = new Date().toISOString().slice(0, 10);
-    await waitFor(() => {
-      const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
-      const netWorth = parsed?.scenario?.netWorth ?? {};
-      expect(netWorth.asOfDate).toBe(today);
-      const history = netWorth.history ?? [];
-      expect(history.length).toBeGreaterThan(0);
-      const latest = history[history.length - 1];
-      expect(latest.date).toBe(today);
-      const emergencyFund = (latest.accounts ?? []).find(
-        (account: { id: string }) => account.id === 'emergencyFund-account-default'
-      );
-      expect(emergencyFund?.balance).toBe(25000);
-      expect(latest.totalNetWorth).toBeGreaterThanOrEqual(25000);
+    const scenario = freshScenario((next) => {
+      const career = next.careerPlan.entries[0];
+      // Initial plan allocation: fixed amount with a $500 cap and an overflow account.
+      career.depositPlan = {
+        allocations: [{
+          id: 'initial-alloc', enabled: true, sourceType: 'account', sourceId: CHECKING,
+          contributionRate: 5, savingsMonthly: false, monthlyWithdrawal: 0,
+          mode: 'fixedAmount', fixedAmount: 125, maxBalance: 500, overflowFallbackAccountId: EMERGENCY
+        }],
+        remainderAccountId: CHECKING,
+        postingDay: 1
+      };
+      career.paycheck = createDefaultPaycheck(0);
+      career.payPlans = [datedPlan];
     });
-  });
+    persistScenario(scenario);
+    // The exact stored source the App hydrates, so the id comparison is not invented.
+    const source = decodeStored().careerPlan.entries[0];
 
-  it('overwrites the same-day net worth snapshot instead of duplicating it', async () => {
-    render(<App />);
+    renderApp();
+    clickButton('Finances Prediction');
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
+    // The single career is the selected source; duplicate it through the real editor.
+    expect(screen.getByRole('button', { name: 'Current Career' })).toBeInTheDocument();
+    clickButton('Duplicate career');
 
-    const saveButton = screen.getByRole('button', { name: 'Save Account Balance' });
-    fireEvent.click(saveButton);
-    fireEvent.click(saveButton);
+    // Two careers now exist with distinct top-level labels; the clone is selected.
+    expect(screen.getByRole('button', { name: 'Current Career' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Current Career copy' })).toBeInTheDocument();
 
-    const today = new Date().toISOString().slice(0, 10);
-    await waitFor(() => {
-      const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
-      const history = parsed?.scenario?.netWorth?.history ?? [];
-      expect(history).toHaveLength(1);
-      expect(history[0].date).toBe(today);
-    });
-  });
+    // Edit the clone's dated plan: rename it, then set a new cap + overflow account.
+    fireEvent.click(screen.getByRole('tab', { name: 'Dated Plan' }));
+    fireEvent.change(screen.getByDisplayValue('Dated Plan'), { target: { value: 'Dated Plan renamed' } });
+    fireEvent.change(screen.getByLabelText('Maximum account balance 1'), { target: { value: '900' } });
+    fireEvent.change(screen.getByLabelText('Overflow account 1'), { target: { value: INVESTMENTS } });
 
-  it('hides the legacy add custom account control in net worth', () => {
-    render(<App />);
+    // Switching back to the original shows its own untouched Initial cap/overflow.
+    clickButton('Current Career');
+    expect(screen.getByLabelText('Maximum account balance 1')).toHaveValue(500);
+    expect(screen.getByLabelText('Overflow account 1')).toHaveValue(EMERGENCY);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Net Worth' })[0]);
-    expect(screen.queryByRole('button', { name: '+ Add Custom Account' })).not.toBeInTheDocument();
-  });
+    window.dispatchEvent(new Event('pagehide'));
+    const stored = decodeStored();
+    expect(stored.careerPlan.entries).toHaveLength(2);
+    const original = stored.careerPlan.entries.find((entry) => entry.id === source.id);
+    const clone = stored.careerPlan.entries.find((entry) => entry.id !== source.id);
+    expect(original).toBeDefined();
+    expect(clone).toBeDefined();
 
-  it('shows net worth history chart and range radios up to available history span', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          netWorth: {
-            accountBalances: { emergencyFund: 1000, hsa: 1000, investments: 1000, retirement401k: 1000 },
-            customAccounts: [],
-            imports: [],
-            asOfDate: '2026-07-20',
-            history: [
-              {
-                id: 'h-1',
-                date: '2026-01-01',
-                accounts: [
-                  { id: 'emergencyFund', label: 'Emergency Fund', balance: 1000 },
-                  { id: 'hsa', label: 'HSA', balance: 1000 },
-                  { id: 'investments', label: 'Investments', balance: 1000 },
-                  { id: 'retirement401k', label: '401K', balance: 1000 }
-                ],
-                totalNetWorth: 4000
-              },
-              {
-                id: 'h-2',
-                date: '2026-07-20',
-                accounts: [
-                  { id: 'emergencyFund', label: 'Emergency Fund', balance: 2000 },
-                  { id: 'hsa', label: 'HSA', balance: 1500 },
-                  { id: 'investments', label: 'Investments', balance: 5000 },
-                  { id: 'retirement401k', label: '401K', balance: 3000 }
-                ],
-                totalNetWorth: 11500
-              }
-            ]
-          }
-        },
-        ui: { activeTab: 'netWorth', selectedCareerId: '', careersSubTab: 'careers' }
-      })
-    );
+    // Distinct top-level ids; nested Initial values are preserved by the deep clone.
+    expect(clone!.id).not.toBe(original!.id);
+    expect(clone!.depositPlan).toEqual(original!.depositPlan);
+    expect(clone!.depositPlan?.allocations[0]).toMatchObject({ maxBalance: 500, overflowFallbackAccountId: EMERGENCY });
+    expect(clone!.paycheck).toEqual(original!.paycheck);
 
-    render(<App />);
+    // The clone's dated-plan edit persisted; the original stayed untouched.
+    const cloneDated = clone!.payPlans?.find((plan) => plan.id === datedPlan.id);
+    const originalDated = original!.payPlans?.find((plan) => plan.id === datedPlan.id);
+    expect(cloneDated).toMatchObject({ label: 'Dated Plan renamed' });
+    expect(cloneDated!.depositPlan?.allocations[0]).toMatchObject({ maxBalance: 900, overflowFallbackAccountId: INVESTMENTS });
+    expect(originalDated).toMatchObject({ label: 'Dated Plan' });
+    expect(originalDated!.depositPlan?.allocations[0].maxBalance).toBeUndefined();
+    expect(originalDated!.depositPlan?.allocations[0].overflowFallbackAccountId ?? null).toBeNull();
+    expect(cloneDated!.paycheck).toEqual(originalDated!.paycheck);
 
-    expect(screen.getByRole('img', { name: /net worth history over time/i })).toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: 'Portfolio Graph' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: 'Stacked Savings Graph' })).not.toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '30 days' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '60 days' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '90 days' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '180 days' })).toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: '1 year' })).not.toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'All' })).toBeInTheDocument();
-  });
-
-  it('persists and restores finances prediction sub-tab selection', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    const financeSubTabsElement = financeSubTabs as HTMLElement;
-    fireEvent.click(within(financeSubTabsElement).getByRole('button', { name: 'Purchases and expenses' }));
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"careersSubTab":"purchasesExpenses"');
-
+    // Reload re-hydrates both careers separately from the stored bytes.
     cleanup();
-    render(<App />);
-
-    expect(screen.getByText('Large Purchases Table')).toBeInTheDocument();
+    renderApp();
+    clickButton('Finances Prediction');
+    expect(screen.getByRole('button', { name: 'Current Career' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Current Career copy' })).toBeInTheDocument();
+    const reloadedClone = decodeStored().careerPlan.entries.find((entry) => entry.id !== source.id);
+    expect(reloadedClone?.payPlans?.[0]).toMatchObject({ label: 'Dated Plan renamed' });
   });
 
-  it('allows entering career start using year-month and converts it to age', () => {
-    render(<App />);
+  // GUI-A09 / G38 — marker add/remove -----------------------------------------
+  it('adds and removes a date marker through the canonical registry', () => {
+    persistScenario(freshScenario());
+    renderApp();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
+    clickButton('Finances Prediction');
+    clickButton('Date markers');
+    expect(screen.getByText(/No date markers yet/)).toBeInTheDocument();
 
-    const yearInput = screen.getByLabelText('Start Year');
-    const monthInput = screen.getByLabelText('Start Month');
-    fireEvent.change(yearInput, { target: { value: '2030' } });
-    fireEvent.change(monthInput, { target: { value: '10' } });
+    clickButton('+ Date Marker');
+    expect(screen.queryByText(/No date markers yet/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue('New marker');
 
-    const startAgeInput = within(screen.getByText('Start Age').closest('label')!).getByRole('spinbutton');
-    expect(startAgeInput).toHaveValue(50);
+    clickButton('Remove');
+    expect(screen.getByText(/No date markers yet/)).toBeInTheDocument();
   });
 
-  it('renders Down Pay From dropdown in loans table and persists selection', async () => {
-    render(<App />);
+  // GUI-A04 / G16–G17 — no invented source or negative hypothetical balance -----
+  it('renders purchase and loan editors with truthful no-preview status', () => {
+    persistScenario(freshScenario());
+    renderApp();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Timeline Management' }).closest('.tabs');
-    expect(financeSubTabs).toBeTruthy();
-    fireEvent.click(within(financeSubTabs as HTMLElement).getByRole('button', { name: 'Purchases and expenses' }));
+    clickButton('Finances Prediction');
+    clickButton('Purchases & expenses');
+    clickButton('＋ Add one-time purchase');
+    expect(screen.getByLabelText('Purchase month')).toBeInTheDocument();
+    expect(screen.getByText(/No projected or hypothetical balance is shown/)).toBeInTheDocument();
+    expect(screen.getByText(/does not invent an income source or simulate a negative balance/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '+ Loan' }));
-
-    const loanRow = screen.getByDisplayValue('Loan').closest('tr') as HTMLTableRowElement;
-    const dpSelect = within(loanRow).getByLabelText('Loan Down Payment Source') as HTMLSelectElement;
-    expect(dpSelect).toBeInTheDocument();
-
-    expect(within(dpSelect).getByRole('option', { name: 'Income' })).toBeInTheDocument();
-    const accountOptions = within(dpSelect)
-      .getAllByRole('option')
-      .filter((option) => (option as HTMLOptionElement).value.startsWith('account:'));
-    expect(accountOptions.length).toBeGreaterThan(0);
+    clickButton('＋ Add loan');
+    // The canonical LoanEditor states its no-preview contract; the positive
+    // linked-liability debt control is asserted once the App writer wires it.
+    expect(screen.getByText(/Set the terms and payment sources\. This editor does not estimate a balance or payment outcome\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/applied to interest first, then principal/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/estimated payment/i)).not.toBeInTheDocument();
   });
 
-  it('shows enriched fallback tooltip on yellow loan row with income usage breakdown', async () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: { currentAssets: 500000, equityAllocation: 75, fixedIncomeAllocation: 25, fixedIncomeDuration: 'one_year' },
-          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-          careerPlan: {
-            enabled: true,
-            entries: [{
-              id: 'career-1',
-              label: 'Test Career',
-              enabled: true,
-              usePreviousCareerStartAge: false,
-              useBirthdayBasedStartAge: false,
-              startYearMonth: '',
-              endYearMonth: '',
-              startAge: 45,
-              endAge: 65,              annualRaiseRate: 3.5,
-              savingsRate: 10,
-              employerMatchRate: 3,
-              bonusRate: 8,
-              bonusSavingsRate: 50,
-              emergencyFundContributionRate: 2,
-              hsaContributionRate: 3,
-              investmentsContributionRate: 6,
-              retirement401kContributionRate: 6,
-              emergencyFundSavingsMonthly: false,
-              hsaSavingsMonthly: false,
-              investmentsSavingsMonthly: false,
-              retirement401kSavingsMonthly: false,
-              emergencyFundStartBalanceMode: 'auto',
-              hsaStartBalanceMode: 'auto',
-              investmentsStartBalanceMode: 'auto',
-              retirement401kStartBalanceMode: 'auto',
-              emergencyFundManualStartBalance: 0,
-              hsaManualStartBalance: 0,
-              investmentsManualStartBalance: 0,
-              retirement401kManualStartBalance: 0,
-              taxInfo: { untaxedBenefits: 0, leftoverIncome: 12000, taxRate: 25, lastEditedField: 'taxRate' }
-            }]
-          },
-          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
-          withdrawal: { mode: 'specified', firstYearAmount: 40000, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, firstYearAccountWithdrawals: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 40000 }, firstYearAccountUseFourPercent: { emergencyFund: false, hsa: false, investments: false, retirement401k: false }, sourceLines: [], inflationAdjusted: true },
-          returnMode: 'manual',
-          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
-          largePurchases: [],
-          longTermPurchases: [],
-          loans: [{
-            id: 'tooltip-loan',
-            label: 'Test Loan',
-            enabled: true,
-            showOnGraph: true,
-            startYearMonth: '2026-01',
-            originalAmount: 20000,
-            downPayment: 0,
-            currentBalance: 20000,
-            annualInterestRate: 0,
-            minimumMonthlyPayment: 2000,
-            extraMonthlyPayment: 0,
-            paymentSourceAccount: 'income',
-            paymentSource: 'income'
-          }],
-          cashflowItems: [],
-          lifeEvents: [],
-          incomeFallbackAccountId: 'emergencyFund-account-default',
-          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: { groupingMode: 'account', zoomLevel: 1, rowHeight: 56, density: 'comfortable', snapToDay: true, scrubberDate: '2026-05-08', windowStartDate: '2026-05-08', windowEndDate: '2027-05-08', selectedAccountIds: [], selectedPoolIds: [], collapsedTrackIds: [], trackerVisibleAccountIds: [], planningWeekStartDay: 5 } },
-          netWorth: { accountBalances: { emergencyFund: 50000, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 50000 }] },
-          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
-        },
-        ui: { activeTab: 'careers', selectedCareerId: 'career-1', careersSubTab: 'purchasesExpenses', expensesSubTab: 'planning' }
-      })
-    );
-
-    render(<App />);
-
-    const loanRow = screen.getByDisplayValue('Test Loan').closest('tr') as HTMLTableRowElement;
-    await waitFor(() => {
-      expect(loanRow.className).toBeTruthy();
+  it('shows only observed loan funding and the signed closing debt from the shared report', () => {
+    const scenario = freshScenario(next => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map(account => ({ ...account, openingBalance: account.id === CHECKING ? 100 : 0 }));
+      const loan = { id: 'loan-observed', label: 'Observed loan', enabled: true, showOnGraph: true, startYearMonth: '2100-12', originalAmount: 1000, downPayment: 0, currentBalance: 1000, annualInterestRate: 0, minimumMonthlyPayment: 200, extraMonthlyPayment: 0, paymentSourceAccount: CHECKING, paymentSource: `account:${CHECKING}` as const };
+      next.loans = [loan];
+      next.liabilities = [{ id: 'liability-observed', kind: 'loan', label: 'Observed loan', openingBalance: 1000, sourceConfigId: loan.id, annualInterestRate: 0, minimumMonthlyPayment: 200, extraMonthlyPayment: 0 }];
     });
+    const report = projectFeatureScenario(scenario, { timelineId: null }).report;
+    const outcome = report.outcomes.find(item => item.definitionId === 'loan:loan-observed:installment');
+    const finalClose = report.months[report.months.length - 1];
+    const debt = finalClose.liabilities.find(item => item.liabilityId === 'liability-observed');
+    expect(outcome).toBeDefined();
+    // Independent cents math: $100 cash funds a $200 request, leaving $100 unpaid;
+    // APR is 0%, so the $1,000 principal closes at $900 and never goes negative.
+    expect(outcome?.requestedCents).toBe(20_000);
+    expect(outcome?.executedCents).toBe(10_000);
+    expect(outcome?.shortfallCents).toBe(10_000);
+    expect(debt?.closingPrincipalCents).toBe(90_000);
+    expect(debt?.closingInterestCents).toBe(0);
+    expect(finalClose.closing.netWorthCents).toBe(-90_000);
 
-    const title = loanRow.getAttribute('title') ?? '';
-    expect(title.length).toBeGreaterThan(0);
-    expect(title).toContain('Using fallback');
-    expect(title).toContain('Monthly income');
-    expect(title).toContain('Test Loan');
+    persistScenario(scenario);
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Purchases & expenses');
+    const results = screen.getByRole('region', { name: 'Observed results for Observed loan' });
+    expect(within(results).getByText(/Requested \$200\.00 · paid \$100\.00 · unpaid \$100\.00/)).toBeInTheDocument();
+    expect(within(results).getByText(/Remaining debt at projection close/)).toBeInTheDocument();
+    expect(within(results).getByText('$900.00')).toBeInTheDocument();
+    expect(within(results).queryByText(/payoff/)).not.toBeInTheDocument();
+    expect(within(results).getByText(/Principal \$900\.00 · interest \$0\.00 · fees \$0\.00/)).toBeInTheDocument();
   });
 
-  it('shows an income usage warning banner when income-funded spending exceeds take-home', async () => {
-    const now = new Date();
-    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: { currentAssets: 0, equityAllocation: 75, fixedIncomeAllocation: 25, fixedIncomeDuration: 'one_year' },
-          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-          careerPlan: {
-            enabled: true,
-            entries: [{
-              id: 'career-1',
-              label: 'Test Career',
-              enabled: true,
-              usePreviousCareerStartAge: false,
-              useBirthdayBasedStartAge: false,
-              startYearMonth: '',
-              endYearMonth: '',
-              startAge: 45,
-              endAge: 65,
-              annualRaiseRate: 0,
-              savingsRate: 0,
-              employerMatchRate: 0,
-              bonusRate: 0,
-              bonusSavingsRate: 0,
-              emergencyFundContributionRate: 0,
-              hsaContributionRate: 0,
-              investmentsContributionRate: 0,
-              retirement401kContributionRate: 0,
-              emergencyFundSavingsMonthly: false,
-              hsaSavingsMonthly: false,
-              investmentsSavingsMonthly: false,
-              retirement401kSavingsMonthly: false,
-              emergencyFundStartBalanceMode: 'auto',
-              hsaStartBalanceMode: 'auto',
-              investmentsStartBalanceMode: 'auto',
-              retirement401kStartBalanceMode: 'auto',
-              emergencyFundManualStartBalance: 0,
-              hsaManualStartBalance: 0,
-              investmentsManualStartBalance: 0,
-              retirement401kManualStartBalance: 0,
-              sourceLines: [],
-              paycheckInfo: {
-                grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
-                retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
-              },
-              taxInfo: { untaxedBenefits: 0, leftoverIncome: 12000, taxRate: 25, lastEditedField: 'taxRate' }
-            }]
-          },
-          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
-          withdrawal: { mode: 'specified', firstYearAmount: 0, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, firstYearAccountWithdrawals: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, firstYearAccountUseFourPercent: { emergencyFund: false, hsa: false, investments: false, retirement401k: false }, sourceLines: [], inflationAdjusted: true },
-          returnMode: 'manual',
-          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
-          largePurchases: [],
-          longTermPurchases: [{
-            id: 'banner-lt',
-            label: 'Overspend Expense',
-            enabled: true,
-            showOnGraph: true,
-            startYearMonth: currentYearMonth,
-            endMode: 'duration',
-            durationMonths: 6,
-            endYearMonth: '',
-            monthlyAmount: 3000,
-            fundingSource: 'income'
-          }],
-          loans: [],
-          cashflowItems: [],
-          lifeEvents: [],
-          incomeFallbackAccountId: null,
-          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: { groupingMode: 'account', zoomLevel: 1, rowHeight: 56, density: 'comfortable', snapToDay: true, scrubberDate: '2026-05-08', windowStartDate: '2026-05-08', windowEndDate: '2027-05-08', selectedAccountIds: [], selectedPoolIds: [], collapsedTrackIds: [], trackerVisibleAccountIds: [], planningWeekStartDay: 5 } },
-          netWorth: { accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 }] },
-          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
-        },
-        ui: { activeTab: 'careers', selectedCareerId: 'career-1', careersSubTab: 'purchasesExpenses', expensesSubTab: 'planning' }
-      })
-    );
-
-    render(<App />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Warnings' }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Income usage warnings')).toBeInTheDocument();
+  it('shows committed purchase funding across the configured primary and ordered fallbacks', () => {
+    const scenario = freshScenario(next => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map(account => ({ ...account, openingBalance: account.id === CHECKING ? 100 : account.id === EMERGENCY ? 60 : account.id === 'investments-account-default' ? 40 : 0, capitalGainsTaxRate: 0 }));
+      next.fundingPolicy = { primaryAccountId: CHECKING, fallbackAccountIds: [EMERGENCY, 'investments-account-default'] };
+      next.largePurchases = [{ id: 'purchase-three-sources', label: 'Three-source purchase', enabled: true, showOnGraph: true, flagColor: '#abc', yearMonth: '2026-07', age: 40, amount: 200, fundingSource: undefined, categoryId: null }];
     });
-    expect(screen.getByText(/1 consolidated issue across 6 periods/)).toBeInTheDocument();
-    expect(screen.getByText(/\(6 months\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Overspend Expense/)).toBeInTheDocument();
+    const stored = decodeAppState(encodeAppState({ scenario, ui: createDefaultUiState() }, FIXED_DATE).json, FIXED_DATE).scenario;
+    persistScenario(scenario); renderApp(); clickButton('Finances Prediction'); clickButton('Purchases & expenses');
+    const details = screen.getByRole('region', { name: 'Observed purchase funding' }).querySelector('details')!;
+    fireEvent.click(within(details).getByText(/Funded · 2026-07/));
+    expect(within(details).getByText(/Requested \$200\.00 · executed \$200\.00 · shortfall \$0\.00/)).toBeInTheDocument();
+    expect(within(details).getByText(/Eligible account order at quote:/).textContent).toContain('Checking → Emergency Fund → Investments');
+    const allocations = [...details.querySelectorAll('li')].map(item => item.textContent ?? '');
+    expect(allocations[0]).toContain('Checking · net $100.00 · gross $100.00 · tax $0.00 · penalty $0.00');
+    expect(allocations[1]).toContain('Emergency Fund · net $60.00 · gross $60.00');
+    expect(allocations[2]).toContain('Investments · net $40.00 · gross $40.00');
+    // The report fallback selector resolves the primary from the quote-time
+    // resolved order (the global funding policy), so only the two sources drawn
+    // beyond the configured primary — Emergency Fund and Investments — are
+    // badged; the primary itself is not a fallback.
+    expect(within(details).getAllByText('Fallback used')).toHaveLength(2);
+    expect(within(details).queryByText(/Unfunded/)).not.toBeInTheDocument();
+    expect(stored.netWorth.accounts.map(account => account.openingBalance)).toEqual([100, 60, 0, 40, 0]);
   });
 
-  it('marks a housing chip when income-funded housing exceeds income', () => {
-    const now = new Date();
-    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: { currentAssets: 0 },
-          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-          careerPlan: {
-            enabled: true,
-            entries: [{
-              id: 'career-1',
-              label: 'Test Career',
-              enabled: true,
-              usePreviousCareerStartAge: false,
-              useBirthdayBasedStartAge: false,
-              startYearMonth: '',
-              endYearMonth: '',
-              startAge: 45,
-              endAge: 65,
-              annualRaiseRate: 0,
-              savingsRate: 0,
-              emergencyFundContributionRate: 0,
-              hsaContributionRate: 0,
-              investmentsContributionRate: 0,
-              retirement401kContributionRate: 0,
-              emergencyFundSavingsMonthly: false,
-              hsaSavingsMonthly: false,
-              investmentsSavingsMonthly: false,
-              retirement401kSavingsMonthly: false,
-              emergencyFundStartBalanceMode: 'auto',
-              hsaStartBalanceMode: 'auto',
-              investmentsStartBalanceMode: 'auto',
-              retirement401kStartBalanceMode: 'auto',
-              emergencyFundManualStartBalance: 0,
-              hsaManualStartBalance: 0,
-              investmentsManualStartBalance: 0,
-              retirement401kManualStartBalance: 0,
-              sourceLines: [],
-              paycheckInfo: {
-                grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
-                retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
-              }
-            }]
-          },
-          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
-          withdrawal: { mode: 'specified', firstYearAmount: 0, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, sourceLines: [] },
-          returnMode: 'manual',
-          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
-          largePurchases: [],
-          longTermPurchases: [],
-          loans: [],
-          cashflowItems: [],
-          lifeEvents: [],
-          incomeFallbackAccountId: null,
-          housing: [{
-            id: 'housing-1',
-            label: 'Rent',
-            enabled: true,
-            showOnGraph: true,
-            housingType: 'rental',
-            startYearMonth: currentYearMonth,
-            purchasePrice: 0,
-            downPayment: 0,
-            annualInterestRate: 0,
-            loanTermYears: 0,
-            extraMonthlyPayment: 0,
-            monthlyRent: 5000,
-            endYearMonth: '',
-            propertyTaxYearly: 0,
-            homeInsuranceYearly: 0,
-            hoaMonthly: 0,
-            maintenanceMonthly: 0,
-            pmiMonthly: 0,
-            rentalIncomeMonthly: 0,
-            sellYearMonth: '',
-            appreciationRate: 0,
-            sellingCostsRate: 0,
-            paymentSource: 'income'
-          }],
-          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: {} },
-          netWorth: { accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 }] },
-          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
-        },
-        ui: { activeTab: 'careers', selectedCareerId: 'career-1', careersSubTab: 'housing', expensesSubTab: 'planning' }
-      })
-    );
-
-    render(<App />);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-
-    const chip = screen
-      .getAllByRole('button')
-      .find((button) => button.className.includes('career-tab') && (button.textContent ?? '').startsWith('Rent')) as HTMLElement;
-    expect(chip).toBeTruthy();
-    expect(chip.className).toContain('invalid');
-    expect(chip.getAttribute('title') ?? '').toMatch(/income|fallback|unpaid|available/i);
-  });
-
-  it('marks a credit card row when income-funded payments exceed income', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: { currentAssets: 0 },
-          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-          careerPlan: {
-            enabled: true,
-            entries: [{
-              id: 'career-1',
-              label: 'Test Career',
-              enabled: true,
-              usePreviousCareerStartAge: false,
-              useBirthdayBasedStartAge: false,
-              startYearMonth: '',
-              endYearMonth: '',
-              startAge: 45,
-              endAge: 65,
-              annualRaiseRate: 0,
-              savingsRate: 0,
-              emergencyFundContributionRate: 0,
-              hsaContributionRate: 0,
-              investmentsContributionRate: 0,
-              retirement401kContributionRate: 0,
-              emergencyFundSavingsMonthly: false,
-              hsaSavingsMonthly: false,
-              investmentsSavingsMonthly: false,
-              retirement401kSavingsMonthly: false,
-              emergencyFundStartBalanceMode: 'auto',
-              hsaStartBalanceMode: 'auto',
-              investmentsStartBalanceMode: 'auto',
-              retirement401kStartBalanceMode: 'auto',
-              emergencyFundManualStartBalance: 0,
-              hsaManualStartBalance: 0,
-              investmentsManualStartBalance: 0,
-              retirement401kManualStartBalance: 0,
-              sourceLines: [],
-              paycheckInfo: {
-                grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
-                retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
-              }
-            }]
-          },
-          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
-          withdrawal: { mode: 'specified', firstYearAmount: 0, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, sourceLines: [] },
-          returnMode: 'manual',
-          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
-          largePurchases: [],
-          longTermPurchases: [],
-          loans: [],
-          creditCards: [{
-            id: 'cc-autopay',
-            label: 'Test Card',
-            enabled: true,
-            currentBalance: 0,
-            annualInterestRate: 0,
-            introEnabled: false,
-            introEndYearMonth: '',
-            monthlyCharges: 0,
-            paymentMode: 'autopay',
-            fixedPaymentAmount: 5000,
-            minimumPaymentPercent: 0,
-            minimumPaymentFloor: 0,
-            paymentSource: 'income',
-            lumpSumPaymentSource: 'income',
-            paymentDay: 1
-          }],
-          cashflowItems: [],
-          lifeEvents: [],
-          incomeFallbackAccountId: null,
-          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: {} },
-          netWorth: { accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 }] },
-          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
-        },
-        ui: { activeTab: 'expenses', selectedCareerId: 'career-1', careersSubTab: 'careers', expensesSubTab: 'creditCards' }
-      })
-    );
-
-    render(<App />);
-
-    const row = screen.getByDisplayValue('Test Card').closest('tr') as HTMLElement;
-    expect(row.className).toContain('invalid');
-    expect(row.getAttribute('title') ?? '').toMatch(/income|fallback|unpaid|available/i);
-  });
-
-  it('lists a credit card in the income usage warnings', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          profile: { currentAge: 45, retirementAge: 65, retirementYears: 30 },
-          options: { useDateBasedAge: false, dateOfBirth: '1980-10-01' },
-          portfolio: { currentAssets: 0 },
-          contribution: { yearlyContribution: 0, yearlyIncreaseRate: 0 },
-          careerPlan: {
-            enabled: true,
-            entries: [{
-              id: 'career-1',
-              label: 'Test Career',
-              enabled: true,
-              usePreviousCareerStartAge: false,
-              useBirthdayBasedStartAge: false,
-              startYearMonth: '',
-              endYearMonth: '',
-              startAge: 45,
-              endAge: 65,
-              annualRaiseRate: 0,
-              savingsRate: 0,
-              emergencyFundContributionRate: 0,
-              hsaContributionRate: 0,
-              investmentsContributionRate: 0,
-              retirement401kContributionRate: 0,
-              emergencyFundSavingsMonthly: false,
-              hsaSavingsMonthly: false,
-              investmentsSavingsMonthly: false,
-              retirement401kSavingsMonthly: false,
-              emergencyFundStartBalanceMode: 'auto',
-              hsaStartBalanceMode: 'auto',
-              investmentsStartBalanceMode: 'auto',
-              retirement401kStartBalanceMode: 'auto',
-              emergencyFundManualStartBalance: 0,
-              hsaManualStartBalance: 0,
-              investmentsManualStartBalance: 0,
-              retirement401kManualStartBalance: 0,
-              sourceLines: [],
-              paycheckInfo: {
-                grossSalary: 12000, taxes: 0, healthBenefits: 0, otherBenefits: 0, livingExpenses: 0,
-                retirement: 0, retirementMatch: 0, hsaContribution: 0, hsaEmployerMatch: 0
-              }
-            }]
-          },
-          futureRetirement: { useCareerEndAge: true, retirementAge: 65, retirementYears: 30 },
-          withdrawal: { mode: 'specified', firstYearAmount: 0, minimumYearlyWithdrawal: 0, maximumYearlyWithdrawal: 1000000, useRetirementAgeAsWithdrawalStartAge: true, sourceLines: [] },
-          returnMode: 'manual',
-          manualReturns: { inflationEnabled: true, inflationRate: 2.9, preRetirementEquityReturn: 5, postRetirementEquityReturn: 5, fixedIncomeReturn: 2.9 },
-          largePurchases: [],
-          longTermPurchases: [],
-          loans: [],
-          creditCards: [{
-            id: 'cc-autopay',
-            label: 'Test Card',
-            enabled: true,
-            currentBalance: 0,
-            annualInterestRate: 0,
-            introEnabled: false,
-            introEndYearMonth: '',
-            monthlyCharges: 0,
-            paymentMode: 'autopay',
-            fixedPaymentAmount: 5000,
-            minimumPaymentPercent: 0,
-            minimumPaymentFloor: 0,
-            paymentSource: 'income',
-            lumpSumPaymentSource: 'income',
-            paymentDay: 1
-          }],
-          cashflowItems: [],
-          lifeEvents: [],
-          incomeFallbackAccountId: null,
-          expenses: { entries: [], imports: [], categoriesByAccountId: {}, weeklyBalanceByAccountId: {}, maxBalanceByAccountId: {}, activePlanningAccountId: null, recurringEvents: [], ui: {} },
-          netWorth: { accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 }, asOfDate: '', bankAccounts: [{ id: 'emergencyFund-account-default', label: 'Emergency Fund', poolId: 'emergencyFund', priority: 0, accountType: 'savings', balance: 0 }] },
-          savingsTracker: { annualInterestRates: { emergencyFund: 2.5, hsa: 5, investments: 6.5, retirement401k: 6 } }
-        },
-        ui: { activeTab: 'careers', selectedCareerId: 'career-1', careersSubTab: 'warnings', expensesSubTab: 'planning' }
-      })
-    );
-
-    render(<App />);
-
-    expect(screen.getByText('Income usage warnings')).toBeInTheDocument();
-    expect(screen.getAllByText('Test Card').length).toBeGreaterThan(0);
-  });
-
-  it('defaults an autopay end date and shows it in the card row', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Expenses' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Credit Cards' }));
-    fireEvent.click(screen.getByRole('button', { name: '+ Credit Card' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-
-    const modeLabel = screen.getByText('Payment Mode').closest('label') as HTMLElement;
-    fireEvent.change(within(modeLabel).getByRole('combobox'), { target: { value: 'autopay' } });
-
-    expect(screen.getByText('Autopay Ends')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"paymentMode":"autopay"');
-    expect(stored).toMatch(/"autopayEndYearMonth":"\d{4}-\d{2}"/);
-    expect(screen.getByText(/until \d{4}-\d{2}/)).toBeInTheDocument();
-  });
-
-  it('shows the Trajectory sub-tab, renders the overlay chart, and persists the sub-tab selection', () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Trajectory' }));
-
-    expect(screen.getByText('Trajectory Comparison')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save Current Trajectory' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /trajectory comparison over time/i })).toBeInTheDocument();
-
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"careersSubTab":"trajectory"');
-
-    cleanup();
-    render(<App />);
-    expect(screen.getByText('Trajectory Comparison')).toBeInTheDocument();
-  });
-
-  it('saves a named trajectory snapshot, compares metrics, and restores the selection', async () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Trajectory' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save Current Trajectory' }));
-
-    await waitFor(() => {
-      const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
-      const snapshots = parsed?.scenario?.trajectorySnapshots ?? [];
-      expect(snapshots).toHaveLength(1);
-      expect(snapshots[0].label).toBe('Trajectory 1');
-      expect(snapshots[0].years.length).toBeGreaterThan(0);
-      expect(parsed?.ui?.compareTrajectoryId).toBe(snapshots[0].id);
+  it('shows a zero-debit skipped purchase as unfunded without inventing a negative balance', () => {
+    const scenario = freshScenario(next => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map(account => ({ ...account, openingBalance: 0 }));
+      next.fundingPolicy = { primaryAccountId: CHECKING, fallbackAccountIds: [EMERGENCY] };
+      next.largePurchases = [{ id: 'purchase-unfunded', label: 'Unfunded purchase', enabled: true, showOnGraph: true, flagColor: '#abc', yearMonth: '2026-07', age: 40, amount: 500, fundingSource: undefined, categoryId: null }];
     });
-
-    expect(screen.getByText('Metrics vs Trajectory 1')).toBeInTheDocument();
-    expect(screen.getByText('Ending balance')).toBeInTheDocument();
-    expect(screen.getByText(/Account balances at age/)).toBeInTheDocument();
-
-    cleanup();
-    render(<App />);
-    expect(screen.getByDisplayValue('Trajectory 1')).toBeInTheDocument();
-    expect((screen.getByRole('radio', { name: 'Compare' }) as HTMLInputElement).checked).toBe(true);
+    persistScenario(scenario); renderApp(); clickButton('Finances Prediction'); clickButton('Purchases & expenses');
+    const detail = screen.getByRole('region', { name: 'Observed purchase funding' }).querySelector('details')!;
+    fireEvent.click(within(detail).getByText(/Skipped · no funds debited/));
+    expect(within(detail).getByText(/Requested \$500\.00 · no debit posted · shortfall \$500\.00/)).toBeInTheDocument();
+    expect(within(detail).getByText(/Skipped or unfunded/)).toBeInTheDocument();
+    expect(within(detail).getByText(/No account debit was committed/)).toBeInTheDocument();
+    expect(within(detail).queryByText(/-\$500/)).not.toBeInTheDocument();
+    expect(detail.querySelector('summary')).toHaveClass('purchase-funding__shortfall');
   });
 
-  it('removes a saved trajectory snapshot', async () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Trajectory' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save Current Trajectory' }));
-
-    await waitFor(() => {
-      expect(screen.getByDisplayValue('Trajectory 1')).toBeInTheDocument();
+  it('does not apply global funding policy to an explicitly unresolved income purchase', () => {
+    const scenario = freshScenario(next => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map(account => ({ ...account, openingBalance: account.id === CHECKING ? 1000 : 0 }));
+      next.fundingPolicy = { primaryAccountId: CHECKING, fallbackAccountIds: [] };
+      next.largePurchases = [{ id: 'purchase-income-unresolved', label: 'Income source purchase', enabled: true, showOnGraph: true, flagColor: '#abc', yearMonth: '2026-07', age: 40, amount: 500, fundingSource: 'income', categoryId: null }];
     });
+    persistScenario(scenario); renderApp(); clickButton('Finances Prediction'); clickButton('Purchases & expenses');
+    const detail = screen.getByRole('region', { name: 'Observed purchase funding' }).querySelector('details')!;
+    fireEvent.click(detail.querySelector('summary')!);
+    expect(detail.querySelector('summary')).toHaveClass('purchase-funding__shortfall');
+    expect(detail.textContent).toContain('Requested $500.00 · no debit posted · shortfall $500.00');
+    expect(detail.textContent).toContain('No eligible accounts');
+    expect(detail.textContent).toContain('Skipped or unfunded');
+    expect(detail.textContent).not.toContain('Checking →');
+    expect(detail.textContent).not.toContain('Fallback used');
+    expect(detail.textContent).toContain('No account debit was committed');
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+  // GUI-A05 / G20 — housing canonical property/debt section renders -------------
+  it('mounts the housing editor with its canonical property and debt section', () => {
+    persistScenario(freshScenario((scenario) => {
+      const home = createDefaultHousingEntry(40, '1986-06-15', FIXED_DATE);
+      scenario.housing = [{ ...home, id: 'home' }];
+    }));
+    renderApp();
 
-    await waitFor(() => {
-      const parsed = JSON.parse(window.localStorage.getItem('finance-planner-state') ?? '{}');
-      expect(parsed?.scenario?.trajectorySnapshots ?? []).toHaveLength(0);
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+    expect(screen.getAllByRole('region', { name: 'Canonical property and debt' }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('region', { name: /results/ })).toBeInTheDocument();
+  });
+
+  it('shows an underfunded acquisition as pending from the observed close, without ownership costs', () => {
+    const scenario = freshScenario(next => {
+      const home = { ...createDefaultHousingEntry(next.profile.currentAge, next.options.dateOfBirth, FIXED_DATE), id: 'pending-home', label: 'Unfunded home', propertyTaxYearly: 12000, homeInsuranceYearly: 1200 };
+      home.startYearMonth = '2026-07';
+      next.housing = [home];
+      next.properties = [{ id: 'pending-property', sourceConfigId: home.id, label: home.label, kind: 'primaryResidence', value: 0, debtLink: 'pending-mortgage', requiredDownPayment: 80000, status: 'pending', acquisitionYearMonth: '2026-07', fundingEvents: [{ id: 'fe-pending', date: '2026-07-01', amount: 80000, accountId: CHECKING }] }];
+      next.liabilities = [{ id: 'pending-mortgage', kind: 'mortgage', label: 'Pending mortgage', openingBalance: 0, sourceConfigId: home.id, linkedPropertyId: 'pending-property' }];
     });
-    expect(screen.queryByDisplayValue('Trajectory 1')).not.toBeInTheDocument();
+    const report = projectFeatureScenario(scenario, { timelineId: null }).report;
+    const close = report.months[report.months.length - 1].properties.find(item => item.propertyId === 'pending-property');
+    const costs = report.schedules.filter(item => item.definitionId.includes('housing:pending-property:') && ['housingTaxesInsurance','housingMortgagePayment'].includes(item.purpose));
+    expect(close?.closingValueCents).toBe(0);
+    expect(costs).toHaveLength(0);
+    persistScenario(scenario);
+    renderApp(); clickButton('Finances Prediction'); clickButton('Housing');
+    expect(screen.getByText('Acquisition still pending')).toBeInTheDocument();
+    expect(screen.getByText(`Observed property value ${displayCents(close!.closingValueCents)} · held deposit ${displayCents(close!.closingDepositCents)}`)).toBeInTheDocument();
+    expect(screen.getByText('No housing obligations were observed in this projection window.')).toBeInTheDocument();
   });
 
-  it('anchors the simulation to the last saved balance snapshot', () => {
-    window.localStorage.setItem(
-      'finance-planner-state',
-      JSON.stringify({
-        scenario: {
-          netWorth: {
-            accountBalances: { emergencyFund: 0, hsa: 0, investments: 0, retirement401k: 0 },
-            bankAccounts: [
-              { id: 'investments-account-default', label: 'Investments', poolId: 'investments', priority: 0, accountType: 'taxable', balance: 0 }
-            ],
-            asOfDate: '2026-01-15',
-            history: [
-              {
-                id: 'h-1',
-                date: '2026-01-15',
-                accounts: [{ id: 'investments-account-default', label: 'Investments', balance: 123456 }],
-                totalNetWorth: 123456
-              }
-            ]
-          }
-        },
-        ui: { activeTab: 'careers', selectedCareerId: '', careersSubTab: 'careers', expensesSubTab: 'planning' }
-      })
-    );
-
-    render(<App />);
-
-    expect(screen.getByText(/Simulating from/i)).toBeInTheDocument();
-    expect(screen.getByText(/January 15, 2026/i)).toBeInTheDocument();
-    expect(screen.getAllByText('$123,456').length).toBeGreaterThan(0);
+  it('shows an underwater sale from its retained closing deficiency and signed report net worth', () => {
+    const scenario = freshScenario(next => {
+      next.netWorth.accounts = next.netWorth.accounts.map(account => ({ ...account, balance: 0 }));
+      const home = { ...createDefaultHousingEntry(next.profile.currentAge, next.options.dateOfBirth, FIXED_DATE), id: 'underwater-home', label: 'Underwater home', startYearMonth: '2026-06', sellYearMonth: '2026-07' };
+      next.housing = [home];
+      next.properties = [{ id: 'underwater-property', sourceConfigId: home.id, label: home.label, kind: 'primaryResidence', value: 10000, debtLink: 'underwater-mortgage', requiredDownPayment: 0, status: 'owned', acquisitionYearMonth: '2020-01', sellingCostsRate: 0 }];
+      next.liabilities = [{ id: 'underwater-mortgage', kind: 'mortgage', label: 'Underwater mortgage', openingBalance: 10000000, sourceConfigId: home.id, linkedPropertyId: 'underwater-property' }];
+    });
+    const report = projectFeatureScenario(scenario, { timelineId: null }).report;
+    const close = report.months[report.months.length - 1];
+    const retained = close.liabilities.find(item => item.liabilityId === 'housing:underwater-property:saleDeficiency');
+    expect(retained).toBeDefined();
+    expect(retained!.closingPrincipalCents + retained!.closingInterestCents + retained!.closingFeesCents).toBeGreaterThan(0);
+    expect(close.closing.netWorthCents).toBeLessThan(0);
+    persistScenario(scenario); renderApp(); clickButton('Finances Prediction'); clickButton('Housing');
+    const deficiencyCents = retained!.closingPrincipalCents + retained!.closingInterestCents + retained!.closingFeesCents;
+    expect(screen.getByText(`Sale deficiency retained as debt: ${displayCents(deficiencyCents)}. Signed net worth at projection close: ${displayCents(close.closing.netWorthCents)}.`)).toBeInTheDocument();
   });
 
-  it('persists the current-dollars display toggle across reloads', () => {
-    render(<App />);
+  // GUI-A07 / G27–G28 — occurred imports stay view-only and scoped --------------
+  it('keeps an occurred import view-only and removes only its source entries', () => {
+    persistScenario(freshScenario((scenario) => {
+      const accountId = scenario.netWorth.accounts[0].id;
+      scenario.expenses = {
+        ...scenario.expenses,
+        activePlanningAccountId: accountId,
+        categoriesByAccountId: { [accountId]: [{ id: 'food', label: 'Food' }] },
+        entries: [{
+          id: 'imp-1', label: 'Old train', amount: 20, startDate: '2026-06-15', endDate: '2026-06-15',
+          accountId, notes: '', originType: 'imported', importSourceId: 'src', importBatchId: 'batch',
+          createdAt: '2026-01-01', updatedAt: '2026-01-01', categoryId: 'food',
+          provenance: 'imported', planningStatus: 'occurred', sourceDate: '2025-04-02', sourceSign: 'debit', asOf: '2025-04-30'
+        }],
+        imports: [{
+          id: 'src', batchId: 'batch', fileName: 'statement.csv', fileType: 'csv', previewText: '',
+          status: 'ready', parseNotes: [], confidence: 0.8, importedAt: '2026-06-01', appliedAt: '', entryIds: ['imp-1']
+        }]
+      };
+    }));
+    renderApp();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
-    const toggle = screen.getByRole('checkbox', { name: 'Display values in current dollars' });
-    expect(toggle).not.toBeChecked();
+    clickButton('Expenses');
+    expect(screen.getByText('Occurred · view only')).toBeInTheDocument();
+    expect(screen.getByText('statement.csv')).toBeInTheDocument();
 
+    clickButton('Remove source');
+    expect(screen.queryByText('Occurred · view only')).not.toBeInTheDocument();
+    expect(screen.queryByText('statement.csv')).not.toBeInTheDocument();
+  });
+
+  // GUI-A08 / G31–G35 — chart/table render and current-dollar toggle wires ------
+  it("renders the projection chart and table and wires today's-dollars", () => {
+    persistScenario(freshScenario());
+    renderApp();
+
+    clickButton('Finances Prediction');
+    clickButton('Timeline');
+    expect(screen.getByRole('region', { name: 'Projection chart' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Projection results' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Closing net worth' })).toBeInTheDocument();
+
+    const toggle = screen.getByRole('checkbox', { name: /Display values in today/ });
     fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(screen.getByRole('region', { name: 'Projection chart' })).toBeInTheDocument();
+  });
 
-    const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-    expect(stored).toContain('"showRealDollars":true');
+  // D25 — exact engine shortfall language is rendered verbatim ------------------
+  it('renders the exact engine shortfall warning for an unfunded purchase', () => {
+    const scenario = freshScenario((next) => {
+      const investments = next.netWorth.accounts.find((account) => account.accountType === 'taxable');
+      next.largePurchases = [{
+        id: 'p1', label: 'Big spend', enabled: true, showOnGraph: true, flagColor: '#abc',
+        yearMonth: '2026-08', age: 0, amount: 250_000,
+        fundingSource: `account:${investments?.id ?? 'missing'}`, categoryId: null
+      }];
+    });
+    const expected = projectFeatureScenario(scenario, { timelineId: null }).report.shortfall.warning;
+    expect(expected).toBeTruthy();
+
+    persistScenario(scenario);
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Warnings');
+    expect(screen.getByText(expected as string)).toBeInTheDocument();
+  });
+
+  // D24 — save lifecycle (future version / corrupt / quota / flush) -------------
+  it('preserves newer-version bytes and never overwrites them from an edit', () => {
+    window.localStorage.setItem(KEY, JSON.stringify({ schemaVersion: 999, scenario: {}, ui: {} }));
+    const preserved = window.localStorage.getItem(KEY);
+    renderApp();
+
+    expect(screen.getByText('Newer plan preserved')).toBeInTheDocument();
+    clickButton('Net Worth');
+    fireEvent.change(screen.getAllByLabelText(/Annual return/)[0], { target: { value: '3' } });
+    window.dispatchEvent(new Event('pagehide'));
+    expect(window.localStorage.getItem(KEY)).toBe(preserved);
+  });
+
+  it('preserves corrupt bytes on automatic saves and replaces them only on reset', () => {
+    window.localStorage.setItem(KEY, 'not-json');
+    renderApp();
+
+    expect(screen.getByText('Plan needs attention')).toBeInTheDocument();
+    clickButton('Net Worth');
+    fireEvent.change(screen.getAllByLabelText(/Annual return/)[0], { target: { value: '3' } });
+    window.dispatchEvent(new Event('pagehide'));
+    expect(window.localStorage.getItem(KEY)).toBe('not-json');
+
+    clickButton('Reset plan');
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Reset plan' }));
+    const after = window.localStorage.getItem(KEY) as string;
+    expect(after).not.toBe('not-json');
+    expect(JSON.parse(after)).toHaveProperty('scenario');
+  });
+
+  it('surfaces a storage-full diagnostic when a write fails', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Net Worth');
+
+    // jsdom's localStorage is a Proxy, so prototype/instance spies are shadowed.
+    // A fake Storage with a throwing setItem is swapped in for this test only.
+    const realStorage = window.localStorage;
+    const failingStorage = {
+      length: 0,
+      getItem: (key: string) => realStorage.getItem(key),
+      setItem: () => {
+        throw new Error('quota exceeded');
+      },
+      removeItem: (key: string) => realStorage.removeItem(key),
+      clear: () => realStorage.clear(),
+      key: () => null
+    } as unknown as Storage;
+
+    try {
+      Object.defineProperty(window, 'localStorage', { configurable: true, value: failingStorage });
+      fireEvent.change(screen.getAllByLabelText(/Annual return/)[0], { target: { value: '3' } });
+      // `fireEvent` wraps the dispatch in `act`, so the save-status re-render flushes.
+      fireEvent(window, new Event('pagehide'));
+      expect(screen.getByText('Storage is full')).toBeInTheDocument();
+      expect(screen.getByText('Could not write the plan to local storage.')).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, 'localStorage', { configurable: true, value: realStorage });
+    }
+  });
+
+  it('flushes a debounced edit on pagehide before the delay elapses', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Net Worth');
+
+    fireEvent.change(screen.getAllByLabelText(/Annual return/)[0], { target: { value: '4.25' } });
+    window.dispatchEvent(new Event('pagehide'));
+
+    const stored = JSON.parse(window.localStorage.getItem(KEY) as string);
+    expect(stored.scenario.netWorth.accounts[0].annualReturnRate).toBe(4.25);
+  });
+
+  // GUI-A05 / G20–G22 — ordinary card add/edit/duplicate/remove + reload --------
+  it('adds, edits, duplicates and removes an ordinary card payment, then reloads it', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+
+    expect(screen.getByText('No card plans in this scenario. Add a payment schedule or a permanent 0% payoff plan.')).toBeInTheDocument();
+
+    clickButton('＋ Add expected payment');
+    expect(screen.queryByText('No card plans in this scenario. Add a payment schedule or a permanent 0% payoff plan.')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Plan name'), { target: { value: 'Streaming' } });
+    fireEvent.change(screen.getByLabelText('Expected monthly payment ($)'), { target: { value: '15' } });
+    fireEvent.change(screen.getByLabelText('First payment month'), { target: { value: '2026-08' } });
+    fireEvent.change(screen.getByLabelText('Last payment month (inclusive)'), { target: { value: '2026-10' } });
+
+    clickButton('Duplicate plan');
+    expect(within(screen.getByLabelText('Selected card plan')).getByRole('option', { name: 'Streaming copy' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Plan name')).toHaveValue('Streaming copy');
+
+    clickButton('Remove plan');
+    expect(screen.getByLabelText('Plan name')).toHaveValue('Streaming');
+    expect(within(screen.getByLabelText('Selected card plan')).getAllByRole('option')).toHaveLength(1);
+
+    window.dispatchEvent(new Event('pagehide'));
+    cleanup();
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+    expect(screen.getByLabelText('Plan name')).toHaveValue('Streaming');
+    expect(screen.getByLabelText('Expected monthly payment ($)')).toHaveValue(15);
+    expect(screen.getByLabelText('First payment month')).toHaveValue('2026-08');
+  });
+
+  // GUI-A05 / G23 — card plans are timeline-local (base vs named timeline) ------
+  it('isolates an ordinary card plan between the base plan and a named timeline', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+
+    clickButton('＋ Add expected payment');
+    fireEvent.change(screen.getByLabelText('Plan name'), { target: { value: 'Base card' } });
+
+    clickButton('＋ Add timeline');
+    expect(screen.getByText('Showing Timeline 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Plan name')).toHaveValue('Base card');
+    fireEvent.change(screen.getByLabelText('Plan name'), { target: { value: 'Timeline card' } });
+
+    const timelineValue = (within(screen.getByLabelText('Selected timeline')).getByRole('option', { name: 'Timeline 1' }) as HTMLOptionElement).value;
+
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: '' } });
+    expect(screen.getByLabelText('Plan name')).toHaveValue('Base card');
+
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: timelineValue } });
+    expect(screen.getByLabelText('Plan name')).toHaveValue('Timeline card');
+
+    window.dispatchEvent(new Event('pagehide'));
+    cleanup();
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+    // The persisted active timeline re-opens on its own copy; the base plan is intact.
+    expect(screen.getByLabelText('Plan name')).toHaveValue('Timeline card');
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: '' } });
+    expect(screen.getByLabelText('Plan name')).toHaveValue('Base card');
+  });
+
+  // GUI-A06 / G24 — permanent 0% card creates one linked global liability -------
+  it('creates exactly one linked 0% liability with zero opening debt and no double-counted balance', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+
+    clickButton('＋ Add permanent 0% payoff');
+
+    const liabilitySelect = screen.getByLabelText(/^Linked liability/);
+    expect(within(liabilitySelect).getAllByRole('option')).toHaveLength(2);
+    expect(within(liabilitySelect).getByRole('option', { name: 'New 0% card' })).toBeInTheDocument();
+
+    const openingDebt = screen.getByLabelText(/^Linked opening debt/);
+    expect(openingDebt).toHaveValue(0);
+    expect(openingDebt).toHaveAttribute('readonly');
+
+    // Zero opening debt means no scheduled card activity was fabricated.
+    expect(screen.getByText('No scheduled card activity appears in this projection.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Plan name'), { target: { value: 'Store card' } });
+    window.dispatchEvent(new Event('pagehide'));
+
+    const stored = JSON.parse(window.localStorage.getItem(KEY) as string).scenario;
+    expect(stored.liabilities).toHaveLength(1);
+    expect(stored.liabilities[0]).toMatchObject({ kind: 'zeroInterestCard', openingBalance: 0 });
+    expect(stored.cardPlans).toHaveLength(1);
+    // The plan's own `initialBalance` is pinned to 0 so it can never double-count.
+    expect(stored.cardPlans[0]).toMatchObject({ kind: 'zeroInterestPayoff', initialBalance: 0, label: 'Store card' });
+    expect(stored.cardPlans[0].liabilityId).toBe(stored.liabilities[0].id);
+  });
+
+  // GUI-A06 / CA06 — funded permanent-0% payoff, real report, no APR/charges -----
+  it('renders a fully funded $100 permanent-0% payoff from the real report with no APR or charge controls', () => {
+    const scenario = freshScenario((next) => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map((account) => ({ ...account, openingBalance: account.id === CHECKING ? 100 : 0 }));
+      next.liabilities = [{ id: 'liab-zero', kind: 'zeroInterestCard', openingBalance: 100 }];
+      next.cardPlans = [
+        createDefaultZeroInterestCardPlan(FIXED_DATE, {
+          id: 'cp-zero',
+          liabilityId: 'liab-zero',
+          initialBalance: 0,
+          startYearMonth: '2026-07',
+          targetYearMonth: '2026-09',
+          paymentDay: 1,
+          funding: { primaryAccountId: CHECKING, fallbackAccountIds: [] }
+        })
+      ];
+    });
+    persistScenario(scenario);
+
+    const expected = projectFeatureScenario(decodeStored(), { timelineId: null }).report;
+    const schedule = expected.schedules.find((entry) => entry.definitionId === 'card:cp-zero');
+    expect(schedule).toBeDefined();
+    expect(schedule?.requestedCents).toBe(10_000);
+    expect(schedule?.executedCents).toBe(10_000);
+    expect(schedule?.shortfallCents).toBe(0);
+
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+    expect(screen.getByText(/requested \$100 · paid \$100 · unpaid \$0/)).toBeInTheDocument();
+    // The removed APR/interest/recurring-charge card modes expose no control here.
+    expect(screen.queryByLabelText(/apr|interest|charge/i)).not.toBeInTheDocument();
+  });
+
+  // GUI-A06 / D16 — partial card shortfall surfaces the exact engine warning -----
+  it('renders a partial permanent-0% shortfall and the exact D16 warning from the real report', () => {
+    const scenario = freshScenario((next) => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map((account) => ({ ...account, openingBalance: account.id === CHECKING ? 30 : 0 }));
+      next.liabilities = [{ id: 'liab-zero', kind: 'zeroInterestCard', openingBalance: 100 }];
+      next.cardPlans = [
+        createDefaultZeroInterestCardPlan(FIXED_DATE, {
+          id: 'cp-zero',
+          liabilityId: 'liab-zero',
+          initialBalance: 0,
+          startYearMonth: '2026-07',
+          targetYearMonth: '2026-09',
+          paymentDay: 1,
+          funding: { primaryAccountId: CHECKING, fallbackAccountIds: [] }
+        })
+      ];
+    });
+    persistScenario(scenario);
+
+    const expected = projectFeatureScenario(decodeStored(), { timelineId: null }).report;
+    expect(expected.shortfall.warning).toBeTruthy();
+    const shortOutcome = expected.outcomes.find((outcome) => outcome.shortfallCents > 0);
+    expect(shortOutcome?.definitionId).toBe('card:cp-zero');
+
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+    expect(
+      screen.getByText(new RegExp(`could not be fully funded, beginning in ${shortOutcome?.yearMonth}\\. Unpaid \\$`))
+    ).toBeInTheDocument();
+
+    clickButton('Finances Prediction');
+    clickButton('Warnings');
+    expect(screen.getByText(expected.shortfall.warning as string)).toBeInTheDocument();
+  });
+
+  // GUI-A05 / G25–G26 — marker-linked dates + account source fallback ------------
+  it('links a card date to a marker and records an account source fallback without pool aliases', () => {
+    const scenario = freshScenario((next) => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.dateMarkers = [{ id: 'm1', label: 'Move date', date: '2026-08-15' }];
+      next.netWorth.accounts = next.netWorth.accounts.map((account) => ({ ...account, openingBalance: account.id === EMERGENCY ? 60 : 0 }));
+      next.cardPlans = [
+        createDefaultOrdinaryCardSchedule(FIXED_DATE, {
+          id: 'cp-ordinary',
+          amount: 50,
+          startYearMonth: '2026-07',
+          endYearMonth: '2026-07',
+          paymentDay: 1,
+          funding: { primaryAccountId: CHECKING, fallbackAccountIds: [EMERGENCY] }
+        })
+      ];
+    });
+    persistScenario(scenario);
+
+    const expected = projectFeatureScenario(decodeStored(), { timelineId: null }).report;
+    expect(expected.fallback.occurrences.some((occurrence) => occurrence.definitionId === 'card:cp-ordinary')).toBe(true);
+
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+    expect(screen.getByText(/Funding fell back to a secondary source — 2026-07\./)).toBeInTheDocument();
+
+    // Every funding option is a real account id — never a removed pool alias.
+    const accountIds = new Set(freshScenario().netWorth.accounts.map((account) => account.id));
+    for (const option of within(screen.getByLabelText('Primary account')).getAllByRole('option') as HTMLOptionElement[]) {
+      if (option.value === '') continue;
+      expect(accountIds.has(option.value)).toBe(true);
+      expect(['cash', 'retirement', 'taxable', 'income']).not.toContain(option.value);
+    }
+
+    fireEvent.change(screen.getByLabelText('First payment month marker'), { target: { value: 'm1' } });
+    expect(screen.getByLabelText('First payment month')).toHaveValue('2026-08');
+
+    window.dispatchEvent(new Event('pagehide'));
+    const stored = JSON.parse(window.localStorage.getItem(KEY) as string).scenario;
+    expect(stored.cardPlans[0].startMarkerId).toBe('m1');
+    expect(stored.cardPlans[0].startYearMonth).toBe('2026-08');
+  });
+
+  // GUI-A05 / G20 — duplication mints a distinct pending property + $0 liability.
+  it('duplicates a mortgage into a distinct pending property and $0 liability, leaving the original untouched', () => {
+    const scenario = freshScenario((next) => {
+      const home = { ...createDefaultHousingEntry(next.profile.currentAge, next.options.dateOfBirth, FIXED_DATE), id: 'home' };
+      next.housing = [home];
+      next.properties = [{
+        id: 'prop-home', sourceConfigId: 'home', label: 'Future home', kind: 'primaryResidence',
+        value: 300000, debtLink: 'mort-home', requiredDownPayment: 60000, status: 'pending',
+        acquisitionYearMonth: home.startYearMonth,
+        fundingEvents: [{ id: 'fe-home', date: `${home.startYearMonth}-01`, amount: 60000, accountId: CHECKING }]
+      }];
+      next.liabilities = [{ id: 'mort-home', kind: 'mortgage', label: 'My Home mortgage', openingBalance: 0, sourceConfigId: 'home', linkedPropertyId: 'prop-home' }];
+    });
+    persistScenario(scenario);
+    const original = decodeStored();
+
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+    clickButton('Duplicate Housing');
+    window.dispatchEvent(new Event('pagehide'));
+
+    const stored = decodeStored();
+    expect(stored.housing).toHaveLength(2);
+    expect(stored.properties).toHaveLength(2);
+    expect(stored.liabilities).toHaveLength(2);
+
+    const originalHousing = stored.housing.find((entry) => entry.id === 'home');
+    const copyHousing = stored.housing.find((entry) => entry.id !== 'home');
+    expect(originalHousing?.label).toBe('My Home');
+    expect(copyHousing?.label).toBe('My Home copy');
+
+    // Original property and liability are byte-identical to the pre-duplicate bytes.
+    expect(stored.properties?.find((property) => property.id === 'prop-home')).toEqual(original.properties?.find((property) => property.id === 'prop-home'));
+    expect(stored.liabilities?.find((liability) => liability.id === 'mort-home')).toEqual(original.liabilities?.find((liability) => liability.id === 'mort-home'));
+
+    const copyProperty = stored.properties?.find((property) => property.sourceConfigId === copyHousing?.id);
+    const copyLiability = stored.liabilities?.find((liability) => liability.id === copyProperty?.debtLink);
+    expect(copyProperty).toBeDefined();
+    expect(copyLiability).toBeDefined();
+    expect(copyProperty?.id).not.toBe('prop-home');
+    expect(copyProperty).toMatchObject({ status: 'pending', value: 0, requiredDownPayment: 60000 });
+    expect(copyLiability).toMatchObject({ kind: 'mortgage', openingBalance: 0, sourceConfigId: copyHousing?.id, linkedPropertyId: copyProperty?.id });
+    expect(copyLiability?.id).not.toBe('mort-home');
+  });
+
+  // GUI-A05 / G20 — a property-free rental is rent/income only, never a property or debt.
+  it('adds and duplicates a property-free rental, reading rent and rental income from the real report', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+
+    clickButton('+ Rental');
+    window.dispatchEvent(new Event('pagehide'));
+    let stored = decodeStored();
+    expect(stored.housing).toHaveLength(1);
+    expect(stored.housing[0].housingType).toBe('rental');
+    expect(stored.properties ?? []).toHaveLength(0);
+    expect(stored.liabilities ?? []).toHaveLength(0);
+
+    // Commit an explicit monthly rent + rental income destination through the editor.
+    fireEvent.change(screen.getByLabelText('Monthly Rent'), { target: { value: '1500' } });
+    fireEvent.blur(screen.getByLabelText('Monthly Rent'));
+    fireEvent.change(screen.getByLabelText('Rental Income/mo'), { target: { value: '500' } });
+    fireEvent.blur(screen.getByLabelText('Rental Income/mo'));
+    fireEvent.change(screen.getByLabelText('Rental Income Account'), { target: { value: CHECKING } });
+    window.dispatchEvent(new Event('pagehide'));
+    stored = decodeStored();
+
+    const report = projectFeatureScenario(stored, { timelineId: null }).report;
+    const rentSchedule = report.schedules.find((schedule) => schedule.purpose === 'housingRent');
+    expect(rentSchedule).toBeDefined();
+    expect(rentSchedule?.definitionId).toContain('housing:rental:');
+    expect(rentSchedule?.requestedCents).toBe(150000 * (rentSchedule?.occurrenceCount ?? 0));
+    expect(screen.getByRole('region', { name: 'Apartment results' })).toBeInTheDocument();
+    expect(screen.getByText('Rental costs are included below. This rental has no linked property or mortgage.')).toBeInTheDocument();
+    expect(screen.getByRole('row', { name: `Rent ${displayCents(rentSchedule!.requestedCents)} ${displayCents(rentSchedule!.executedCents)} ${displayCents(rentSchedule!.shortfallCents)}` })).toBeInTheDocument();
+    const inflow = report.audit.find((row) => row.purpose === 'housingRentalIncome');
+    expect(inflow).toBeDefined();
+    expect(inflow?.accountChanges.some((change) => change.accountId === CHECKING && change.deltaCents === 50000)).toBe(true);
+
+    clickButton('Duplicate Housing');
+    window.dispatchEvent(new Event('pagehide'));
+    const duplicated = decodeStored();
+    expect(duplicated.housing).toHaveLength(2);
+    expect(duplicated.housing.every((entry) => entry.housingType === 'rental')).toBe(true);
+    expect(duplicated.properties ?? []).toHaveLength(0);
+    expect(duplicated.liabilities ?? []).toHaveLength(0);
+    const duplicateReport = projectFeatureScenario(duplicated, { timelineId: null }).report;
+    const rentSchedules = duplicateReport.schedules.filter((schedule) => schedule.purpose === 'housingRent');
+    expect(rentSchedules).toHaveLength(2);
+    expect(new Set(rentSchedules.map((schedule) => schedule.definitionId)).size).toBe(2);
+  });
+
+  // GUI-A05 / G23 — selected-timeline housing funding events isolate base / A / B.
+  it('isolates timeline-local housing funding events across base, A and B and reloads them', () => {
+    const scenario = freshScenario((next) => {
+      const home = { ...createDefaultHousingEntry(next.profile.currentAge, next.options.dateOfBirth, FIXED_DATE), id: 'home' };
+      next.housing = [home];
+      next.properties = [{
+        id: 'prop-home', sourceConfigId: 'home', label: 'Future home', kind: 'primaryResidence',
+        value: 300000, debtLink: 'mort-home', requiredDownPayment: 60000, status: 'pending',
+        acquisitionYearMonth: home.startYearMonth,
+        fundingEvents: [{ id: 'fe-home', date: `${home.startYearMonth}-01`, amount: 60000, accountId: CHECKING }]
+      }];
+      next.liabilities = [{ id: 'mort-home', kind: 'mortgage', label: 'My Home mortgage', openingBalance: 0, sourceConfigId: 'home', linkedPropertyId: 'prop-home' }];
+    });
+    persistScenario(scenario);
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+
+    const amount = () => screen.getByLabelText('Amount');
+    expect(amount()).toHaveValue(60000);
+
+    clickButton('＋ Add timeline');
+    expect(screen.getByText('Showing Timeline 1')).toBeInTheDocument();
+    // A base clone seeds its own editable copy of the base funding event.
+    expect(amount()).toHaveValue(60000);
+    fireEvent.change(amount(), { target: { value: '99000' } });
+    fireEvent.blur(amount());
+    expect(amount()).toHaveValue(99000);
+
+    const timeline1 = (within(screen.getByLabelText('Selected timeline')).getByRole('option', { name: 'Timeline 1' }) as HTMLOptionElement).value;
+
+    // Base is untouched by timeline A's edit.
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: '' } });
+    expect(amount()).toHaveValue(60000);
+
+    clickButton('＋ Add timeline');
+    expect(screen.getByText('Showing Timeline 2')).toBeInTheDocument();
+    expect(amount()).toHaveValue(60000);
+
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: timeline1 } });
+    expect(amount()).toHaveValue(99000);
+
+    window.dispatchEvent(new Event('pagehide'));
+    const stored = decodeStored();
+    expect(stored.properties?.find((property) => property.id === 'prop-home')?.fundingEvents?.[0].amount).toBe(60000);
+    const timelineA = stored.timelines?.find((timeline) => timeline.label === 'Timeline 1');
+    const timelineB = stored.timelines?.find((timeline) => timeline.label === 'Timeline 2');
+    expect(timelineA?.housing[0].fundingEvents?.[0].amount).toBe(99000);
+    expect(timelineB?.housing[0].fundingEvents?.[0].amount).toBe(60000);
+
+    // Reload re-opens the last-selected timeline (A) with its own edited list.
+    cleanup();
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+    expect(amount()).toHaveValue(99000);
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: '' } });
+    expect(amount()).toHaveValue(60000);
+  });
+
+  // GUI-A06 / CA06 — an observed $0 opening wins over a positive configured balance.
+  it('lets an observed $0 liability opening win over a positive configured balance', () => {
+    const scenario = freshScenario((next) => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.liabilities = [{ id: 'liab-zero', kind: 'zeroInterestCard', label: 'Store card', openingBalance: 100 }];
+      next.netWorth.openingSnapshot = {
+        date: next.netWorth.asOfDate,
+        measurement: 'assetsMinusLiabilities',
+        accounts: [],
+        liabilities: [{ liabilityId: 'liab-zero', balance: 0 }]
+      };
+      next.cardPlans = [
+        createDefaultZeroInterestCardPlan(FIXED_DATE, {
+          id: 'cp-zero', liabilityId: 'liab-zero', initialBalance: 0,
+          startYearMonth: '2026-07', targetYearMonth: '2026-09', paymentDay: 1,
+          funding: { primaryAccountId: CHECKING, fallbackAccountIds: [] }
+        })
+      ];
+    });
+    persistScenario(scenario);
+
+    // The observed $0 is authoritative: no scheduled card activity is fabricated.
+    const expected = projectFeatureScenario(decodeStored(), { timelineId: null }).report;
+    expect(expected.schedules.some((schedule) => schedule.definitionId === 'card:cp-zero')).toBe(false);
+    expect(expected.outcomes.some((outcome) => outcome.definitionId === 'card:cp-zero' && outcome.requestedCents > 0)).toBe(false);
+
+    renderApp();
+    clickButton('Expenses');
+    clickButton('Credit cards');
+    const configured = screen.getByLabelText('Configured liability balance ($)');
+    expect(configured).toHaveValue(100);
+    expect(screen.getByText(/records \$0 of debt\. This observed value takes precedence, including \$0/)).toBeInTheDocument();
+    expect(screen.getByText('No scheduled card activity appears in this projection.')).toBeInTheDocument();
+
+    // Raising the configured balance never overrides the observed $0.
+    fireEvent.change(configured, { target: { value: '500' } });
+    expect(screen.getByText(/records \$0 of debt\. This observed value takes precedence, including \$0/)).toBeInTheDocument();
+    expect(screen.getByText('No scheduled card activity appears in this projection.')).toBeInTheDocument();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(decodeStored().liabilities?.[0].openingBalance).toBe(500);
+  });
+
+  // GUI-A10 / D20 — canonical signed-cents trajectory save/rename/compare/delete/reload.
+  it('saves, renames, compares, deletes and reloads a canonical signed-cents trajectory', () => {
+    persistScenario(freshScenario());
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Trajectory');
+    expect(screen.getByText('No trajectories saved yet')).toBeInTheDocument();
+
+    vi.stubGlobal('confirm', vi.fn(() => true));
+
+    fireEvent.change(screen.getByLabelText('Snapshot name'), { target: { value: 'Spring' } });
+    fireEvent.change(screen.getByLabelText('Freeze date'), { target: { value: '2026-06-15' } });
+    clickButton('Save measured trajectory');
+
+    fireEvent.change(screen.getByLabelText('Snapshot name'), { target: { value: 'Summer' } });
+    fireEvent.change(screen.getByLabelText('Freeze date'), { target: { value: '2026-06-15' } });
+    clickButton('Save measured trajectory');
+    expect(screen.getByText('2 saved')).toBeInTheDocument();
+
+    // Both snapshots froze the same run context, so a like-for-like comparison is offered.
+    fireEvent.click(screen.getAllByRole('radio')[0]);
+    expect(screen.getByText(/Ready to compare/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rename Spring' }), { target: { value: 'Spring renamed' } });
+    expect(screen.getByRole('textbox', { name: 'Rename Spring renamed' })).toHaveValue('Spring renamed');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Spring renamed' }));
+    expect(screen.getByText('1 saved')).toBeInTheDocument();
+
+    window.dispatchEvent(new Event('pagehide'));
+    const stored = decodeStored();
+    expect(stored.trajectorySnapshots).toHaveLength(1);
+
+    const projection = projectFeatureScenario(stored, { timelineId: null });
+    const saved = stored.trajectorySnapshots[0] as CanonicalTrajectorySnapshot;
+    expect(saved.formatVersion).toBe(2);
+    expect(saved.context.measurement).toBe(projection.metadata.measurement);
+    // The stored cents are the actual report's reconciled year-close stocks.
+    expect(saved.annualPoints).toEqual(canonicalAnnualPointsFromReport(projection.report));
+    expect(saved.annualPoints[0].netWorthCents).toBe(projection.report.years[0].closing.netWorthCents);
 
     cleanup();
-    render(<App />);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Options' })[0]);
-    expect(screen.getByRole('checkbox', { name: 'Display values in current dollars' })).toBeChecked();
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Trajectory');
+    expect(screen.getByText('1 saved')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Rename Summer' })).toHaveValue('Summer');
   });
 
-  it('adds a date marker in a new tab to the right of Warnings', async () => {
-    render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    const financeSubTabs = screen.getByRole('button', { name: 'Warnings' }).closest('.tabs') as HTMLElement;
-    const subTabLabels = within(financeSubTabs)
-      .getAllByRole('button')
-      .map((button) => button.textContent);
-    expect(subTabLabels[subTabLabels.length - 1]).toBe('Date Markers');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Date Markers' }));
-    expect(screen.getByRole('button', { name: '+ Date Marker' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '+ Date Marker' }));
-    const nameInput = screen.getByDisplayValue('Marker 1');
-    fireEvent.change(nameInput, { target: { value: 'Retirement' } });
-
-    await waitFor(() => {
-      const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-      expect(stored).toContain('"dateMarkers"');
-      expect(stored).toContain('"label":"Retirement"');
+  // GUI-A10 / D20 — a legacy snapshot stays archived and is refused cross-format.
+  it('keeps a legacy trajectory archived and refuses to compare it with a canonical snapshot', () => {
+    const scenario = freshScenario((next) => {
+      const projection = projectFeatureScenario(next, { timelineId: null });
+      const canonical = createCanonicalTrajectorySnapshot(
+        { id: 'canon', label: 'Canonical', frozenDate: '2026-06-15', report: projection.report },
+        projection.metadata
+      );
+      const legacy: TrajectorySnapshot = {
+        id: 'legacy', label: 'Legacy', createdAt: '2025-01-01', survivesToEnd: true, depletedAge: null,
+        endAge: 90, endingBalance: 0, summary: '', years: []
+      };
+      next.trajectorySnapshots = [canonical, legacy];
     });
+    persistScenario(scenario);
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Trajectory');
+
+    // Selecting the legacy entry refuses the cross-format pair (never assumed equal).
+    fireEvent.click(screen.getAllByRole('radio')[1]);
+    expect(screen.getByText(/incompatible: format-version-mismatch/)).toBeInTheDocument();
+    expect(screen.getByText(/Legacy · asset-only · not comparable/)).toBeInTheDocument();
+    expect(screen.getByText(/legacy snapshot is archived as asset-only/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Legacy asset-only data is archived and never overlaid with signed net worth/).length).toBeGreaterThan(0);
   });
 
-  it('links a housing start date to a date marker', async () => {
-    const { container } = render(<App />);
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Finances Prediction' })[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Date Markers' }));
-    fireEvent.click(screen.getByRole('button', { name: '+ Date Marker' }));
-
-    const markerDateInput = container.querySelector('.date-marker-row input[type="date"]') as HTMLInputElement;
-    expect(markerDateInput).toBeTruthy();
-    fireEvent.change(markerDateInput, { target: { value: '2035-06-01' } });
-
-    fireEvent.click(screen.getByRole('button', { name: 'Housing Expenses' }));
-    fireEvent.click(screen.getByRole('button', { name: '+ Mortgage' }));
-
-    const startLabel = screen.getByText('Start Year-Month').closest('label') as HTMLElement;
-    fireEvent.click(within(startLabel).getByRole('button', { name: 'Marker' }));
-    const markerSelect = within(startLabel).getByRole('combobox') as HTMLSelectElement;
-    fireEvent.change(markerSelect, { target: { value: markerSelect.options[0].value } });
-
-    expect(within(startLabel).getByText('June 2035')).toBeInTheDocument();
-
-    await waitFor(() => {
-      const stored = window.localStorage.getItem('finance-planner-state') ?? '';
-      expect(stored).toContain('"startMarkerId"');
-      expect(stored).toContain('"startYearMonth":"2035-06"');
+  // GUI-A05 / G20–G22 — the App injects `scenario.fundingPolicy` and an explicit
+  // income-independent group override orders a payment across primary + fallback.
+  it('funds a $150 income-independent housing payment as 100 + 50 and reports a fallback, not a shortfall', () => {
+    const scenario = freshScenario((next) => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.fundingPolicy = { primaryAccountId: EMERGENCY, fallbackAccountIds: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map((account) => ({
+        ...account,
+        openingBalance: account.id === CHECKING || account.id === EMERGENCY ? 100 : 0
+      }));
+      next.housing = [{
+        ...createDefaultRentalEntry(next.profile.currentAge, next.options.dateOfBirth, FIXED_DATE),
+        id: 'apt-1',
+        startYearMonth: '2026-07',
+        endYearMonth: '2026-07',
+        monthlyRent: 150,
+        propertyTaxYearly: 0,
+        homeInsuranceYearly: 0,
+        hoaMonthly: 0,
+        maintenanceMonthly: 0,
+        paymentSource: undefined,
+        fundingPolicies: { payment: { primaryAccountId: CHECKING, fallbackAccountIds: [EMERGENCY] } }
+      }];
     });
+    persistScenario(scenario);
+
+    const context = projectFeatureScenario(decodeStored(), { timelineId: null });
+    const { report } = context;
+    const rent = report.schedules.find((schedule) => schedule.definitionId.includes('housing:rental:apt-1'));
+    expect(rent?.requestedCents).toBe(15_000);
+    expect(rent?.executedCents).toBe(15_000);
+    expect(rent?.shortfallCents).toBe(0);
+
+    // One funded quote (primary + one fallback) and one committed posting.
+    const outcomes = context.fundingOutcomes.filter((outcome) => outcome.definitionId.includes('housing:rental:apt-1'));
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.committed).toBe(true);
+    expect(outcomes[0]?.plan.status).toBe('funded');
+    expect(outcomes[0]?.plan.executedCents).toBe(15_000);
+    expect(context.postings.filter((posting) => posting.posting.definitionId?.includes('housing:rental:apt-1'))).toHaveLength(1);
+
+    // Lower-severity fallback only: no shortfall and no eligible-account exhaustion.
+    const occurrence = report.fallback.occurrences.find((entry) => entry.definitionId.includes('housing:rental:apt-1'));
+    expect(occurrence).toBeDefined();
+    expect(report.shortfall.warning).toBeNull();
+    expect(report.exhaustion.exhausted).toBe(false);
+
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+
+    const fundingOrder = within(screen.getByRole('region', { name: 'Housing funding order' }));
+    // A non-overridden group reads the injected scenario.fundingPolicy (Emergency Fund)…
+    expect(fundingOrder.getAllByLabelText('Primary account')[1]).toHaveValue(EMERGENCY);
+    // …while the payment group shows its explicit, controlled override.
+    expect(screen.getByLabelText('Override Mortgage payment / rent funding')).toBeChecked();
+    expect(fundingOrder.getAllByLabelText('Primary account')[0]).toHaveValue(CHECKING);
+    expect(fundingOrder.getAllByLabelText('Fallback 1')[0]).toHaveValue(EMERGENCY);
+
+    clickButton('Warnings');
+    const fallbackNote = document.querySelector('p.warning-warning');
+    expect(fallbackNote?.textContent).toContain(`Funding fell back to a secondary source — ${occurrence?.yearMonth}.`);
+    expect(document.querySelector('p.warning-error')).toBeNull();
   });
+
+  // GUI-A05 / G22 — an explicit empty override stays unmet and never borrows the global default.
+  it('leaves an explicit empty funding override unmet even when the global default could pay', () => {
+    const scenario = freshScenario((next) => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.fundingPolicy = { primaryAccountId: CHECKING, fallbackAccountIds: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map((account) => ({
+        ...account,
+        openingBalance: account.id === CHECKING ? 150 : 0
+      }));
+      next.housing = [{
+        ...createDefaultRentalEntry(next.profile.currentAge, next.options.dateOfBirth, FIXED_DATE),
+        id: 'apt-1',
+        startYearMonth: '2026-07',
+        endYearMonth: '2026-07',
+        monthlyRent: 150,
+        propertyTaxYearly: 0,
+        homeInsuranceYearly: 0,
+        hoaMonthly: 0,
+        maintenanceMonthly: 0,
+        paymentSource: undefined,
+        fundingPolicies: { payment: { primaryAccountId: CHECKING, fallbackAccountIds: [] } }
+      }];
+    });
+    persistScenario(scenario);
+
+    // Before the edit the global-sourced group is fully funded from the selected account.
+    const before = projectFeatureScenario(decodeStored(), { timelineId: null }).report;
+    expect(before.schedules.find((schedule) => schedule.definitionId.includes('housing:rental:apt-1'))?.shortfallCents).toBe(0);
+
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+    // Clearing the override's primary leaves an explicit null-primary, empty-fallback order.
+    clickButton('Remove Primary account');
+    window.dispatchEvent(new Event('pagehide'));
+
+    const stored = decodeStored();
+    expect(stored.housing[0].fundingPolicies?.payment).toEqual({ primaryAccountId: null, fallbackAccountIds: [] });
+    // The group override edit never mutates the global default policy.
+    expect(stored.fundingPolicy).toEqual({ primaryAccountId: CHECKING, fallbackAccountIds: [] });
+
+    const after = projectFeatureScenario(stored, { timelineId: null });
+    const rent = after.report.schedules.find((schedule) => schedule.definitionId.includes('housing:rental:apt-1'));
+    expect(rent?.requestedCents).toBe(15_000);
+    expect(rent?.executedCents).toBe(0);
+    expect(rent?.shortfallCents).toBe(15_000);
+    expect(after.report.shortfall.warning).toBeTruthy();
+    expect(after.report.exhaustion.exhausted).toBe(false);
+
+    clickButton('Warnings');
+    expect(screen.getByText(after.report.shortfall.warning as string)).toBeInTheDocument();
+  });
+
+  // GUI-A05 / G22–G23 — the grouped policy is timeline-local and survives save/reload.
+  it('keeps a distinct grouped housing funding override per timeline across base switches and reload', () => {
+    const scenario = freshScenario((next) => {
+      next.housing = [{
+        ...createDefaultRentalEntry(next.profile.currentAge, next.options.dateOfBirth, FIXED_DATE),
+        id: 'apt-1',
+        startYearMonth: '2026-07',
+        endYearMonth: '2026-07',
+        monthlyRent: 150,
+        propertyTaxYearly: 0,
+        homeInsuranceYearly: 0,
+        hoaMonthly: 0,
+        maintenanceMonthly: 0,
+        paymentSource: undefined,
+        fundingPolicies: { payment: { primaryAccountId: CHECKING, fallbackAccountIds: [] } }
+      }];
+    });
+    persistScenario(scenario);
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+
+    const primary = () => within(screen.getByRole('region', { name: 'Housing funding order' })).getAllByLabelText('Primary account')[0];
+    expect(primary()).toHaveValue(CHECKING);
+
+    clickButton('＋ Add timeline');
+    expect(screen.getByText('Showing Timeline 1')).toBeInTheDocument();
+    // The new timeline owns an editable copy of the base override.
+    expect(primary()).toHaveValue(CHECKING);
+    fireEvent.change(primary(), { target: { value: EMERGENCY } });
+    expect(primary()).toHaveValue(EMERGENCY);
+
+    const timelineValue = (within(screen.getByLabelText('Selected timeline')).getByRole('option', { name: 'Timeline 1' }) as HTMLOptionElement).value;
+
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: '' } });
+    expect(primary()).toHaveValue(CHECKING);
+
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: timelineValue } });
+    expect(primary()).toHaveValue(EMERGENCY);
+
+    window.dispatchEvent(new Event('pagehide'));
+    const stored = decodeStored();
+    expect(stored.housing[0].fundingPolicies?.payment?.primaryAccountId).toBe(CHECKING);
+    const timeline = stored.timelines?.find((entry) => entry.label === 'Timeline 1');
+    expect(timeline?.housing[0].fundingPolicies?.payment?.primaryAccountId).toBe(EMERGENCY);
+
+    cleanup();
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+    // Reload re-opens the last-selected timeline with its own grouped policy…
+    expect(primary()).toHaveValue(EMERGENCY);
+    // …and the base plan keeps its distinct one.
+    fireEvent.change(screen.getByLabelText('Selected timeline'), { target: { value: '' } });
+    expect(primary()).toHaveValue(CHECKING);
+  });
+
+  // GUI-A05 / G18–G22 — deterministic partial mortgage PI, real render.
+  it('renders a report-backed partial mortgage PI with interest-first funding and a retained balance', () => {
+    // Independent cent anchors, hand-calculated from the fixture (never read back
+    // from report output): 6% nominal APR/12 on a $240,000 principal is $1,200/mo
+    // of interest, and the standard 30-year installment is $1,438.92.
+    const openingPrincipalCents = 24_000_000;
+    const accruedInterestPerMonthCents = 120_000; // 24_000_000 * 0.06 / 12
+    const standardInstallmentCents = 143_892; // closed-form PMT at 6%/12 over 360 months
+    const availableCheckingCents = 100_000; // the only eligible account funds
+    const retainedInterestCents = accruedInterestPerMonthCents * 360 - availableCheckingCents;
+    const closingMortgageCents = openingPrincipalCents + retainedInterestCents;
+    const expectedCloseNetWorthCents = 30_000_000 - closingMortgageCents; // $300k property − retained debt
+
+    const scenario = freshScenario((next) => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.netWorth.asOfDate = '2026-06-01';
+      next.netWorth.accounts = next.netWorth.accounts.map((account) => ({
+        ...account,
+        openingBalance: account.id === CHECKING ? 1000 : 0
+      }));
+      const home = {
+        ...createDefaultHousingEntry(next.profile.currentAge, next.options.dateOfBirth, FIXED_DATE),
+        id: 'pi-home',
+        label: 'PI Home',
+        startYearMonth: '2026-06',
+        sellYearMonth: '',
+        purchasePrice: 300000,
+        downPayment: 60000,
+        annualInterestRate: 6,
+        loanTermYears: 30,
+        extraMonthlyPayment: 0,
+        propertyTaxYearly: 0,
+        homeInsuranceYearly: 0,
+        hoaMonthly: 0,
+        maintenanceMonthly: 0,
+        pmiMonthly: 0,
+        appreciationRate: 0,
+        sellingCostsRate: 0,
+        paymentSource: undefined,
+        fundingPolicies: { payment: { primaryAccountId: CHECKING, fallbackAccountIds: [] } }
+      };
+      next.housing = [home];
+      next.properties = [{
+        id: 'pi-property', sourceConfigId: home.id, label: home.label, kind: 'primaryResidence',
+        value: 300000, debtLink: 'pi-mortgage', requiredDownPayment: 0, status: 'owned',
+        acquisitionYearMonth: '2020-01', appreciationRate: 0, sellingCostsRate: 0
+      }];
+      next.liabilities = [{
+        id: 'pi-mortgage', kind: 'mortgage', label: 'PI mortgage', openingBalance: 240000,
+        annualInterestRate: 6, minimumMonthlyPayment: 0, endYearMonth: '2056-05', paymentDay: 1,
+        sourceConfigId: home.id, linkedPropertyId: 'pi-property'
+      }];
+    });
+    persistScenario(scenario);
+
+    const report = projectFeatureScenario(decodeStored(), { timelineId: null }).report;
+    const schedule = report.schedules.find((row) => row.definitionId === 'housing:pi-property:mortgage');
+    const firstQuote = report.outcomes.find(
+      (row) => row.definitionId === 'housing:pi-property:mortgage' && row.yearMonth === '2026-06'
+    );
+    const close = report.months[report.months.length - 1];
+    const retained = close.liabilities.find((row) => row.liabilityId === 'pi-mortgage');
+    expect(schedule).toBeDefined();
+    expect(firstQuote).toBeDefined();
+    expect(retained).toBeDefined();
+
+    // The first monthly PI request is the standard installment, larger than the
+    // only eligible account, and is paid interest-first: $1,000 all to interest.
+    expect(firstQuote?.requestedCents).toBe(standardInstallmentCents);
+    expect(firstQuote?.requestedCents).toBeGreaterThan(availableCheckingCents);
+    expect(firstQuote?.executedCents).toBe(availableCheckingCents);
+    expect(firstQuote?.shortfallCents).toBe(standardInstallmentCents - availableCheckingCents);
+
+    // Aggregated schedule: requested > paid > 0, shortfall is exactly the difference.
+    expect(schedule!.executedCents).toBe(availableCheckingCents);
+    expect(schedule!.requestedCents).toBeGreaterThan(schedule!.executedCents);
+    expect(schedule!.executedCents).toBeGreaterThan(0);
+    expect(schedule!.shortfallCents).toBe(schedule!.requestedCents - schedule!.executedCents);
+
+    // The liability is retained, never written off: principal is untouched and the
+    // hand-calculated accrued interest is retained.
+    expect(retained!.closingPrincipalCents).toBe(openingPrincipalCents);
+    expect(retained!.closingInterestCents).toBe(retainedInterestCents);
+    expect(retained!.closingPrincipalCents + retained!.closingInterestCents).toBeGreaterThan(0);
+
+    // Signed net worth stays consistent with the retained liability.
+    expect(close.closing.netWorthCents).toBe(expectedCloseNetWorthCents);
+
+    renderApp();
+    clickButton('Finances Prediction');
+    clickButton('Housing');
+
+    // The selected HousingResults renders the report's requested/paid/unpaid verbatim.
+    expect(screen.getByRole('row', {
+      name: `Mortgage Payment ${displayCents(schedule!.requestedCents)} ${displayCents(schedule!.executedCents)} ${displayCents(schedule!.shortfallCents)}`
+    })).toBeInTheDocument();
+    // The month-close balance is the real retained principal + interest, not a fake estimate.
+    expect(screen.getByText(`Mortgage balance at projection close: ${displayCents(closingMortgageCents)}`)).toBeInTheDocument();
+    expect(screen.getByText('Some housing costs were only partly paid or went unpaid. The amounts above are from observed funding results.')).toBeInTheDocument();
+    expect(screen.queryByText(/estimated payment/i)).not.toBeInTheDocument();
+  });
+
+  // GUI-A07 / G26 — the mounted App renders the weekly planner outcome summary
+  // ("This week · observed planner outcomes") from the single real report, with
+  // an occurred imported sibling excluded and an outside-horizon week honestly
+  // labeled incomplete. The UI clock is faked to the event week only; the engine
+  // start date stays explicit (`netWorth.asOfDate` = 2026-06-15).
+  it('renders the weekly planner outcome summary from the real report with an occurred sibling excluded', () => {
+    vi.setSystemTime(new Date(2026, 9, 14, 12, 0, 0)); // local noon, Wed 2026-10-14
+
+    // The component formats with the ambient locale; mirror it so the expected
+    // strings are the same formatting path, not an invented one.
+    const usd = (cents: number) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(cents / 100);
+
+    const plannedEntry: ExpenseEntry = {
+      id: 'plan-week-25', label: 'Week groceries', amount: 25,
+      startDate: '2026-10-14', endDate: '2026-10-14', accountId: CHECKING,
+      notes: '', originType: 'manual', importSourceId: null, importBatchId: null,
+      createdAt: '2026-06-01', updatedAt: '2026-06-01', categoryId: 'food',
+      provenance: 'planner', planningStatus: 'planned',
+      // Explicit ordered source: Emergency Fund ($10) primary, Checking ($15) fallback.
+      fundingSource: `account:${EMERGENCY}`
+    };
+    const occurredEntry: ExpenseEntry = {
+      id: 'imp-week-99', label: 'Imported meal', amount: 99,
+      startDate: '2026-10-13', endDate: '2026-10-13', accountId: CHECKING,
+      notes: '', originType: 'imported', importSourceId: 'src', importBatchId: 'batch',
+      createdAt: '2026-06-01', updatedAt: '2026-06-01', categoryId: 'food',
+      provenance: 'imported', planningStatus: 'occurred',
+      sourceDate: '2026-10-13', sourceSign: 'debit', asOf: '2026-10-20'
+    };
+    const scenario = freshScenario((next) => {
+      next.careerPlan = { enabled: false, entries: [] };
+      next.netWorth.accounts = next.netWorth.accounts.map((account) => ({
+        ...account,
+        // 0% growth (first-launch default). Checking $100, Emergency Fund $10, else $0.
+        openingBalance: account.id === CHECKING ? 100 : account.id === EMERGENCY ? 10 : 0
+      }));
+      next.expenses = {
+        ...next.expenses,
+        activePlanningAccountId: CHECKING,
+        categoriesByAccountId: { [CHECKING]: [{ id: 'food', label: 'Food' }] },
+        entries: [plannedEntry, occurredEntry]
+      };
+    });
+    persistScenario(scenario);
+
+    // The one real report the App composes and the mounted summary reads.
+    const report = projectFeatureScenario(decodeStored(), { timelineId: null }).report;
+    const planned = report.outcomes.find((outcome) => outcome.definitionId === 'planner:plan-week-25');
+
+    // Hand-calculated anchors (never read back from report output): $25.00
+    // requested, $25.00 paid across all accounts, $15.00 paid from the selected
+    // Checking account, Checking close 100.00 − 15.00 = $85.00.
+    expect(planned).toBeDefined();
+    expect(planned?.date).toBe('2026-10-14');
+    expect(planned?.committed).toBe(true);
+    expect(planned?.requestedCents).toBe(2_500);
+    expect(planned?.executedCents).toBe(2_500);
+    expect(planned?.plan.allocations.map((allocation) => [allocation.accountId, allocation.netFundedCents]))
+      .toEqual([[EMERGENCY, 1_000], [CHECKING, 1_500]]);
+    // The occurred imported sibling is never a scheduled outcome.
+    expect(report.outcomes.some((outcome) => outcome.definitionId === 'planner:imp-week-99')).toBe(false);
+
+    const october = report.months.find((month) => month.yearMonth === '2026-10');
+    expect(october?.accounts.find((account) => account.accountId === CHECKING)?.closingCents).toBe(8_500);
+
+    renderApp();
+    clickButton('Expenses'); // opens the default Planning sub-tab
+    expect(screen.getByRole('heading', { name: 'Plan expenses by account' })).toBeInTheDocument();
+
+    const outcomesRegion = screen.getByRole('region', { name: 'This week observed planner outcomes' });
+    expect(within(outcomesRegion).getByText('This week · observed planner outcomes')).toBeInTheDocument();
+    expect(within(outcomesRegion).getByText('2026-10-11 – 2026-10-17')).toBeInTheDocument();
+    const outcomeValue = (label: string) => within(outcomesRegion).getByText(label).nextElementSibling?.textContent;
+    expect(outcomeValue('Requested')).toBe(usd(2_500));
+    expect(outcomeValue('Paid · all accounts')).toBe(usd(2_500));
+    expect(outcomeValue('Paid from selected account')).toBe(usd(1_500));
+    expect(within(outcomesRegion).getByText(/Occurred imports are excluded/)).toBeInTheDocument();
+
+    // The monthly funded balance is labeled monthly and reads the real close.
+    const balanceRegion = screen.getByRole('region', { name: 'Monthly funded balance' });
+    expect(within(balanceRegion).getByText('Monthly · event-date engine')).toBeInTheDocument();
+    // The October row carries the hand-calculated $85.00 Checking close. The
+    // balance is flat afterwards (0% growth, no further activity), so the value
+    // repeats across the twelve-month window — read the specific month row.
+    const octoberRow = within(balanceRegion).getByText('Oct 2026').closest('li') as HTMLElement;
+    expect(within(octoberRow).getByText(usd(8_500))).toBeInTheDocument();
+
+    // The occurred sibling renders view-only; its $99 never joins the summary.
+    expect(screen.getByText('Imported meal')).toBeInTheDocument();
+    expect(screen.getByText('Occurred · view only')).toBeInTheDocument();
+    expect(screen.getByText(usd(9_900))).toBeInTheDocument();
+
+    // An outside-horizon week shows the incomplete label and no invented weekly
+    // balance: every outcome bucket is a real $0.00.
+    for (let i = 0; i < 18; i += 1) clickButton('← Previous');
+    const outsideRegion = screen.getByRole('region', { name: 'This week observed planner outcomes' });
+    expect(within(outsideRegion).getByText(/incomplete: outside or crossing the report window/)).toBeInTheDocument();
+    expect(within(outsideRegion).getAllByText(usd(0))).toHaveLength(3);
+  }, 15000);
 });
-

@@ -1,407 +1,94 @@
 import { memo, useMemo, useState } from 'react';
-import { formatCurrency } from '../engine/projection';
-import type { MonthlySnapshot, ProjectionYear, PurchaseFlag } from '../types';
-import { useRenderCount } from '../utils/perfTools';
-import { pickFlagColor } from '../utils/colorPalette';
-import { layoutFlagCallouts } from './flagCalloutLayout';
+import type { ProjectionReport } from '../engine/reporting';
+import { displayObservedCents } from '../utils/viewAdapters';
+import type { DisplayContext } from '../utils/viewAdapters';
+import './ChartPanel.css';
 
-interface ChartPanelProps {
-  years: ProjectionYear[];
-  flags?: PurchaseFlag[];
-  monthlySnapshots?: MonthlySnapshot[];
+export interface ChartEventFlag {
+  readonly id: string;
+  readonly date: string;
+  readonly label: string;
+  readonly color: string;
+}
+
+export interface ChartPanelProps {
+  report: ProjectionReport;
+  displayContext: DisplayContext;
+  realDollar?: boolean;
+  inflationRatePercent?: number;
+  measure?: 'netWorth' | 'accountAssets';
+  flags?: readonly ChartEventFlag[];
   onFlagColorChange?: (flagId: string, color: string) => void;
+  range?: readonly [string, string];
+  onRangeChange?: (range: readonly [string, string]) => void;
 }
 
-interface HoverPoint {
-  x: number;
-  y: number;
-  value: number;
-  yearMonth: string;
-  age: number;
-}
+const currency = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
 
-export const ChartPanel = memo(({ years, flags = [], monthlySnapshots, onFlagColorChange }: ChartPanelProps) => {
-  useRenderCount('ChartPanel');
-  const [colorPickerFlagId, setColorPickerFlagId] = useState<string | null>(null);
+export const ChartPanel = memo(function ChartPanel({
+  report, displayContext, realDollar = false, inflationRatePercent = 0,
+  measure = 'netWorth', flags = [], onFlagColorChange, range, onRangeChange
+}: ChartPanelProps) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [editingFlag, setEditingFlag] = useState<string | null>(null);
+  const months = useMemo(() => report.months.filter((month) =>
+    (!range || (month.closingDate >= range[0] && month.closingDate <= range[1]))
+  ).map((month) => {
+    const selected = measure === 'accountAssets' ? month.closing.accountCents : month.closing.netWorthCents;
+    const display = displayObservedCents({ date: month.closingDate, cents: selected }, displayContext.startDate, inflationRatePercent, realDollar);
+    const debt = displayObservedCents({ date: month.closingDate, cents: month.closing.liabilityCents }, displayContext.startDate, inflationRatePercent, realDollar);
+    return { date: month.closingDate, yearMonth: month.yearMonth, value: display.ok ? display.value.displayDollars : selected / 100,
+      debt: debt.ok ? debt.value.displayDollars : month.closing.liabilityCents / 100 };
+  }), [report, displayContext.startDate, inflationRatePercent, realDollar, measure, range]);
 
-  if (years.length === 0) {
-    return null;
-  }
-
-  const width = 760;
-  const height = 380;
-  const padding = { top: 20, right: 24, bottom: 46, left: 80 };
-  const minValue = 0;
-
-  const filteredMonthlySnapshots = useMemo(() => {
-    if (!monthlySnapshots || monthlySnapshots.length === 0 || years.length === 0) {
-      return [];
-    }
-    const minAge = years[0].age;
-    const maxAge = years[years.length - 1].age;
-    return monthlySnapshots.filter((snap) => snap.age >= minAge && snap.age <= maxAge);
-  }, [monthlySnapshots, years]);
-
-  const useMonthly = filteredMonthlySnapshots.length > 0;
-
-  const values = useMonthly
-    ? filteredMonthlySnapshots.map((snap) => snap.endBalance)
-    : years.map((year) => year.endBalance);
-  const maxValue = Math.max(...values, 1);
-  const yStep =
-    maxValue <= 1_000_000
-      ? 50_000
-      : maxValue <= 2_000_000
-        ? 100_000
-        : maxValue <= 10_000_000
-          ? 500_000
-          : 1_000_000;
-  const roundedMaxValue = Math.max(yStep, Math.ceil(maxValue / yStep) * yStep);
-  const plotWidth = width - padding.left - padding.right;
-  const plotHeight = height - padding.top - padding.bottom;
-
-  const pointY = (value: number) =>
-    padding.top + plotHeight - ((value - minValue) / Math.max(roundedMaxValue - minValue, 1)) * plotHeight;
-
-  const pointFor = (index: number) => {
-    const year = years[index];
-    const x = padding.left + (index / Math.max(years.length - 1, 1)) * plotWidth;
-    const y = pointY(year.endBalance);
-
-    return { x, y };
+  const width = 760, height = 360;
+  const pad = { left: 82, right: 22, top: 24, bottom: 48 };
+  const plotW = width - pad.left - pad.right, plotH = height - pad.top - pad.bottom;
+  const low = Math.min(0, ...months.map((m) => m.value), ...months.map((m) => m.debt));
+  const high = Math.max(0, ...months.map((m) => m.value), ...months.map((m) => m.debt));
+  const span = Math.max(high - low, 1);
+  const x = (i: number) => pad.left + i / Math.max(months.length - 1, 1) * plotW;
+  const y = (v: number) => pad.top + (high - v) / span * plotH;
+  const pathFor = (key: 'value' | 'debt') => months.map((m, i) => `${i ? 'L' : 'M'} ${x(i)} ${y(m[key])}`).join(' ');
+  const zeroY = y(0);
+  const active = hoverIndex === null ? null : months[hoverIndex] ?? null;
+  const activeFlag = active && flags.find((flag) => flag.date.slice(0, 7) === active.yearMonth);
+  const moveTo = (event: React.MouseEvent<SVGSVGElement> | React.KeyboardEvent<SVGSVGElement>) => {
+    if (!months.length) return;
+    if ('clientX' in event) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (!rect.width) return;
+      const target = ((event.clientX - rect.left) / rect.width) * width;
+      setHoverIndex(months.reduce((best, _, i) => Math.abs(x(i) - target) < Math.abs(x(best) - target) ? i : best, 0));
+    } else setHoverIndex(Math.min(months.length - 1, Math.max(0, (hoverIndex ?? 0) + (event.key === 'ArrowRight' ? 1 : -1))));
   };
 
-  const monthlyPoints = useMemo<HoverPoint[]>(() => {
-    if (!useMonthly) return [];
-    return filteredMonthlySnapshots.map((snap, index) => ({
-      x: padding.left + (index / Math.max(filteredMonthlySnapshots.length - 1, 1)) * plotWidth,
-      y: pointY(snap.endBalance),
-      value: snap.endBalance,
-      yearMonth: `${snap.calendarYear}-${String(snap.calendarMonth).padStart(2, '0')}`,
-      age: snap.age
-    }));
-  }, [useMonthly, filteredMonthlySnapshots, roundedMaxValue, minValue]);
+  if (!months.length) return <div className="chart-empty" role="status">No monthly results to display yet.</div>;
 
-  const monthlyIndexForAge = (age: number): number => {
-    let closest = -1;
-    let closestDist = Infinity;
-    monthlyPoints.forEach((point, index) => {
-      const dist = Math.abs(point.age - age);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = index;
-      }
-    });
-    return closest;
-  };
-
-  const monthlyIndexForFlag = (flag: { age: number; yearMonth?: string }): number => {
-    if (flag.yearMonth) {
-      const exact = monthlyPoints.findIndex((point) => point.yearMonth === flag.yearMonth);
-      if (exact >= 0) return exact;
-    }
-    return monthlyIndexForAge(flag.age);
-  };
-
-  const handleMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
-    if (monthlyPoints.length === 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    if (rect.width === 0) return;
-    const viewX = ((event.clientX - rect.left) / rect.width) * width;
-    let closest = 0;
-    let closestDist = Infinity;
-    monthlyPoints.forEach((point, index) => {
-      const dist = Math.abs(point.x - viewX);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = index;
-      }
-    });
-    setHoverIndex(closest);
-  };
-
-  const hoverPoint = hoverIndex !== null ? monthlyPoints[hoverIndex] ?? null : null;
-
-  const hoverTooltip = (() => {
-    if (!hoverPoint) return null;
-    const w = 140;
-    const h = 46;
-    let tx = hoverPoint.x + 10;
-    if (tx + w > width - padding.right) tx = hoverPoint.x - w - 10;
-    if (tx < padding.left) tx = padding.left + 4;
-    let ty = hoverPoint.y - h / 2;
-    if (ty < padding.top) ty = padding.top + 4;
-    if (ty + h > height - padding.bottom) ty = height - padding.bottom - h - 4;
-    return { tx, ty, w, h };
-  })();
-
-  const ageToIndex = (age: number): number => {
-    let closest = 0;
-    let closestDist = Infinity;
-    years.forEach((year, index) => {
-      const dist = Math.abs(year.age - age);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = index;
-      }
-    });
-    return closest;
-  };
-
-  const linePath = useMonthly
-    ? monthlyPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')
-    : years
-        .map((_, index) => {
-          const point = pointFor(index);
-          return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`;
-        })
-        .join(' ');
-  const areaPath = useMonthly
-    ? `${linePath} L ${monthlyPoints[monthlyPoints.length - 1].x} ${height - padding.bottom} L ${
-        monthlyPoints[0].x
-      } ${height - padding.bottom} Z`
-    : `${linePath} L ${pointFor(years.length - 1).x} ${height - padding.bottom} L ${pointFor(0).x} ${
-        height - padding.bottom
-      } Z`;
-  const yTicks = Array.from({ length: Math.floor(roundedMaxValue / yStep) + 1 }, (_, index) => index * yStep).reverse();
-  const yearCount = years.length;
-  const tickStep = yearCount <= 5 ? 1 : yearCount <= 10 ? 2 : yearCount <= 20 ? 3 : yearCount <= 30 ? 4 : 5;
-  const xTickIndexes = years
-    .map((_, index) => index)
-    .filter((index) => {
-      const age = years[index].age;
-      const isFirst = index === 0;
-      const isLast = index === years.length - 1;
-      const stepAge = years[0].age + Math.round((age - years[0].age) / tickStep) * tickStep;
-
-      return isFirst || isLast || age === stepAge;
-    });
-
-  const flagsWithColor = flags.map((flag) => {
-    const existingColors = flags.map((f) => f.color);
-    return {
-      ...flag,
-      color: flag.color || pickFlagColor(existingColors)
-    };
-  });
-
-  const flagCallouts = layoutFlagCallouts({
-    flags: flagsWithColor,
-    leftBound: padding.left,
-    rightBound: width - padding.right,
-    topY: padding.top,
-    bottomBound: height - padding.bottom,
-    getAnchorX: (flag) => {
-      if (useMonthly) {
-        const idx = monthlyIndexForFlag(flag);
-        return idx >= 0 ? monthlyPoints[idx].x : pointFor(ageToIndex(flag.age)).x;
-      }
-      return pointFor(ageToIndex(flag.age)).x;
-    },
-    getAnchorY: (flag) => {
-      if (useMonthly) {
-        const idx = monthlyIndexForFlag(flag);
-        return idx >= 0 ? monthlyPoints[idx].y : pointFor(ageToIndex(flag.age)).y;
-      }
-      return pointFor(ageToIndex(flag.age)).y;
-    }
-  });
-
-  return (
-    <div className="chart-shell" style={{ position: 'relative' }}>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="chart-svg"
-        role="img"
-        aria-label="Portfolio value over time"
-        onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoverIndex(null)}
-      >
-        {yTicks.map((tick) => {
-          const y = padding.top + plotHeight - ((tick - minValue) / Math.max(roundedMaxValue - minValue, 1)) * plotHeight;
-
-          return (
-            <g key={tick}>
-              <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="chart-grid-line" />
-              <text x={padding.left - 12} y={y + 4} textAnchor="end" className="chart-axis-label">
-                {formatCurrency(tick)}
-              </text>
-            </g>
-          );
-        })}
-
-        {xTickIndexes.map((index) => {
-          const year = years[index];
-          const point = pointFor(index);
-
-          return (
-            <g key={year.age}>
-              <line x1={point.x} x2={point.x} y1={padding.top} y2={height - padding.bottom} className="chart-grid-line faint" />
-              <text x={point.x} y={height - padding.bottom + 18} textAnchor="middle" className="chart-axis-label">
-                {year.age}
-              </text>
-            </g>
-          );
-        })}
-
-        <path d={areaPath} className="chart-area" />
-        <path d={linePath} className="chart-line" />
-
-        {(() => {
-          const maxDebt = Math.max(...years.map((y) => y.totalCreditCardDebt ?? 0));
-          if (maxDebt <= 0) return null;
-          const debtPath = years
-            .map((year, index) => {
-              const debt = year.totalCreditCardDebt ?? 0;
-              const x = padding.left + (index / Math.max(years.length - 1, 1)) * plotWidth;
-              const y2 = padding.top + plotHeight - ((debt - minValue) / Math.max(roundedMaxValue - minValue, 1)) * plotHeight;
-              return `${index === 0 ? 'M' : 'L'} ${x} ${y2}`;
-            })
-            .join(' ');
-          return <path d={debtPath} className="chart-debt-line" />;
-        })()}
-
-        {years.map((year, index) => {
-          if (useMonthly) {
-            const idx = monthlyIndexForAge(year.age);
-            if (idx < 0) return null;
-            const point = monthlyPoints[idx];
-            return <circle key={`${year.age}-point`} cx={point.x} cy={point.y} r={3} className="chart-point" />;
-          }
-          const point = pointFor(index);
-          return <circle key={`${year.age}-point`} cx={point.x} cy={point.y} r={3} className="chart-point" />;
-        })}
-
-        {hoverPoint && (
-          <g className="chart-hover-group">
-            <line
-              x1={hoverPoint.x}
-              x2={hoverPoint.x}
-              y1={padding.top}
-              y2={height - padding.bottom}
-              className="chart-hover-line"
-            />
-            <circle cx={hoverPoint.x} cy={hoverPoint.y} r={5} className="chart-hover-point" />
-          </g>
-        )}
-
-        {hoverPoint && hoverTooltip && (
-          <g className="chart-hover-tooltip" pointerEvents="none">
-            <rect
-              x={hoverTooltip.tx}
-              y={hoverTooltip.ty}
-              width={hoverTooltip.w}
-              height={hoverTooltip.h}
-              rx={5}
-              ry={5}
-            />
-            <text x={hoverTooltip.tx + 8} y={hoverTooltip.ty + 17} className="chart-hover-tooltip-label">
-              {hoverPoint.yearMonth}
-            </text>
-            <text x={hoverTooltip.tx + 8} y={hoverTooltip.ty + 34} className="chart-hover-tooltip-value">
-              {formatCurrency(hoverPoint.value)}
-            </text>
-          </g>
-        )}
-
-        {flagCallouts.map((callout) => {
-          const isOpen = colorPickerFlagId === callout.id;
-
-          return (
-            <g key={`flag-${callout.id}`}>
-              <line
-                x1={callout.anchorX}
-                x2={callout.anchorX}
-                y1={callout.stemTopY}
-                y2={callout.stemBottomY}
-                stroke={callout.color}
-                strokeWidth={4}
-                strokeLinecap="round"
-                className="chart-flag-stem"
-              />
-              <rect
-                x={callout.x}
-                y={callout.y}
-                width={callout.width}
-                height={callout.height}
-                rx={4}
-                ry={4}
-                fill="#ffffff"
-                stroke={callout.color}
-                strokeWidth={2}
-                className="chart-flag-callout"
-                style={{ cursor: 'pointer' }}
-                onDoubleClick={() => setColorPickerFlagId(isOpen ? null : callout.id)}
-              />
-              <text
-                x={callout.x + callout.width / 2}
-                y={callout.y + callout.height / 2 + 1}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fill="#1f2937"
-                fontSize={11}
-                fontWeight={600}
-                style={{ pointerEvents: 'none', userSelect: 'none' }}
-              >
-                {callout.label}
-              </text>
-            </g>
-          );
-        })}
-
-        <text x={width / 2} y={height - 8} textAnchor="middle" className="chart-title">
-          Age
-        </text>
-        <text
-          x={18}
-          y={height / 2}
-          textAnchor="middle"
-          className="chart-title"
-          transform={`rotate(-90, 18, ${height / 2})`}
-        >
-          Portfolio Value ($)
-        </text>
+  const flagMonthIndex = (date: string) => months.findIndex((month) => month.yearMonth === date.slice(0, 7));
+  return <section className="report-chart" aria-label="Projection chart">
+    <div className="report-chart__key"><span className="key-net" />{measure === 'netWorth' ? 'Net worth' : 'Account assets'}<span className="key-debt" />Total debt</div>
+    <div className="report-chart__canvas">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${measure === 'netWorth' ? 'Net worth' : 'Account assets'} and total debt by month`} tabIndex={0}
+        onMouseMove={moveTo} onMouseLeave={() => setHoverIndex(null)} onKeyDown={(event) => { if (event.key.startsWith('Arrow')) { event.preventDefault(); moveTo(event); } }}>
+        {[low, low + span / 2, high].map((tick, i) => <g key={i}><line x1={pad.left} x2={width - pad.right} y1={y(tick)} y2={y(tick)} className={tick === 0 ? 'zero-line' : 'grid-line'} />
+          <text x={pad.left - 10} y={y(tick) + 4} textAnchor="end" className="axis-label">{currency(tick)}</text></g>)}
+        <path d={pathFor('value')} className="net-line" />
+        <path d={pathFor('debt')} className="debt-line" />
+        <line x1={pad.left} x2={width - pad.right} y1={zeroY} y2={zeroY} className="zero-line" />
+        {[0, months.length - 1].filter((i, n, all) => all.indexOf(i) === n).map((i) => <text key={i} x={x(i)} y={height - 15} textAnchor={i === 0 ? 'start' : 'end'} className="axis-label">{months[i].yearMonth}</text>)}
+        {flags.map((flag) => { const index = flagMonthIndex(flag.date); return index < 0 ? null : <g key={flag.id}>
+          <line x1={x(index)} x2={x(index)} y1={pad.top} y2={pad.top + 18} stroke={flag.color} strokeWidth="3" />
+          <text x={x(index)} y={pad.top + 32} textAnchor="middle" fill={flag.color} className="flag-label" onDoubleClick={() => setEditingFlag(flag.id)}>{flag.label}</text>
+        </g>; })}
+        {active && <g pointerEvents="none"><line x1={x(hoverIndex!)} x2={x(hoverIndex!)} y1={pad.top} y2={height - pad.bottom} className="hover-rule" />
+          <circle cx={x(hoverIndex!)} cy={y(active.value)} r="5" className="hover-dot" /></g>}
       </svg>
-
-      {colorPickerFlagId !== null && onFlagColorChange ? (
-        <div
-          style={{
-            position: 'absolute',
-            top: padding.top + 30,
-            left: (() => {
-              const callout = flagCallouts.find((item) => item.id === colorPickerFlagId);
-              if (!callout) return 80;
-              return Math.max(0, callout.anchorX - 50);
-            })(),
-            background: '#fff',
-            border: '1px solid #ccc',
-            borderRadius: '6px',
-            padding: '6px',
-            zIndex: 100,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
-          }}
-        >
-          <input
-            type="color"
-            value={flagsWithColor.find((f) => f.id === colorPickerFlagId)?.color ?? '#e74c3c'}
-            onChange={(e) => {
-              onFlagColorChange(colorPickerFlagId, e.target.value);
-              setColorPickerFlagId(null);
-            }}
-            style={{ width: '100px', height: '30px', border: 'none', cursor: 'pointer' }}
-            autoFocus
-          />
-          <button
-            type="button"
-            className="text-button"
-            onClick={() => setColorPickerFlagId(null)}
-            style={{ display: 'block', marginTop: '4px', fontSize: '11px' }}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : null}
+      {active && <div className="chart-tooltip" role="status"><strong>{active.date}</strong><span>{measure === 'netWorth' ? 'Net worth' : 'Account assets'}: {currency(active.value)}</span><span>Total debt: {currency(active.debt)}</span>
+        {activeFlag && <span className="tooltip-event">{activeFlag.label}</span>}</div>}
     </div>
-  );
+    {editingFlag && onFlagColorChange && <label className="flag-color">Event color <input aria-label="Event color" type="color" value={flags.find((f) => f.id === editingFlag)?.color ?? '#c46b3c'} onChange={(e) => { onFlagColorChange(editingFlag, e.target.value); setEditingFlag(null); }} /><button type="button" onClick={() => setEditingFlag(null)}>Cancel</button></label>}
+    {onRangeChange && <div className="chart-range"><label>From <input aria-label="Range start" type="month" value={range?.[0]?.slice(0, 7) ?? months[0].yearMonth} onChange={(e) => onRangeChange([`${e.target.value}-01`, range?.[1] ?? months[months.length - 1].date])} /></label>
+      <label>To <input aria-label="Range end" type="month" value={range?.[1]?.slice(0, 7) ?? months[months.length - 1].yearMonth} onChange={(e) => onRangeChange([range?.[0] ?? months[0].date, `${e.target.value}-31`])} /></label></div>}
+  </section>;
 });
