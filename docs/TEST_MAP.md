@@ -1,49 +1,66 @@
 # Test Map
 
-## Test Files
+Two local test layers. Vitest owns unit/integration per-item coverage; Playwright owns a
+bounded Chromium browser gate. Neither certifies the GUI-A01–A10 / G01–G40 or
+CA01–CA13 matrices row by row — see `refactor/phase5_handoff.md` and
+`refactor/coverage_register.md` for current status and evidence.
 
-- `src/engine/projection.test.ts`
-- `src/App.test.tsx`
+## Commands
 
-## Engine Coverage (`projection.test.ts`)
+- Unit/integration: `npm run test -- --run` (script is `vitest run`).
+- Single file: `npm run test -- --run src/engine/projection.test.ts`.
+- Browser gate: `npm run test:e2e -- --project=chromium` (one-time `npx playwright install chromium`).
 
-Validates core projection behavior, including:
+## Vitest Groups
 
-- pre-retirement growth mechanics
-- exact-APY monthly compounding
-- take-home and `percentOfSalary` retirement growth with annual raises
-- withdrawal modes (4% rule and specified)
-- inflation-adjusted withdrawal progression
-- recurring/one-time cashflow behavior (incl. monthly deposit to the selected account)
-- job change and career break effects
-- historical mode determinism
-- depletion detection
-- account tracking and per-career ending balances
-- monthly account withdrawal handling
-- large purchase, long-term purchase, and loan funding effects
-- dynamic account/pool source-line behavior
-- housing grouped payment sources (each expense group drawn from its own account)
+### Engine kernel (`src/engine/*.test.ts`)
 
-## App Coverage (`App.test.tsx`)
+- `state.test.ts`, `money.test.ts`, `dates.test.ts`, `taxes.test.ts`, `funding.test.ts`,
+  `valuation.test.ts`, `reporting.test.ts`, `scheduler.test.ts`, `opening.test.ts`,
+  `configuration.test.ts` — state atomics, integer-cent money, tax/penalty solver, ordered
+  funding, exact-APY valuation, reconciliation + D16 selectors, scheduling, opening
+  observations, named-context compilation.
+- `projection.test.ts`, `featureHandlers.test.ts` — kernel facade and the one composition seam.
+- `income.test.ts`, `spending.test.ts`, `planner.test.ts`, `retirement.test.ts`,
+  `cards.test.ts`, `loans.test.ts`, `housing.test.ts` — feature streams.
+- `phase5Acceptance.test.ts`, `phase5CrossFeature.test.ts` — Phase-5 integration: coverage
+  claims, the D26 contention fixture, timeline isolation, and headless cross-feature slices.
 
-Validates integration/UI behaviors, including:
+### Root integration / schema (`src/*.test.ts(x)`)
 
-- chart and table rendering
-- Options sharing Finances Prediction graph/table/summary behavior
-- options persistence (DOB age mode)
-- tab migration behavior from older UI states
-- career timeline normalization and controls
-- duplicate/remove workflow
-- timeline copy (duplicate) from the manage modal
-- stacked savings graph controls
-- net worth persistence behavior
-- purchases and loans viability highlighting
-- expenses tab visibility, planning UI, import traceability, and rollback
-- net worth imports, account remap, and history chart controls
-- housing chip editor (mixed mortgages/rentals, duplicate, reorder, use-previous-end gating, per-expense payment source selectors)
-- housing/timeline independence
-- trajectory snapshots (save/name, compare metrics + per-account diffs, selection persistence, delete)
+- `App.test.tsx` — real-render integration/UI flows over the one projection.
+- `codec.test.ts`, `storage.test.ts`, `autosave.test.ts` — schema-v3 save/load/normalization,
+  the save guard, and autosave coalescing/flush.
+- `commands.test.ts` — canonical write surface and marker/timeline CRUD.
+- `paycheck.test.ts` — paycheck compile and precision round-trip.
+- `trajectoryFreeze.test.ts`, `trajectoryReportAdapter.test.ts` — canonical trajectory
+  snapshots and report mapping.
 
-## Suggested New Tests For Future Work
+### Components (`src/components/*.test.tsx`)
 
-- regression test for age-25 account row math with custom inputs
+- Editors: `AccountCareerPlanEditor`, `AccountExpensesPlanner`, `AccountManagementEditor`,
+  `CardPlanEditor`, `DateMarkersEditor`, `HousingEditor`, `LoanEditor`, `PurchaseEditor`,
+  `RetirementSpendingEditor`, `TimelineManager`, `TrajectoryManager`, `FundingPolicyEditor`.
+- Inputs: `BufferedNumberInput`, `DateOrMarkerInput`.
+- Views/result panels: `ChartPanel`, `SavingsStackedChart`, `ResultsTable`,
+  `NetWorthHistoryChart`, `TrajectoryComparisonChart`, `HousingResults`, `LoanResults`,
+  `RetirementWithdrawalResults`, `ReportDisplayConsistency`.
+
+### Utilities and importers
+
+- `src/utils/`: `dateMarkers.test.ts`, `colorPalette.test.ts`, `viewAdapters.test.ts`.
+- `src/importers/expenseImport.test.ts` — CSV/expense parsing.
+
+## Browser Gate (`e2e/*.spec.ts`)
+
+Playwright (Chromium only) drives the real app over the Vite dev server on
+`127.0.0.1:4173` in a fresh isolated context per test. Specs cover: first launch/smoke,
+accounts/careers, trajectory accessibility and legacy refusal, obligations/planner,
+cards/D16, display consistency, housing outcomes and grouped policy, markers/timelines,
+account-reference guards, card CRUD, signed net worth, partial purchases, planner editing,
+account policy order, career payroll destinations, retirement controls/outcomes, loan
+results and interest/payoff, funding order editor, opening snapshot history, and
+report/account activity. Shared helpers live in `e2e/fixtures.ts`.
+
+This suite is a bounded local smoke/flow gate — **not** CI-wired and **not** a
+GUI/CA matrix certification.

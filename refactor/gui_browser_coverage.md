@@ -9,7 +9,7 @@ actually asserts today, and the exact assertion that is still missing.
 
 - **Source of row definitions:** `refactor/gui_compatibility_audit.md` §2 (G01–G40)
   and the "Acceptance checklist linked to GUI IDs" (GUI-A01–A10, lines 183–196).
-- **Evidence source:** the `e2e/**` Playwright specs (17 spec files, **33 tests**)
+- **Evidence source:** the `e2e/**` Playwright specs (26 spec files, **45 tests**)
   run with `npm run test:e2e -- --project=chromium` against the real Vite dev
   server. Expected values are hand-computed from fixed inputs, never read back
   from report output.
@@ -30,7 +30,7 @@ actually asserts today, and the exact assertion that is still missing.
 | `unasserted` | No Chromium assertion exists for this row (Vitest/RTL may cover it; browser does not). |
 | `deferred by accepted monthly-resolution/placeholder` | The row's browser behaviour is intentionally not a funded forecast or is a known placeholder, per an accepted decision. |
 
-### Spec inventory (17 files / 33 tests)
+### Spec inventory (26 files / 45 tests)
 
 | Spec | Tests |
 |---|---|
@@ -51,17 +51,32 @@ actually asserts today, and the exact assertion that is still missing.
 | `account-policy-order.spec.ts` | 1 (new) |
 | `career-payroll-destinations.spec.ts` | 1 (new) |
 | `housing-group-policy.spec.ts` | 2 (new) |
+| `retirement-controls.spec.ts` | 2 (new) |
+| `loan-results.spec.ts` | 2 (new) |
+| `loan-interest-payoff.spec.ts` | 1 (new) |
+| `funding-order-editor.spec.ts` | 2 (new) |
+| `opening-snapshot-history.spec.ts` | 1 (new) |
+| `report-activity.spec.ts` | 1 (new) |
+| `cards-adaptive-payoff.spec.ts` | 1 (new) |
+| `retirement-outcomes.spec.ts` | 1 (new) |
+| `report-account-activity.spec.ts` | 1 (new) |
 
 **Recorded data gaps (named, not hidden):**
 
 - **G26** — accepted **monthly resolution**: there is no weekly funded balance
   curve; the planner exposes planned weekly items plus actual selected-account
   **monthly** closes only.
-- **G28** — Expenses → Tracking / Configure Accounts is a **"coming soon"
-  placeholder**; it is not counted as complete transaction tracking.
-- **G10 / G19 / G33** — **partial**: only report-backed per-account closes
-  (G10), a configured liability's signed value (G19) and the signed chart/table
-  split (G33) are asserted; the row-specific forecasts/tooltips are not.
+- **G28** — Expenses → Tracking now renders an **"Expense history"** route that
+  mounts the canonical selected-account planner (expense grid plus occurred/
+  imported expenses kept view-only and separate from the projection plan). It is
+  a limited route, **not** a full transaction-tracking product, and it has **no
+  Chromium assertion** — browser status `unasserted`.
+- **G06/G33** — **partial**: retirement-source controls and a report-backed first
+  July $333.33 withdrawal share are browser-asserted (G05), but a retirement-boundary
+  asset/first-year expense aggregate is not exposed in the report/UI (G06). G33 now
+  shows lazy per-account audit on focus, but the 960-month tooltip-volume benchmark
+  is still unmeasured. **G10**'s old local career forecast fields
+  were removed by design; the browser asserts the one report's account closes.
 
 Rows: 40 (G01–G40), each listed once under its primary GUI-A group; cross-group
 references are noted in the evidence column.
@@ -82,8 +97,8 @@ references are noted in the evidence column.
 | G ID | Chromium spec / test evidence | Status | Exact remaining assertion |
 |---|---|---|---|
 | G02 | `accounts-careers.spec.ts` "seeded plan with no enabled career still renders chart, table and warnings without crashes"; `smoke.spec.ts` navigates all four sections plus Warnings/Date markers | browser slice exercised | A retirement-only / other-income plan (no enabled career but live benefit/planner obligations) that still renders, and explicit named-context / what-if labelling, are not asserted. |
-| G05 | none | unasserted | The retirement spending source grid (account rows, 4% new-item / start age / tax / penalty / HSA, and planned-net vs actual net/gross per ADR-021) has no Chromium assertion. |
-| G06 | none | unasserted | Retirement-assets / first-year-expenses totals and the min/max controls derived at the retirement boundary have no Chromium assertion. |
+| G05 | `retirement-controls.spec.ts` — 4% default, explicit 0%/6%, account/date/valuation/payment-day controls survive reload; `retirement-outcomes.spec.ts` — selected $100,000 401K 4%-rule source shows the input-derived July $333.33 requested/committed paid from the one report without a local balance preview | browser slice exercised | Start-age/marker, HSA qualification tax/penalty and all source/basis combinations remain unasserted; no post-close balance is claimed as the 4% starting basis. |
+| G06 | `retirement-controls.spec.ts` — yearly minimum $1,200 and maximum $4,800 controls persist; `retirement-outcomes.spec.ts` — one actual first-month $333.33 source share | partial | Retirement-boundary assets and first-year-expenses aggregate are not derivable from current report metadata; min/max funded effect for a two-source scenario remains unasserted. Never infer a July share from a yearly table cell. |
 | G31 | `accounts-careers.spec.ts` renders chart/table/warnings on a no-income plan; `cards-d16.spec.ts` shows the D16 summary wording | partial | The summary "runs out of money" / ending-balance selector semantics versus retained liability are not asserted in-browser. |
 | G39 | `markers-timelines.spec.ts` asserts no stale `dialog` and the selected housing entry stays `active` after clone/switch; `account-reference-guards.spec.ts` shows no stale selection after account removal | partial | Empty → populated → empty hook/range transitions and an active-modal deletion are not asserted in-browser. |
 
@@ -92,11 +107,11 @@ references are noted in the evidence column.
 | G ID | Chromium spec / test evidence | Status | Exact remaining assertion |
 |---|---|---|---|
 | G09 | `career-payroll-destinations.spec.ts` — the July payroll posts a percent allocation (Emergency Fund $170) and a fixed allocation (HSA $30), remainder to Checking ($1,500), with a distinct employer-match destination (Investments $50) and employee 401K ($100); `accounts-careers.spec.ts` — a dated pay-plan cap/overflow persists | browser slice exercised | Per-line source editor, raise base and "no duplicate deposit through pool conversion" beyond distinct destinations are not asserted. |
-| G10 | `career-payroll-destinations.spec.ts` reads the per-account report cells for 2026 and the zero-payroll 2027 negative control | partial | Starting Balance / From previous career / Balance at end of period local-forecast fields remain unasserted; only report-backed per-account closes are covered. |
+| G10 | `career-payroll-destinations.spec.ts` reads the one report's per-account closes for 2026 and the zero-payroll 2027 negative control | partial | Old local 'Starting Balance / From previous career / Balance at end of period' forecasts were removed with the pool-era editor; do not demand their revival. Named career-boundary report detail is not separately asserted in-browser. |
 | G11 | `career-payroll-destinations.spec.ts` — paycheck modal `Gross / period $2,000` + `Net / period $1,700` + `Taxes $2,400`, plus the distinct per-account posting in the table | browser slice exercised | Granular per-line deposit-account editing and employee/employer identity inside the paycheck modal are not driven. |
 | G12 | `career-payroll-destinations.spec.ts` — remainder lands in Checking ($1,500); `accounts-careers.spec.ts` — cap and overflow-account edit | partial | The net-pay remainder destination + requested/posted/unallocated summary and the optional deposit-day control are not asserted. |
 | G13 | `accounts-careers.spec.ts` adds a dated pay plan and clones it into a timeline; `cards-crud.spec.ts` clones a timeline | partial | "Copy Pay from Previous" / duplicate-career-plan metadata clone correctness is not asserted. |
-| G14 | `accounts-careers.spec.ts` edits the global "Primary account" default; `obligations-planner.spec.ts` funds a $200 purchase through one primary + two ordered fallbacks | partial | Add/remove/reorder/dedup of ordered fallback defaults and per-obligation inheritance/override controls are not driven. |
+| G14 | `funding-order-editor.spec.ts` — reorders global fallbacks, changes the $100 purchase's actual $40+$60 source order, persists across reload, removes/re-adds a source without duplicates; `obligations-planner.spec.ts` pins a primary + two fallbacks | browser slice exercised | Per-obligation policy inheritance/override and restricted-account eligibility are not driven through every editor. |
 | G15 | `accounts-careers.spec.ts` sets `Maximum account balance 1 = 1000` and `Overflow account 1 = HSA` and they persist | partial | Monthly-withdrawal expense rows + shortfall display and the "cap is a special policy, not an ordinary transfer" semantics are not asserted. |
 
 ## GUI-A04 — G16/G17/G35 (funding policy, purchase outcome, warnings; G14 under GUI-A03)
@@ -112,7 +127,7 @@ references are noted in the evidence column.
 | G ID | Chromium spec / test evidence | Status | Exact remaining assertion |
 |---|---|---|---|
 | G18 | `purchases-partial.spec.ts` — the two-month long-term plan shows July fully funded and August's $50 partial per occurrence | browser slice exercised | The final scheduled occurrence's total requested/paid/unpaid and the first fallback/shortfall split by allocation are not asserted; inclusive duration/end synchronisation is not browser-checked. |
-| G19 | `networth-signed.spec.ts` — a configured $100 opening `loan` liability shows as signed net worth; no loan-editor flow | partial | Loan fields / Payoff / extra-payment and down-payment rows, and the engine-funded payoff schedule, are unasserted in-browser. |
+| G19 | `loan-results.spec.ts` — linked APR-0 $1,000 debt requests $200, pays $100, shows $100 unpaid and $900 retained with −$900 signed net worth; unlinked loan shows no fabricated result; `loan-interest-payoff.spec.ts` — APR-6% loan posts $5.00 then $2.50 nominal interest and an observed August payoff | browser slice exercised | Extra-payment/down-payment UI rows and alternative term/interest shortfalls remain unasserted; no config-derived phantom payoff is claimed. |
 | G20 | `housing-group-policy.spec.ts` — an explicit per-group override (Checking primary + Emergency Fund fallback) funds a $150 rent as $100 + $50 with a "Fallback used" warning and no shortfall; `obligations-planner.spec.ts` — a property-free $1,500 rent funds from Checking | browser slice exercised | Common household/group outcome aggregation across all source types and the requested/paid/shortfall + allocation tooltip are not asserted. |
 | G21 | `housing-outcomes.spec.ts` — unfunded pending acquisition and underwater sale; `obligations-planner.spec.ts` — rental obligation rows | partial | The "Estimated Monthly" local quote versus the selected month's engine requested/paid/PMI/payoff comparison is not asserted. |
 | G22 | `housing-group-policy.spec.ts` — clearing the rent override to explicit empty leaves the rent unpaid although the global default could pay, and the override persists through `pagehide`/reload; `housing-outcomes.spec.ts` — pending acquisition stays pending at $0 and the underwater sale retains a positive deficiency + signed negative net worth | browser slice exercised | Sale-proceeds/debt-deficiency controls and opening property/mortgage entry flows are not driven; the acquired-then-sold neutral status remains a synthetic-report unit fixture, not an end-to-end App projection. |
@@ -122,7 +137,7 @@ references are noted in the evidence column.
 | G ID | Chromium spec / test evidence | Status | Exact remaining assertion |
 |---|---|---|---|
 | G23 | `cards-crud.spec.ts` — an ordinary expected-payment plan survives add/duplicate/edit/remove as the only stored plan with no fabricated `zeroInterestCard` liability, then stays isolated in a named timeline; `cards-d16.spec.ts` — a permanent-0% plan | browser slice exercised | The two-type editor discriminants (ordinary expected-payment vs permanent-0% liability identity/start/target) and obsolete-field removal are not asserted. |
-| G24 | `cards-d16.spec.ts` — the July 334¢ unpaid principal surfaces as `$3`, leads the D16 warnings as "Needs attention", and invents no fallback banner | browser slice exercised | The engine occurrence schedule for both card types, requested vs funded/net allocations, remaining debt and overdue balance/warning are not asserted; no phantom "Paid off". |
+| G24 | `cards-d16.spec.ts` — July 334¢ shortfall leads D16 warnings with no fabricated fallback; `cards-adaptive-payoff.spec.ts` — August's unfunded 3_333¢ installment remains owed until a dated September 6_666¢ inflow clears the 0% liability with one observed payoff (no duplicate) | browser slice exercised | The UI exposes aggregated card schedule and warning-per-unfunded occurrence, not per-month target cents; ordinary-card 12-month report requested/paid/debt alignment remains partially unasserted in-browser. |
 | G30 | `display-consistency.spec.ts` — the measure selector swaps net worth ↔ account assets and the key follows; `networth-signed.spec.ts` — signed net worth with a real debt overlay | browser slice exercised | The age slider/flags and executed/skipped flag state plus aligned monthly liability dates are not asserted. |
 | G38 | `markers-timelines.spec.ts` — a shared marker propagates to the base plan **and** a cloned named timeline with month/day precision; `trajectory-accessibility.spec.ts` — Date/Marker toggle | browser slice exercised | The card `introEnd`/`autopayEnd` and new ordinary/0% date-reference registry scan/delete/list are not asserted. |
 
@@ -133,16 +148,16 @@ references are noted in the evidence column.
 | G25 | `obligations-planner.spec.ts` and `planner-editing.spec.ts` use one designated funding account per planned item (`fundingSource` ordered source) | partial | The three competing account selectors (Account / Payment Account / Pay From) reconciliation and category-track vs primary-payment distinctness are not asserted. |
 | G26 | `obligations-planner.spec.ts` asserts a quoted planner week $25 requested/$25 paid-all/$15 paid from selected Checking and October close $85; `planner-editing.spec.ts` moves/copies exact-date outcomes without adding a second debit; both distinguish monthly funded closes from the planned weekly grid | deferred by accepted monthly-resolution/placeholder | A true daily/weekly funded balance curve remains intentionally absent under the accepted monthly-resolution rule; threshold colouring and a recurring-exhaustion display are not browser-asserted. Do not call quoted weekly outcomes a weekly funded balance. |
 | G27 | `planner-editing.spec.ts` — a keyboard move rewrites the original planned occurrence (no duplicate), a keyboard copy adds a distinct planned id, occurred imports stay view-only/unquoted, and a planned copy persists `sourceSign: null` | browser slice exercised | Drag moves/copies (only keyboard is covered) and day-31 / inclusive-date recurrence parity are not asserted. |
-| G28 | none | deferred by accepted monthly-resolution/placeholder | Expenses → Tracking / Configure Accounts is a "coming soon" placeholder; no Chromium flow, and it must not be counted as complete transaction tracking. |
+| G28 | none | unasserted | Expenses → Tracking renders an "Expense history" section mounting the canonical selected-account planner (expense grid plus occurred/imported expenses kept view-only and separate from the projection plan). It is a limited route, **not** a full transaction-tracking product, and no Chromium flow asserts it. |
 
 ## GUI-A08 — G08/G29/G32–G34/G36 (snapshot, charts, table, dollars, trajectory; G35 under GUI-A04)
 
 | G ID | Chromium spec / test evidence | Status | Exact remaining assertion |
 |---|---|---|---|
-| G08 | `account-reference-guards.spec.ts` — HSA removal cleans global + inactive refs; `networth-signed.spec.ts` — signed −$100 net worth with $0 account assets | partial | Saving a snapshot of assets/properties/liabilities with IDs/measurement/date ("Save Account Balance") and history immutability are not driven in-browser. |
+| G08 | `opening-snapshot-history.spec.ts` — captures exact account/liability IDs/date/measurement, records observed $0 debt over configured $300 and keeps legacy asset-only history asset-only; `networth-signed.spec.ts` — −$100 signed NW vs $0 assets | browser slice exercised | Opening property/deposit identity and history measured-on-multiple-dates remain unasserted; no legacy asset-only entry is reinterpreted. |
 | G29 | `display-consistency.spec.ts` — the stacked account series and its tooltip deflate together; `networth-signed.spec.ts` — the chart key follows the measure | browser slice exercised | Same-type accounts summed once and legend/visibility reconciliation to visible accounts are not asserted. |
 | G32 | `display-consistency.spec.ts` — results table Assets/Closing net worth and fixed 6% deflation; `networth-signed.spec.ts` — a $100 liability keeps the signed column at −$100 (not clamped) while assets remain $0 | browser slice exercised | Broader account/activity cents conversion and a stable row date key across clipped months are not asserted in-browser. |
-| G33 | `networth-signed.spec.ts` — signed net worth vs $0 account assets; `display-consistency.spec.ts` — the chart measure split | partial | The results row/account hover activity tooltips (gross/net/tax/penalty/growth reconciliation) are not asserted. |
+| G33 | `report-activity.spec.ts` — focusable 2026 ResultsTable row reads report-committed gross $2,000/net $1,800/payroll tax $200; `report-account-activity.spec.ts` — focused Checking cell reads an actual −$100 July purchase delta from frozen byAccount, with no unrelated payroll; `networth-signed.spec.ts` keeps signed NW distinct from assets | browser slice exercised | Per-account detail is lazy/on-demand; broader tax/penalty/growth allocations remain focused-unit evidence, and 960-month tooltip-volume performance is unmeasured. |
 | G34 | `display-consistency.spec.ts` — the "today's dollars" toggle deflates table + chart + stacked with the fixed 6% factor and leaves the nominal report unchanged when off | browser slice exercised | Current-dollar factor handling for liabilities/property/activity and the comparison transforms are not asserted. |
 | G36 | `trajectory-accessibility.spec.ts` — canonical trajectory save/select/rename/delete/reload; `trajectory-legacy.spec.ts` — a legacy asset-only snapshot is archived and refused against canonical net worth | browser slice exercised | Overlay/diff of two canonical trajectories and the signed history-chart axes are not asserted; the legacy entry is never reinterpreted (covered). |
 
@@ -168,12 +183,21 @@ multiple stale-render updates and lost the reorder. It was fixed at the owner
 (`src/components/AccountManagementEditor.tsx` + `src/App.tsx`) with **one
 immutable `onReorderAccounts` callback** routed through `applyGlobal`, and covered
 by a new `AccountManagementEditor.test.tsx` case (+1). The focused browser retest
-then passed 1/1 and the full Chromium gate 33/33.
+then passed 1/1 and that expansion's full Chromium gate 33/33. The later four
+specs above added nine tests: two test-only locator/fixture adjustments (exact
+withdrawal date/$900 selectors and moving a payroll into the run horizon) were
+required before that expansion's full Chromium gate passed **42/42**. Three later
+report-only UI slices added per-source July retirement withdrawal, lazy account-cell
+activity and adaptive 0% card payoff browser checks. Their first focused run exposed
+test-only fixture/locator assumptions (payroll/purchase outside horizon or wrong
+source, source label living outside a retirement row, and a "does not estimate"
+disclaimer matching an overbroad negative check). Those were corrected without
+changing financial rules; focused 3/3, then latest full Chromium **45/45** passed.
 
 ## Non-claims
 
 This ledger does **not** claim: a release; row-by-row certification of
 GUI-A01–A10/G01–G40 or CA01–CA13; a weekly funded planner curve (G26) or the
-tracking view (G28); or any Phase-6 PS/B-P production-browser benchmark. The
+tracking view (G28, browser unasserted); or any Phase-6 PS/B-P production-browser benchmark. The
 browser suite is a bounded local gate with no CI wiring; Phase 6 owns browser
 measurement and Phase 8 owns release verification (ADR-022).

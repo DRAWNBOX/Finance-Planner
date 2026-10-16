@@ -1,88 +1,123 @@
 # Feature Map
 
-Map of visible features to implementation files.
+Map of visible features to implementation files. All views read the single
+`ProjectionReport` produced by `projectFeatureScenario`
+(`src/engine/featureHandlers.ts`).
 
-## Retirement Calculator Panel
+## Retirement Panel
 
-- UI/controls: `src/App.tsx` (`renderRetirementTab`)
-- Projection effects: `src/engine/projection.ts`
+- UI/controls: `src/App.tsx` (Finances Prediction → `retirement` sub-tab)
+- Editor: `src/components/RetirementSpendingEditor.tsx`
+- Observed results: `src/components/RetirementWithdrawalResults.tsx`
+- Engine: `src/engine/retirement.ts`
 
 ## Options
 
-- UI/controls: `src/App.tsx` (`renderOptionsTab`)
-- Inflation panel: global enable/disable + rate
-- Results display: shares the Finances Prediction graph, table, and summary path in `src/App.tsx`
+- UI/controls: `src/App.tsx` (`options` tab → `profile` sub-tab)
+- Inflation panel: global enable/disable and rate
+- Results display: shares the Finances Prediction summary path
 
 ## Career Timeline Editor
 
-- Main editor: `src/components/CareerPlanEditor.tsx`
-- Integrates:
-  - start/end age handling
-  - Income & Deductions section (gross salary, taxes, health benefits, retirement + match, HSA + match, living expenses)
-  - Monthly/Yearly period toggles per field
-  - Take Home Pay computation
-  - Income Fallback Accounts configuration
-  - per-account savings rates, withdrawals, caps, overflow fallback
-  - duplicate/remove/reorder
+- Editor: `src/components/AccountCareerPlanEditor.tsx`
+- Paycheck modal: `src/components/PaycheckEditorModal.tsx`
+- Date inputs: `src/components/DateOrMarkerInput.tsx`
+- Integrates start/end dates and derived ages, the granular paycheck
+  (gross, taxes, benefits, retirement/HSA + match, living expenses), ordered
+  net-pay allocations + remainder, per-allocation max-balance caps and overflow
+  accounts, income fallback accounts, and duplicate/remove/reorder.
+- Paycheck compilation: `src/paycheck.ts`
+- Engine: `src/engine/income.ts`
 
 ## Timelines (Universal)
 
-- Multiple named timelines, each holding independent copies of large purchases, long-term purchases, loans, credit cards, career plan, and housing.
-- UI: `src/App.tsx` (`addTimeline`, `switchTimeline`, `renameTimeline`, `duplicateTimeline`, `deleteTimeline`).
-- Timeline chips in the timeline bar switch the active timeline; the "Manage Timelines" modal supports rename, copy, and remove.
-- Type: `Timeline` in `src/types.ts`; persisted on `Scenario.timelines`, normalized in `src/storage.ts`.
+- Multiple named timelines, each holding independent copies of large purchases,
+  long-term purchases, loans, credit cards, card plans, career plan and housing.
+- UI: `src/App.tsx`; `src/components/TimelineManager.tsx`
+- Writes route through `applyToActiveTimeline` / the timeline CRUD commands in
+  `src/commands.ts`.
+- Type: `Timeline` in `src/types.ts`; normalized in `src/codec.ts`.
 
 ## Purchases and Loans
 
-- Purchases UI and viability highlighting: `src/App.tsx`
-- Loan UI and account-funding shortfall highlighting: `src/App.tsx`
-- Funding simulation: `src/engine/projection.ts`
-- Source-line/account helpers: `src/financeModel.ts` (`normalizePurchaseFundingSource`)
-- Income-funded purchases processed per-month
+- Purchase editor: `src/components/PurchaseEditor.tsx`
+- Loan editor: `src/components/LoanEditor.tsx`
+- Observed funding detail: `src/components/PurchaseFundingResults.tsx`
+- Observed loan detail: `src/components/LoanResults.tsx`
+- Engine: `src/engine/spending.ts` (purchases), `src/engine/loans.ts` (loans)
+- Funding kernel: `src/engine/funding.ts`
 
 ## Housing Expenses
 
-- Chip-based editor: `src/components/HousingEditor.tsx` (mortgages + rentals in one draggable list, inline property form for the selected chip, duplicate/remove/reorder, "use previous housing end date as start date")
-- Grouped payment sources per entry: P&I+extra / rent (`paymentSource`), taxes+insurance, HOA+maintenance, PMI
-- Engine: per-month mortgage/rental processing, PMI auto-drop, sell proceeds, rental income
-- Types: `HousingEntry` in `src/types.ts`
+- Chip-based editor: `src/components/HousingEditor.tsx` (mortgages + rentals in
+  one draggable list, inline property form, duplicate/remove/reorder,
+  "use previous housing end date as start date")
+- Grouped payment sources per entry: P&I+extra / rent (`paymentSource`),
+  taxes+insurance, HOA+maintenance, PMI, with an ordered per-group
+  `fundingPolicies` override map
+- Observed results: `src/components/HousingResults.tsx`
+- Engine: `src/engine/housing.ts` (per-month mortgage/rental processing, held
+  acquisition deposit, PMI by actual LTV, rental income, sale proceeds)
+- Type: `HousingEntry` in `src/types.ts`
 
 ## Warnings
 
-- UI: `Warnings` sub-tab in `src/App.tsx` (`renderWarningsTab`) — income-usage validation periods plus other engine warnings
-- Validation data: `ProjectionResult.incomeValidation` (recorded per pool via `incomePoolUsage` in `src/engine/projection.ts`)
-- Sub-tab id: `warnings` (`src/storage.ts`)
+- UI: `src/App.tsx` (`warnings` sub-tab). It renders the D16 selectors verbatim
+  plus `context.diagnostics`; it never re-runs funding.
+- Selectors: `report.shortfall`, `report.exhaustion`, `report.fallback` in
+  `src/engine/reporting.ts`
+- Sub-tab id: `warnings` (`src/codec.ts`)
 
 ## Trajectory
 
-- UI: `Trajectory` sub-tab in `src/App.tsx` (`renderTrajectoryTab`) — save/name immutable trajectory snapshots, pick one to compare, and view metric + per-account diffs against the live projection
-- Overlay chart: `src/components/TrajectoryComparisonChart.tsx` (current projection vs selected snapshot vs actual net-worth history)
-- Snapshots freeze the projection output (`TrajectorySnapshot` / `TrajectoryYear` in `src/types.ts`); persisted in `Scenario.trajectorySnapshots`; compare selection in `AppUiState.compareTrajectoryId`
-- Sub-tab id: `trajectory` (`src/storage.ts`)
+- UI: `src/components/TrajectoryManager.tsx` (save/name immutable snapshots)
+- Overlay chart: `src/components/TrajectoryComparisonChart.tsx`
+- Snapshots freeze the projection output (`TrajectorySnapshot` /
+  `TrajectoryYear` in `src/types.ts`); compare selection lives in the UI state.
+- Adapters: `src/trajectoryFreeze.ts`, `src/trajectoryReportAdapter.ts`
 
 ## Credit Cards
 
-- UI: `src/App.tsx` (credit card table in purchases & expenses)
-- Engine: per-month credit card processing, autopay, fixed-plus-lump payment modes
-- Types: `CreditCard` in `src/types.ts`
+- UI: `src/components/CardPlanEditor.tsx` (ordinary expected-payment and
+  permanent-0% payoff plans)
+- Engine: `src/engine/cards.ts`
+- Types: `CardPlan` / `OrdinaryCardSchedule` / `ZeroInterestCardPlan` in
+  `src/types.ts`
 
 ## Net Worth & Simulation Start
 
-- `Net Worth` tab: account/pool balances, "Save Account Balance" snapshot (`netWorth.history`), and history chart.
-- Projections start from the most recent saved balance snapshot: its date anchors `projectScenario`'s start and its balances seed the ledger (App.tsx). Pre-start costs are ignored and an in-progress mortgage is amortized to the anchor. A "Simulating from <date>" note appears on the Finances Prediction graph.
-- Current age is always derived from the date of birth (no manual age mode; `profile.currentAge` is only a fallback when the birth date is invalid).
+- `Net Worth` tab: accounts/liabilities/properties, "Save Account Balance"
+  snapshot, and history chart.
+- UI: `src/components/AccountManagementEditor.tsx`,
+  `src/components/NetWorthHistoryChart.tsx`
+- Projections start from the **opening observation**: `netWorth.openingSnapshot`
+  (an explicit observed date plus account/liability/property values) when
+  present, otherwise configured values anchored to `netWorth.asOfDate`. Observed
+  debt wins, including an observed `0`. Historical `netWorth.history` entries are
+  asset-only observations and are never used as the opening balance.
+- Current age (`profile.currentAge`) and date of birth (`options.dateOfBirth`) are
+  separate configured fields; the birth date is the date anchor. Opening/start
+  resolution lives in `src/engine/opening.ts` and `src/engine/configuration.ts`.
 
 ## Results Display
 
-- Portfolio graph: `src/components/ChartPanel.tsx` (monthly line + credit card debt line + monthly hover tooltip)
-- Stacked savings graph: `src/components/SavingsStackedChart.tsx` (monthly stacked areas + per-pool hover tooltip)
+- Portfolio graph: `src/components/ChartPanel.tsx`
+- Stacked savings graph: `src/components/SavingsStackedChart.tsx`
 - Results table: `src/components/ResultsTable.tsx`
-- Monthly snapshots toggle: per-month rows with per-account activity tooltips
-- Age range slider: filter graph by age range
-- Flag visibility toggles: purchases/expenses + housing flags
+- Current-dollars deflation adapters: `src/utils/viewAdapters.ts`
+- Age range slider and flag visibility toggles live in the app shell.
+
+## Expenses
+
+- Planner/tracking UI: `src/components/AccountExpensesPlanner.tsx`
+  (`planning` / `tracking` sub-tabs)
+- Credit-card sub-tab: `creditCards`
+- Import parsing: `src/importers/expenseImport.ts`; occurred imports stay
+  view-only and are never scheduled.
+- Engine: `src/engine/planner.ts` (manual planner + recurrences)
 
 ## Inflation Controls
 
 - Global toggle: Options tab → Inflation panel
-- Display values in current dollars: checkbox above results table (deflates graphs, summary, and table by cumulative inflation)
-- No per-item inflation toggles — all items follow global toggle
+- "Display values in today's dollars": deflates graphs, summary and table through
+  the report adapters; display-only, never changes the projection.

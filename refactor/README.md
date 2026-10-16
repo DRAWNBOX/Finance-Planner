@@ -1,18 +1,36 @@
 # Account Cashflow Refactor
 
-Planning documents and historical baseline evidence created during this session.
+Planning documents, target contracts and historical baseline evidence for the account-only refactor. Some documents describe the frozen **target**; others are **historical** pool-era records. Read them with the authority ordering below.
+
+## Authority ordering (P7.5)
+
+1. **Accepted** — explicit user decisions and accepted ADRs (`review.md` RV01–RV31, ADR-001…022). These override earlier recommendations.
+2. **Implemented / observed** — the live `src/` runtime and dated, independently reproduced gate results. Current source and executed results establish actual behavior.
+3. **Proposed** — target contracts, acceptance/coverage rows, plans and performance budgets not yet implemented or measured.
+4. **Historical** — pre-refactor baselines, pool-era plans and archived snapshots (e.g. `fixtures/projection.pre-refactor.snap`). Evidence only; never a description of current runtime.
+
+Where documents conflict, this ordering wins; the newest accepted ADR and the live `src/` are authoritative.
+
+## Implementation status (P7.5)
+
+`src/` is the **Phase-5 account-only integrated candidate** — a runnable candidate for Phase-6 measurement, **not a release** (ADR-022). Concretely:
+
+- **Implemented in `src/`:** the deterministic kernel (`engine/dates.ts`, `money.ts`, `state.ts`, `taxes.ts`, `funding.ts`, `scheduler.ts`, plus `opening.ts`, `journal.ts`, `contracts.ts`, `valuation.ts`); feature streams (`engine/income.ts`, `spending.ts`, `planner.ts`, `retirement.ts`, `cards.ts`, `loans.ts`, `housing.ts`); composition/reporting (`engine/configuration.ts`, `projection.ts`, `featureHandlers.ts`, `reporting.ts`); the canonical commands surface (`src/commands.ts`), schema-v3 codec (`src/codec.ts`), storage guard/autosave (`src/storage.ts`, `src/autosave.ts`), payroll compiler (`src/paycheck.ts`) and the App composition root (`src/App.tsx`).
+- **Local gates:** `npm run test -- --run` **57 files / 1084 tests** pass; `npm run build` passes; a bounded Chromium gate (`npm run test:e2e`) passes **45/45**. These are bounded local results — not CI, not production-browser performance, and not row-by-row GUI/CA certification (see [the phase5 handoff](phase5_handoff.md)).
+- **Outstanding:** Phase-6 browser/performance measurement, remaining Phase-7 residual cleanup (only documentation-scoped here) and Phase-8 release verification. The GUI-A01–A10/G01–G40 and CA01–CA13 matrices are **not** certified row by row.
+- **G28 route/docs alignment (P7.5):** the audit-era G28 note described Expenses → Tracking / Configure Accounts as a "coming soon" placeholder (`gui_compatibility_audit.md`, historical `App:4719–4769` line reference). The current runtime mounts `AccountExpensesPlanner` under Tracking ("Expense history") at `src/App.tsx:281`, keeping recorded/imported expenses view-only and separate from the projection plan, and the G28 rows in `gui_browser_coverage.md` and `phase5_handoff.md` were reconciled to this limited route (browser `unasserted`). It is **not** a full transaction-tracking product.
 
 Start with [audit coverage and readiness](audit_status.md) for all six requested audit areas, verified evidence and priority follow-up. Incremental implementation is authorized by [ADR-022](architecture_decisions.md#adr-022--incremental-implementation-authorized-intermediate-breakage-permitted); inspection and authorization do not mean target implementation/acceptance is complete.
 
 Use [the manual review checklist](review.md) for accepted product rules, implementation authorization and the separate final-release sign-off.
 
-RV01–RV31/clarifications recorded in review/ADR-019/020: home partial payments held as deposits until fully funded; taxable gain20% gross/default editable LTCG15%; user withdrawals/residual0% lump sum/twelve ordinary payments/view-only occurred imports/net-worth graph/responsive eighty years. Prior acquisition/tax ambiguities resolved; target implementation/verification still pending.
+RV01–RV31/clarifications recorded in review/ADR-019/020: home partial payments held as deposits until fully funded; taxable gain20% gross/default editable LTCG15%; user withdrawals/residual0% lump sum/twelve ordinary payments/view-only occurred imports/net-worth graph/responsive eighty years. Prior acquisition/tax ambiguities resolved; implemented parts are described by the current runtime ([Implementation status](#implementation-status-p75)); full row-by-row acceptance remains pending.
 
-ADR-021 records the later accepted exact-cent quote, residual and 0% installment rules, the HSA age-65 penalty treatment, and a **user-configurable initial-balance withdrawal percentage** (new-item default 4%) on each retirement source. These remain target contracts, not current runtime behavior.
+ADR-021 records the later accepted exact-cent quote, residual and 0% installment rules, the HSA age-65 penalty treatment, and a **user-configurable initial-balance withdrawal percentage** (new-item default 4%) on each retirement source. The corresponding implemented parts are described by the current runtime and Phase-5 evidence ([Implementation status](#implementation-status-p75)); full acceptance remains pending.
 
 ## Plans and specifications
 
-Start implementation with [the consolidated parallel implementation plan](implementation_plan.md): nine phases, task-level dependencies and ownership, reusable code/ideas, feature and audit coverage, and verification gates. ADR-022 authorizes incremental work and temporary intermediate breakage; no target-runtime implementation or release is claimed by this index.
+Start implementation with [the consolidated parallel implementation plan](implementation_plan.md): nine phases, task-level dependencies and ownership, reusable code/ideas, feature and audit coverage, and verification gates. ADR-022 authorizes incremental work; implemented parts are described by the current runtime and [Implementation status](#implementation-status-p75), and no release is claimed by this index.
 
 1. [Existing feature specification and preservation matrix](feature_specification.md)
 2. [Phases and sub-plans](account_cashflow_refactor_plan.md)
@@ -28,13 +46,15 @@ Start implementation with [the consolidated parallel implementation plan](implem
 12. [Coverage register](coverage_register.md)
 13. [Phase 1 task breakdown](phase1_plan.md)
 
-## Target architecture (draft)
+## Target architecture (historical design + actual map)
 
-These diagrams show the **target** account-only architecture from [the frozen contracts](frozen_contracts.md) and the [implementation plan](implementation_plan.md), not the current pool-based code. They describe where the refactor is headed; none of this is implemented in `src/` yet.
+These diagrams are the **frozen target design** from [the frozen contracts](frozen_contracts.md) and the [implementation plan](implementation_plan.md). They are a **historical design artifact**: most of the layout is now implemented as the Phase-5 candidate (see [Implementation status](#implementation-status-p75)), but some labels are stale and the diagrams are **not** proof of current runtime. For the actual module map, use the list in [Implementation status](#implementation-status-p75) and [the phase5 handoff](phase5_handoff.md).
+
+> **Historical-label note:** the original draft diagram grouped the obligation streams under a single `engine/obligations.ts` module that never existed; the diagram node has been replaced with the actual streams (`engine/cards.ts`, `loans.ts`, `housing.ts`, `planner.ts`, `spending.ts`, `retirement.ts`). Treat any remaining `/obligations/` wording in surrounding prose as the target grouping only.
 
 ### Target code architecture
 
-`App.tsx` becomes a thin composition/commands/context boundary instead of a monolith. The engine splits into a kernel (dates, money, state, taxes, funding, scheduler), feature processors (income, obligations, valuation), and reporting, each with a single owner.
+`App.tsx` becomes a thin composition/commands/context boundary instead of a monolith. The engine splits into a kernel (dates, money, state, taxes, funding, scheduler), feature streams (income, spending/planner/retirement, cards/loans/housing), valuation and reporting, each with a single owner.
 
 ```mermaid
 flowchart TD
@@ -65,9 +85,9 @@ flowchart TD
     Scheduler["engine/scheduler.ts — month batches,<br/>stable event order"]:::kernel
   end
 
-  subgraph Streams["Feature processors"]
+  subgraph Streams["Feature streams"]
     Income["engine/income.ts + paycheck.ts<br/>(I) payroll + allocations"]:::stream
-    Obligations["engine/obligations.ts<br/>(O) cards, loans, housing, planner"]:::stream
+    Obligations["engine streams: cards.ts, loans.ts, housing.ts,<br/>planner.ts, spending.ts, retirement.ts (O)"]:::stream
     Valuation["engine/valuation.ts<br/>(O) account APY, appreciation, debt accrual"]:::stream
   end
 
@@ -131,7 +151,7 @@ flowchart TD
 - **`main.tsx` → `App.tsx`.** `App.tsx` no longer holds normalization/rebuilds; it issues **commands** and selects **named result contexts**. All state changes route through canonical commands so unrelated edits never drop new fields.
 - **Schema/persistence (S).** `types.ts` is the only leaf contract module; `defaultScenario.ts` exposes independent factories; `storage.ts` is a versioned allowlisted codec with diagnostics — no financial math.
 - **Kernel (K).** `dates.ts` and `money.ts` are pure primitives. `state.ts` owns the private account/liability/property/deposit state and is the **sole** atomic mutation point. `taxes.ts` and `funding.ts` are pure quote/commit logic; `scheduler.ts` batches months and orders events without mutating balances.
-- **Feature processors** (`income.ts`, `obligations.ts`, `valuation.ts`) call the kernel — they never maintain separate ledgers. `paycheck.ts` stays the shared payroll compiler.
+- **Feature streams** (`income.ts`, `spending.ts`, `planner.ts`, `retirement.ts`, `cards.ts`, `loans.ts`, `housing.ts`) call the kernel — they never maintain separate ledgers. `paycheck.ts` stays the shared payroll compiler. (The diagram's `obligations.ts` node is the stale target grouping for the cards/loans/housing/planner streams.)
 - **Reporting (R).** `reporting.ts` reads `state.ts` only (read-only) and returns **deep-frozen** result/snapshot objects, so no view can alias or mutate engine state outside `commitChanges`. `configuration.ts` compiles the selected named context from already-hydrated config — it has no dependency on `storage.ts`. `projection.ts` stays the public `projectScenario` facade orchestrating the rest.
 - **Views (U) + runner (P).** Editors and charts consume only adapters/selectors (no local financial simulations). The runner/cache invokes the `projectScenario` facade (`Runner → Facade`) on demand, guarded by revision IDs, cancellation, and stale-result rejection.
 
@@ -215,28 +235,28 @@ flowchart TB
 
 **Reading the diagram**
 
-- **No reservoirs.** Net pay (`Pay`) is allocated straight into accounts; the remainder goes to an explicit destination. There is no monthly or yearly income pool — this removes the root README's "annual income is re-spent" defect (R01).
+- **No reservoirs.** Net pay (`Pay`) is allocated straight into accounts; the remainder goes to an explicit destination. There is no monthly or yearly income pool — this removes the historical pre-refactor root README's "annual income is re-spent" defect (R01).
 - **Funding is a policy, not a pool sweep.** `FundingPolicy` (`FP`) lists a primary account and ordered fallbacks; retirement has its own explicit list. Every allocation is partial (`executed ≤ requested`), and `taxes.ts` computes exact gross-net for taxable withdrawals.
 - **Liabilities and property are first-class.** Debt reduction happens only for actually funded principal; a partial home down-payment becomes a held acquisition deposit (`Prop`) until completion; net worth is `assets − liabilities`.
 - **Retirement is spending, not income.** Each source can use a fixed amount or user-configured initial-balance percentage (4% new-item default) at its selected valuation date; its net spending target results in a tax-aware gross account debit, never a deposit into another reservoir. Qualified HSA medical expenses and non-qualified age-65 penalties follow ADR-021.
 - **Close and report.** Valuation applies per-account effective APY at month close; a single compact audit feeds monthly closes, annual totals, and warnings.
 
-## Improvements over the root README
+## Improvements over the historical pre-refactor root README
 
-The root `README.md` diagrams describe the **current** pool-based engine. The diagrams above describe the **target** and fix the defects the root README already flags under "Suspected defects".
+The comparison below is against the **historical pre-refactor root README** (pool-based), which has since been **superseded**: the current root `README.md` was rewritten to describe the account-only runtime. The "Pre-refactor historical" column records the pool-based baseline the target design and its implementation replaced; the diagrams above describe that target.
 
 **Code architecture**
 
-| Root (current) | Target | Why |
+| Pre-refactor historical (superseded) | Target / implemented | Why |
 |---|---|---|
 | `App.tsx` is a monolith: state, tabs, timelines, deflation, and duplicate normalizers | `App.tsx` = commands + named contexts; normalization lives in `commands`/`storage` | Unrelated edits currently drop new fields (`App.updateScenario` rebuild) — G01/MD02 |
-| One `projection.ts` monolith + `financeModel.ts` pool helpers | Kernel (`dates/money/state/taxes/funding/scheduler`) + processors (`income/obligations/valuation`) + `reporting` | Single owner per rule; pool-first lookup removed — MD01/MD04 |
+| One `projection.ts` monolith + `financeModel.ts` pool helpers | Kernel (`dates/money/state/taxes/funding/scheduler`) + feature streams (`income/spending/planner/retirement/cards/loans/housing`) + `reporting` | Single owner per rule; pool-first lookup removed — MD01/MD04 |
 | `storage.ts` embedded legacy adapters + a broad whole-load `try/catch` | Versioned allowlisted codec with record-local diagnostics | One malformed item no longer resets the whole plan — TC07/ADR-018 |
 | `BankAccountDefinition.poolId` ties accounts to pools | `AccountDefinition` owns its own rate/override/withdrawal policy | Rates/policies belong to accounts, not pools — ADR-014 |
 
 **Money flow**
 
-| Root (current) | Target | Why |
+| Pre-refactor historical (superseded) | Target / implemented | Why |
 |---|---|---|
 | Two income reservoirs (monthly + yearly pools) alongside `ledgerAccounts` | Income posts once, directly to accounts; no reservoir | The yearly pool lets the same dollar fund monthly *and* annual spending (R01) |
 | Pool-priority fallback with pool tax/penalty rates | Per-account rates; `FundingPolicy` primary-first ordered split, partial | Explicit eligibility/order; no pool sweep — ADR-007/ADR-014 |
@@ -244,7 +264,7 @@ The root `README.md` diagrams describe the **current** pool-based engine. The di
 | Retirement withdrawals are income; debt amortizes regardless of funding | Retirement = spending; funded-only debt reduction; held deposit for partial down payments | No fabricated principal reduction / no second down-payment charge — ADR-003/ADR-011/ADR-020 |
 | Implicit same-date ordering | Explicit phases: accrual → income → cap → mandatory → discretionary → close | No future income/gains funding earlier requests — RV23/ADR-010 |
 
-The root README documents the **pre-refactor baseline**; this `refactor/README.md` documents the target account-only codebase. Under ADR-022 intermediate code may be incomplete or broken, so neither diagram should be read as proof that a partially migrated build runs.
+The comparison columns above record the **historical pre-refactor pool-based** baseline; the current root `README.md` has since been rewritten to the account-only runtime, and this `refactor/README.md` documents the target design plus the actual map in [Implementation status](#implementation-status-p75). The Phase-5 candidate now runs; the diagrams above remain target/design artifacts and are not themselves runtime proof.
 
 ## Evidence and references
 
@@ -252,4 +272,4 @@ The root README documents the **pre-refactor baseline**; this `refactor/README.m
 - [Parent agent plan](../agent_plan.md)
 - [General project documentation](../docs/INDEX.md)
 
-The approved standalone-contribution removal is implemented. The broader account-only rearchitecture is **authorized for phased implementation** (ADR-022) but not yet implemented or verified; final release remains gated on complete integration, tests/build, measurements and sign-off.
+The approved standalone-contribution removal is implemented. The account-only rearchitecture is **implemented as the Phase-5 integrated candidate** (ADR-022) with local suite/build/browser gates passing, but it is **not a release**: Phase-6 measurement, remaining Phase-7 residual cleanup and Phase-8 release verification remain, and the GUI/CA matrices are not certified row by row.

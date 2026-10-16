@@ -1,5 +1,7 @@
 # Account-Based Cashflow Architecture — Review Draft
 
+> **As-of status (P7.5, 2026-10-16).** This is a historical planning/review draft recorded at its inspection time, retained as evidence. Authority is now the live `src/` runtime and [`phase5_handoff.md`](phase5_handoff.md): the account-only architecture is a runnable **Phase-5 integrated candidate, not a release** — Phase-6 measurements and Phase-7 code cleanup remain open, and the GUI/CA matrices are not certified row by row. The present-tense "not yet implemented" framing below describes the earlier session, not current status.
+
 ## 1. Status, scope and authority
 
 **Target specification; incremental implementation authorized by ADR-022.** The explicitly approved standalone manual-contribution removal is implemented; the broader account-only architecture is not yet implemented. Based on the code audit, `agent_plan.md`, and user decisions. Accepted rules/proposed assumptions are tracked in [architecture_decisions.md](architecture_decisions.md); save handling in [migration_plan.md](migration_plan.md).

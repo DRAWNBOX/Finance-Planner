@@ -1,5 +1,7 @@
 # Performance and Scalability Audit — Account-Only Refactor
 
+> **As-of status (P7.5, 2026-10-16).** This is a historical audit recorded at inspection time, retained as evidence. Authority is now the live `src/` runtime and [`phase5_handoff.md`](phase5_handoff.md): the account-only engine is present as a runnable **Phase-5 integrated candidate, not a release**, but no Phase-6 browser/performance benchmark has been run — Phase-6 measurements and Phase-7 code cleanup remain open. The "new engine is not implemented" framing below describes the earlier session, not current status.
+
 ## 1. Verdict and evidence boundary
 
 **The decomposition is suitable for a household planner, but the plan does not yet specify enough bounds on scheduling, audit storage, recomputation and rendering to claim it scales.** Independent account rates simplify valuation; direct account funding removes duplicated spending. Neither eliminates the cost of millions of recurring events, complete audit records or a large GUI result surface.

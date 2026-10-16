@@ -1,6 +1,8 @@
 # Architecture Decisions — Account Cashflow Refactor
 
-Status legend: **accepted** = parent plan or explicit user instruction; **proposed** = architecture recommendation pending Gate B; **open** = unresolved interpretation. No proposed financial behavior is authorized merely by being written here.
+Status legend: **accepted** = parent plan or explicit user instruction; **implemented** = present in the live `src/` runtime with dated, independently reproduced gate evidence; **proposed** = architecture recommendation pending Gate B; **historical** = retained pool-era design or evidence, not current runtime; **open** = unresolved interpretation. No proposed financial behavior is authorized merely by being written here.
+
+**Authority ordering (P7.5):** accepted user decisions/ADRs > observed live `src/` + dated executed gates > proposed contracts > historical plans/snapshots. Where a document conflicts with the live runtime, the newest accepted ADR and the runtime win. Several early ADRs below still carry "planning only / not implemented" wording from the pre-implementation session; the current status of the account-only runtime is the Phase-5 integrated candidate (see `refactor/phase5_handoff.md` and the ADR-022 P7.5 status note). Historical evidence is retained as-is and is not rewritten.
 
 RV01–RV31 and follow-up clarifications recorded in review.md / ADR-019/020. Accepted choices override earlier recommendations: partial home funding held as acquisition deposit; taxable gain20% of gross proceeds and LTCG default15% editable. These ambiguities resolved; implementation/verification remain separate, with user withdrawal/payoff dates/source/rounding contracts explicit.
 
@@ -180,6 +182,8 @@ No additional product-rule decision is pending among the six previously listed P
 - Each phase records which focused checks ran, what passed/failed, and which existing consumer/build failures remain due to unfinished dependencies. Relevant isolated module/acceptance tests should run when their modules are executable; a broken App/full suite/build in an intermediate phase is recorded honestly, never hidden by `.skip`, fabricated compatibility data, or a false green claim. Intermediate phase exit means its scoped deliverables and available focused evidence are handed off, **not** a runnable release.
 - No mixed old/new financial calculations in a displayed result. Incomplete projections must not be represented as complete, and saved user configuration/history/import provenance must not be silently erased by a partial codec or autosave. Keep archived B01–B09 evidence unchanged.
 - An integrated runnable app is needed for required GUI/browser/performance validation; final cutover/release still waits for complete CA/GUI coverage, a passing full suite/build (or accurately reviewed exception), 80-year measurements and manual sign-off under Phase 8. Authorization to implement is **not** authorization to release.
+
+**P7.5 status note (documentation only):** implementation has since begun and progressed — the account-only engine, canonical commands, schema-v3 codec and App composition root are present in `src/`, and the Phase-5 local suite/build/browser gates pass (`refactor/phase5_handoff.md`). This remains an **integrated candidate, not a release**; Phase-6/7/8 work is outstanding, and ADR-022's authorization-versus-release distinction is unchanged. No runtime code changed in this documentation pass.
 
 ## Gate B review checklist
 

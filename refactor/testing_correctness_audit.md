@@ -1,5 +1,7 @@
 # Testing and Correctness Audit
 
+> **As-of status (P7.5, 2026-10-16).** This is a historical audit recorded at inspection time, retained as evidence. Authority is now the live `src/` runtime and [`phase5_handoff.md`](phase5_handoff.md): the account-only architecture is a runnable **Phase-5 integrated candidate, not a release** — Phase-6 measurements and Phase-7 code cleanup remain open, and CA01–CA13 are not certified row by row. The "not implemented"/"execution pending" statements below describe the earlier session, not current status.
+
 ## Status and evidence
 
 Source inspection complete; target acceptance implementation and execution pending. This document records the supplementary audit requested after the architecture/financial/persistence/GUI/performance reviews. **Writing this report does not run tests or fix source code.**

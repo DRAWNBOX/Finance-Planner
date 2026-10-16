@@ -1,5 +1,11 @@
 # Manual Contribution Leak Plan
 
+> **Historical / superseded (P7.5 docs refresh).** This records an older
+> investigation into the pool-era `scenario.contribution.yearlyContribution`
+> pathway. That standalone control was removed (ADR-005); the current engine has
+> no manual-contribution scalar and no portfolio `balance` track. The analysis
+> below describes code that no longer exists and is kept as history only.
+
 ## The Problem
 
 In `src/engine/projection.ts`, the manual yearly contribution from `scenario.contribution.yearlyContribution` is fed into the portfolio-level `balance` variable (line 1093-1095) but is **never deposited into the `ledgerAccounts`**. This means:

@@ -1,56 +1,86 @@
 # Calculation Engine
 
-Core logic lives in `src/engine/projection.ts`.
+The engine is deterministic and side-effect-free. It lives in `src/engine/` and
+is driven by two entry points:
 
-## Main Entry
+- `projectFeatureScenario(scenario, options?)` (`src/engine/featureHandlers.ts`)
+  — the one runtime path the app uses.
+- `projectScenario(scenario, options?)` (`src/engine/projection.ts`) — the
+  kernel-only facade.
 
-- `projectScenario(scenario, options?)` simulates ages from current age through retirement end age.
-- Retirement end age = `retirementAge + retirementYears`.
-- Current age is always derived from `options.dateOfBirth` (falling back to `profile.currentAge` only when the birth date is missing/invalid); there is no manual age mode.
-- `options.startDate` (ISO `YYYY-MM-DD`) anchors the simulation: it sets the start year-month, the baseline/projected `calendarYear`, and the reference date for current age / birthday stub. The app passes the date of the most recent `netWorth.history` snapshot as the start date and seeds account balances from that snapshot. Costs scheduled before the start month are ignored (large purchases with a prior `yearMonth` are skipped; range-based items only run from the start month; an in-progress mortgage is amortized forward from its start to the anchor; loans/credit cards seed from their stored `currentBalance`).
-- `result.simulationStartDate` / `result.simulationStartYearMonth` expose the resolved anchor.
+## One Projection Path
 
-## Per-Year Pipeline
+`projectFeatureScenario`:
 
-For each age:
+1. Selects exactly one named timeline (`options.timelineId`, else
+   `scenario.activeTimelineId`, else base).
+2. Compiles one `CompiledScenarioContext` (`compileScenarioContext` in
+   `configuration.ts`).
+3. Assembles all four streams' event definitions and handlers.
+4. Delegates to `projectScenario` with an explicit call-site coverage claim.
+5. Builds exactly one immutable `ProjectionReport` and attaches it.
 
-1. Compute portfolio return rate as balance-weighted average of per-pool `preRetirementReturnRate` / `postRetirementReturnRate`.
-2. Resolve active career entry and relevant life events.
-3. Compute salary from `paycheckInfo.grossSalary * (1 + annualRaiseRate)^years` (pre-retirement only).
-4. Compute career contribution from source line contribution rates on salary.
-5. Compute account contributions from dynamic source lines (pool/account targets).
-6. Compute account withdrawals from dynamic source lines (monthly values from career entry).
-7. Apply account evolution with monthly simulation:
-   - Monthly contribution/deposit, monthly withdrawal, monthly growth at exact APY ((1 + rate)^(1/12) - 1)
-   - Retirement and HSA deposits via `applyAccountDeposit` to their respective accounts
-   - Iterate `periodMonths` months
-8. Compute per-month `availableIncome` from career paycheck info:
-   `monthlyTakeHome = max(0, (salary - taxes - healthBenefits - otherBenefits - retirement - hsaContribution - livingExpenses) / 12)`
-   where `salary` is the raised salary from step 3, and `retirement` / `hsaContribution` are the employee-paid portions (deducted in full).
-9. Process income waterfall per-month: cashflow add-ons + life-event income/expense (deposit/withdraw to their `accountId`) → credit cards → housing → loans → large purchases → long-term purchases. Each month gets its own income pool.
-10. Housing payments split into grouped sources (P&I+extra / rent, taxes+insurance, HOA+maintenance, PMI), each paid from its own account/income source with `paymentSource` as fallback.
-11. Compute retirement spending withdrawal from configured dynamic sources (4% rule or specified mode) with pool-priority fallback, spread monthly (`planned / periodMonths`); min/max thresholds enforced as a yearly cumulative check.
-12. Push `MonthlySnapshot` (actual engine state, including real per-month `withdrawal`/`taxesPaid`/`penaltiesPaid`) and aggregate into `ProjectionYear`.
+The four streams are:
 
-## Important Behaviors
+- **Income** (`income.ts`) — payroll, ordered net allocations, other income.
+- **Spending / planner / retirement** (`spending.ts`, `planner.ts`,
+  `retirement.ts`).
+- **Cards / loans** (`cards.ts`, `loans.ts`).
+- **Housing** (`housing.ts`).
 
-- Dynamic account balances (`accountBalancesById`) are the runtime source of truth for account-led math.
-- `MonthlySnapshot` records actual per-month engine state including per-account activity.
-- Per-month income pool: each month gets its own `monthlyTakeHome` for income waterfall processing.
-- Retirement and HSA contributions are deposited per-month to their respective accounts.
-- HSA penalty-free after retirement age 65.
-- Housing expenses (mortgage/rent) processed per-month with PMI auto-drop at 80% LTV and grouped payment sources.
-- Credit card payments processed per-month with autopay and lump sum support.
-- Cashflow add-ons and life-event income/expense applied monthly (recurring spread `amount/12`; one-time at the exact `startYearMonth`).
-- Retirement withdrawal falls back to other pools by priority when primary source is exhausted.
-- Depletion can occur from portfolio exhaustion, retirement-floor breach, or minimum withdrawal not met.
-- Income waterfall processes cashflow/life events, credit cards, housing, and loans before purchases each month.
-- `firstFallbackYearMonth` uses the purchase's `yearMonth` for accurate date display.
-- Housing entries can chain their start to the previous entry's end via `usePreviousEndAsStart` (start becomes the month after the previous end).
-- Careers can chain their start to the previous career's end via `usePreviousCareerStartAge` (start becomes the month after the previous end; the start age is derived from that month).
+Within the `mandatory` phase the composer bands the streams into the frozen order
+`loan/mortgage → housing → cards → planner/living → retirement`
+(`FEATURE_MANDATORY_BANDS`); intra-stream order survives inside each band.
 
-## Known Touchpoints For Future Changes
+## Kernel Facade Pipeline
 
-- Withdrawal funding source: adjust retirement spending logic section.
-- Monthly vs yearly account semantics live in dynamic source-line contribution/withdrawal flows.
-- Salary behavior: salary resolution block (annual raises, job changes).
+`projectScenario` is thin and owns no financial rules of its own:
+
+1. `compileScenarioContext` → `buildState` (from the opening observation).
+2. `createScheduler` produces lazy month batches in the frozen same-date phase
+   order: `accrual → income → cap → mandatory → discretionary → close`.
+3. Injected handlers execute each occurrence: `quoteFunding` first, then
+   `commitFunding` → one `state.commitChanges` call.
+4. Month-close account APY valuation runs at `close`.
+5. A cents-only `ProjectionRun` is returned.
+
+## Determinism and Invariants
+
+- **Dates are explicit.** No wall clock; the default start is the opening
+  observation date. Day-31 targets clamp to the last valid day of a short month.
+- **Cents.** Persisted configuration is dollars; runtime postings/balances are
+  integer cents, converted once at the posting boundary. Account growth uses the
+  exact effective annual yield `(1 + rate)^(1/12) − 1`; a clipped first month
+  uses the fractional exponent. Debt interest accrues at the nominal
+  `annualRate / 12`.
+- **Atomic mutation.** `state.commitChanges` validates revision, ownership and
+  conservation, and applies a sparse change set all-or-none. Every nonempty
+  commit declares `expectedNetWorthDeltaCents`.
+- **Ordered partial funding.** `quoteFunding` never mutates state; it funds
+  primary-first over the configured ordered account list, deduplicated, with each
+  source used at most once and never overdrawn. `executedCents` is the sum of
+  funded nets and `shortfallCents = requested − executed`. Tax and penalty are
+  withheld from gross exactly once. There is no implicit sweep, borrowing, or
+  retry.
+- **One report.** `reporting.ts` builds the immutable report by reading the frozen
+  run once; it never re-runs the projection. Every month close reconciles
+  `closing = opening + Σ committed deltas`; a mismatch is reported as a
+  diagnostic, never silently clamped or rounded.
+- **D16 selectors.** `report.shortfall.warning` is the first completeness
+  shortfall; `report.exhaustion` is eligible-funded exhaustion (a policy/quota
+  shortfall is never exhaustion); `report.fallback.occurrences` records a
+  secondary source actually drawn from a committed plan. Fallback is never
+  reported as shortfall or exhaustion.
+
+## Implemented vs Proposed
+
+The pipeline above is implemented and test-covered in `src/engine/`. Phase-6
+browser/performance measurement and Phase-8 release verification are **proposed
+work, not implemented**; nothing here certifies a GUI-A/G or CA matrix.
+
+## Known Touchpoints
+
+- Account growth, debt accrual and appreciation: `valuation.ts`.
+- Ordered funding and the quota-vs-exhaustion split: `funding.ts`.
+- Warning selectors: `reporting.ts`.
+- Timeline isolation and the named-context compile: `configuration.ts`.

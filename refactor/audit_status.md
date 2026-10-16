@@ -1,6 +1,18 @@
 # Refactor Audit Coverage and Readiness
 
-## Coverage status
+## Implementation status (P7.5)
+
+Authority ordering (see [refactor README](README.md#authority-ordering-p75) and [architecture decisions](architecture_decisions.md)): **accepted** user decisions/ADRs > **implemented/observed** live `src/` + dated executed gates > **proposed** contracts/plans/budgets > **historical** pool-era baselines/snapshots. Where documents conflict, the newest accepted ADR and the live runtime win.
+
+The account-only rearchitecture is now **implemented as the Phase-5 integrated candidate** in `src/` (kernel + feature streams + reporting + canonical commands + schema-v3 codec/autosave + App composition root), not merely planned. Local gates pass (`npm run test -- --run` 57 files / 1084 tests; `npm run build`; bounded Chromium 45/45). This is a runnable candidate for Phase-6 measurement, **not a release** (ADR-022): Phase-6 browser/performance measurement, remaining Phase-7 cleanup and Phase-8 release verification remain, and the GUI-A01–A10/G01–G40 and CA01–CA13 matrices are not certified row by row.
+
+The status lines, coverage table, executed-evidence summary (including the "last recorded full functional run" **207/208**) and readiness conclusion below are **historical** Phase-0/audit-session statements; they are retained as evidence, not current status. See the as-of snapshot heading before Coverage status.
+
+**Documentation/route note (P7.5):** the audit-era framing of Expenses → Tracking / Configure Accounts as a "coming soon" placeholder (`gui_compatibility_audit.md` G28, historical `App:4719–4769` line reference) is **historical**. The current runtime mounts `AccountExpensesPlanner` under Tracking ("Expense history", `src/App.tsx:281`) with recorded/imported expenses view-only. The G28 rows in `gui_browser_coverage.md` and `phase5_handoff.md` were reconciled to this limited route (browser `unasserted`); it is **not** a full transaction-tracking product.
+
+## Coverage status — historical Phase-0 snapshot (as-of 2026-10-13/14, superseded)
+
+> **Historical snapshot.** Everything from this heading through the **Readiness conclusion** below records the audit-session state **before** account-only implementation. The coverage table, the executed-evidence summary (including the "last recorded full functional run" 207/208) and every "unimplemented / pending / target runtime pending" statement in this block are **as-of then**, not current status; the current status is the Phase-5 integrated candidate in [Implementation status (P7.5)](#implementation-status-p75). These original facts are preserved verbatim, not rewritten.
 
 All six requested areas have **source/document inspection coverage**. Existing audits were reused rather than repeated; testing/correctness and maintainability/documentation received supplementary inspection. GUI/performance audits are additional cross-cutting coverage. **ADR-022 authorizes incremental implementation and temporary intermediate breakage; inspection/authorization do not imply the new engine is implemented or verified.**
 
@@ -36,6 +48,8 @@ All six requested areas have **source/document inspection coverage**. Existing a
 Latest user decisions and explicit accepted ADRs supersede conflicting old plan passages. Current source and dated executed results establish observed behavior. Proposed contracts, audit remediation/acceptance lists and performance budgets remain pending implementation/validation. See [maintainability audit](maintainability_documentation_audit.md) for the detailed authority/status convention.
 
 **Readiness conclusion (updated 2026-10-14):** audit inspection/contract coverage is complete and incremental implementation is authorized by ADR-022. Current account-only runtime correctness, full implementation and final cutover readiness are **not** established. The previously approved standalone-contribution removal and P0.6 test corrections are the only related source changes recorded to date.
+
+**P7.5 update (documentation only):** implementation has since progressed — the account-only runtime is present in `src/` as the Phase-5 integrated candidate with passing local suite/build/browser gates (see Implementation status above). Final cutover/release readiness is still **not** established; no runtime code changed in this documentation pass.
 
 ## RV01–RV31 review outcome
 

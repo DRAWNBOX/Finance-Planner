@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { ResultsTable } from './ResultsTable';
 import type { ProjectionReport, ReportMonthClose, ReportYear } from '../engine/reporting';
 import { displayObservedCents } from '../utils/viewAdapters';
@@ -107,5 +107,77 @@ describe('ResultsTable', () => {
     const nominalJune = fixedCells(nominal.container, 0);
     expect(nominalJune[2].textContent).toBe(tableCurrency(1155.66));
     expect(nominalJune[3].textContent).toBe(tableCurrency(1234.56));
+  });
+
+  it('exposes committed yearly flow facts as keyboard-focusable row activity in the selected display basis', () => {
+    const base = fixedMonth('2026-06', '2026-06-30', 0, 500, 0);
+    const flow = { ...base.flow, grossEarningsCents: 200_000, netPayCents: 170_000, payrollTaxCents: 20_000,
+      employeeRetirementCents: 10_000, accountGrowthCents: 500 };
+    const monthWithFlow = { ...base, flow, accounts: [{ accountId: 'cash', openingCents: 0, deltaCents: 170_500, closingCents: 170_500, reconciled: true }] };
+    const annual = { kind: 'calendarYear', label: '2026', year: 2026, monthCount: 1, partial: true, firstYearMonth: '2026-06', lastYearMonth: '2026-06', opening: base.opening, closing: base.closing, flow } as ReportYear;
+    const report = fixedReportFor([monthWithFlow]);
+    const view = render(<ResultsTable report={{ ...report, years: [annual] }} displayContext={fixedContext} inflationRatePercent={6} inflationEnabled showMonths={false} />);
+    const row = view.container.querySelector('tbody tr') as HTMLTableRowElement;
+    expect(row.tabIndex).toBe(0);
+    expect(row.title).toContain('Gross earnings: $');
+    expect(row.title).toContain('Net pay: $');
+    expect(row.title).toContain('Payroll tax: $');
+    expect(row.title).toContain('Account growth: $');
+    expect(row.title).not.toMatch(/401k|salary|federal/i);
+    const gross = displayObservedCents({ date: '2026-06-30', cents: 200_000 }, '2026-01-15', 6, true);
+    expect(gross.ok && row.title).toContain(gross.ok ? tableCurrency(gross.value.displayDollars) : '');
+  });
+
+  it('keeps a supplied row tooltip in sync with the accessible name, including an explicit opt-out', () => {
+    const report = reportFor([month('2025-01', 0)]);
+    const custom = render(<ResultsTable report={report} displayContext={context} inflationRatePercent={0} inflationEnabled={false} showMonths rowTooltip={() => 'Caller-provided detail'} />);
+    const customRow = custom.container.querySelector('tbody tr') as HTMLTableRowElement;
+    expect(customRow.title).toBe('Caller-provided detail');
+    expect(customRow.getAttribute('aria-label')).toBe(customRow.title);
+
+    custom.rerender(<ResultsTable report={report} displayContext={context} inflationRatePercent={0} inflationEnabled={false} showMonths rowTooltip={() => undefined} />);
+    const optedOutRow = custom.container.querySelector('tbody tr') as HTMLTableRowElement;
+    expect(optedOutRow.hasAttribute('title')).toBe(false);
+    expect(optedOutRow.getAttribute('aria-label')).toBe('2025-01');
+  });
+
+  it('shows lazy per-account committed delta and separates funding gross/net/withholding from growth', () => {
+    const base = fixedMonth('2026-06', '2026-06-30', 0, 0, 0);
+    const audit = [
+      { sequence: 1, date: '2026-06-10', yearMonth: '2026-06', purpose: 'retirement', kind: 'funding', accountChanges: [{ accountId: 'cash', deltaCents: -10_000 }], plan: { plan: { allocations: [{ accountId: 'cash', grossDebitCents: 10_000, netFundedCents: 9_600, withheldTaxCents: 300, penaltyCents: 100 }] } } },
+      { sequence: 2, date: '2026-06-30', yearMonth: '2026-06', purpose: 'valuation', kind: 'direct', accountChanges: [{ accountId: 'cash', deltaCents: 500 }], plan: null }
+    ];
+    const report = { ...fixedReportFor([{ ...base, accounts: [{ accountId: 'cash', openingCents: 0, deltaCents: -9_500, closingCents: -9_500, reconciled: true }] }]), byAccount: () => audit } as unknown as ProjectionReport;
+    const view = render(<ResultsTable report={report} displayContext={fixedContext} inflationRatePercent={0} inflationEnabled={false} showMonths />);
+    const cell = view.container.querySelector('tbody tr td[tabindex="0"]') as HTMLTableCellElement;
+    expect(cell.title).toBe('');
+    fireEvent.focus(cell);
+    expect(cell.title).toContain('Account change: -$95.00');
+    expect(cell.title).toContain('retirement · funding');
+    expect(cell.title).toContain('gross $100.00, net $96.00, tax $3.00, penalty $1.00');
+    expect(cell.title).toContain('valuation · direct · $5.00');
+    expect(cell.title).not.toContain('Payroll tax');
+  });
+
+  it('invalidates focused account detail immediately when the selected report changes', () => {
+    const base = fixedMonth('2026-06', '2026-06-30', 0, 0, 0);
+    const createReport = (delta: number) => ({
+      ...fixedReportFor([{ ...base, accounts: [{ accountId: 'cash', openingCents: 0, deltaCents: delta, closingCents: delta, reconciled: true }] }]),
+      byAccount: () => [{ sequence: 1, date: '2026-06-10', yearMonth: '2026-06', purpose: 'purchase', kind: 'direct', accountChanges: [{ accountId: 'cash', deltaCents: delta }], plan: null }]
+    } as unknown as ProjectionReport);
+    const originalReport = createReport(-10_000);
+    const nextReport = createReport(-20_000);
+    const props = { displayContext: fixedContext, inflationRatePercent: 0, inflationEnabled: false, showMonths: true };
+    const view = render(<ResultsTable report={originalReport} {...props} />);
+    let cell = view.container.querySelector('tbody tr td[tabindex="0"]') as HTMLTableCellElement;
+    fireEvent.focus(cell);
+    expect(cell.title).toContain('Account change: -$100.00');
+    view.rerender(<ResultsTable report={nextReport} {...props} />);
+    cell = view.container.querySelector('tbody tr td[tabindex="0"]') as HTMLTableCellElement;
+    expect(cell.title).toBe('');
+    expect(cell.textContent).toBe('-$200.00');
+    fireEvent.focus(cell);
+    expect(cell.title).toContain('Account change: -$200.00');
+    expect(originalReport.byAccount('cash')[0].accountChanges[0].deltaCents).toBe(-10_000);
   });
 });

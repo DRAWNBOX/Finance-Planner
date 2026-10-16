@@ -1,5 +1,7 @@
 # Maintainability and Documentation Audit
 
+> **As-of status (P7.5, 2026-10-16).** This is a historical audit recorded at inspection time, retained as evidence. Authority is now the live `src/` runtime and [`phase5_handoff.md`](phase5_handoff.md): the account-only rearchitecture is a runnable **Phase-5 integrated candidate, not a release** — Phase-6 measurements and Phase-7 code cleanup remain open. The "Gate B drafts" and "not implemented by this report" framing below describes the earlier session, not current status.
+
 ## Status and scope
 
 Supplementary source/document inspection complete. Findings and future changes recorded; no runtime cleanup, general-doc rewrite, test rename or new quality tool implemented by this report. Account-only refactor contracts remain Gate B drafts unless specifically accepted/implemented in the ADR log.

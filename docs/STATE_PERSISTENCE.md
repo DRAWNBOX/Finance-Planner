@@ -1,31 +1,57 @@
 # State Persistence
 
-Persistence is handled by `src/storage.ts` with local storage key:
+Two modules own persistence:
 
-- `finance-planner-state`
+- `src/codec.ts` — pure, allowlist-only structural encode/decode (schema v3).
+- `src/storage.ts` — the localStorage boundary and save guard.
+
+localStorage key: `finance-planner-state`.
 
 ## Load Path
 
-- `loadAppState()`:
-  - reads from local storage
-  - supports older payload shapes (`scenario` wrapper or direct)
-  - merges with defaults from `defaultScenario`
-  - normalizes career entries (age ordering, flags, contribution fields, start-balance modes, monthly withdrawals)
-  - normalizes active tab values (`events`/`futureRetirement` -> `careers`)
+- `loadAppState(referenceDate?)` reads the key and calls `decodeAppState`.
+- `decodeAppState` normalizes the payload against the schema-v3 allowlist, merges
+  it with `defaultScenario` defaults, upgrades older (v1/v2) payloads losslessly,
+  and re-derives fields (for example the flat `paycheckInfo` is rebuilt from the
+  granular `paycheck`).
+- The decode result carries `blocked` (written by a newer schema) and `corrupt`
+  flags.
+- A missing or invalid payload loads defaults. The reference date is an explicit
+  input; the codec never reads the wall clock.
 
 ## Save Path
 
-- `saveAppState(state)` writes full `scenario` + `ui`.
+- `saveAppState(state, options?)` encodes through `encodeAppState` and writes.
+- The guard preserves bytes:
+  - a newer-version payload blocks automatic writes (`future-version`);
+  - corrupt bytes are not overwritten on automatic saves;
+  - only an explicit user reset (`{ reset: true, explicitCanonical: true }`) may
+    replace them.
+- A blocking save diagnostic (for example an unconvertible legacy flat
+  `paycheckInfo`) aborts the write so no edits are silently lost.
 
-## Backward Compatibility
+## Autosave
 
-This version breaks compatibility with saved data from before 2026-05. All legacy migration code (`seedDefaultBankAccounts`, `seedDefaultPools`, `legacySavingsToSourceLines`, `ensureSourceLinesForPurchase`, `ensureSourceLinesForWithdrawal`, etc.) has been removed. Saved data from this version forward uses the modern schema directly.
+- `src/autosave.ts` `createAutosaveController` coalesces rapid edits into one
+  deferred write and funnels every write through the guarded `saveAppState`.
+- The app skips the hydrated load ("never save on load"), flushes from a
+  `pagehide` handler, and surfaces blocked/corrupt/quota diagnostics.
+
+## Schema v3
+
+- `CURRENT_SCHEMA_VERSION = 3` (`src/codec.ts`).
+- The codec is allowlist-only: obsolete or derived fields (the flat
+  `CareerEntry.paycheckInfo` cache, canvas caches, calculated balances) are pruned
+  by construction.
+- v3 adds the ordered per-group `HousingEntry.fundingPolicies` override map. The
+  field is optional, so older payloads load losslessly.
+- `CANONICAL_TRAJECTORY_FORMAT_VERSION = 2` marks a cents-only trajectory
+  snapshot. A higher value is refused rather than reinterpreted.
 
 ## Practical Rule For New Fields
 
-When adding a new persisted field:
-
-1. Add to `types.ts`.
-2. Add default in `defaultScenario.ts`.
-3. Add normalization fallback in `storage.ts`.
-4. Add normalization in runtime path if needed (`App.tsx`).
+1. Add the field to `src/types.ts`.
+2. Add a default in `src/defaultScenario.ts`.
+3. Add load-time normalization to the codec (`src/codec.ts`).
+4. Use it in `src/commands.ts` and/or the engine compile step.
+5. Add engine and UI tests when behavior changes.

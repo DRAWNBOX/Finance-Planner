@@ -1,5 +1,7 @@
 # Refactor Manual Review
 
+> **As-of status (P7.5, 2026-10-16).** This is the historical manual-review record from the planning session, retained as evidence. Authority is now the live `src/` runtime and [`phase5_handoff.md`](phase5_handoff.md): the account-only architecture is a runnable **Phase-5 integrated candidate, not a release** — Phase-6 measurements and Phase-7 code cleanup remain open. Statements below that the new finance paths/acceptance tests are unimplemented or that implementation is pending describe the earlier session, not current status.
+
 ## Purpose
 
 This checklist records manual decisions for the broader rearchitecture. RV01–RV31 responses have been received. The response table below is authoritative; the original recommendation tables are retained as the review record, not current instructions where overridden.

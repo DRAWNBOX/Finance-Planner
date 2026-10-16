@@ -1,5 +1,7 @@
 # Existing Feature Inventory, Specifications, and Preservation Checklist
 
+> **As-of status (P7.5, 2026-10-16).** This is a historical observed-behavior inventory (audited 2026-10-12), retained as evidence. Authority is now the live `src/` runtime and [`phase5_handoff.md`](phase5_handoff.md): the account-only rearchitecture is a runnable **Phase-5 integrated candidate, not a release** — Phase-6 measurements and Phase-7 code cleanup remain open. The "Gate A unresolved / Gate B pending review" and "no source/schema/storage changes" framing below describes that earlier session, not current status.
+
 ## Review status and evidence boundary
 
 - Phase: mandatory Pre-Step 0 complete; user decisions received and architecture draft available. **Gate A has unresolved items; Gate B is pending review.** This is an observed-behavior specification, not authorization to rewrite financial behavior.

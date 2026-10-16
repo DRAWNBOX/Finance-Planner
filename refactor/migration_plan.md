@@ -1,5 +1,7 @@
 # Save Format Transition — Defaults and Obsolete-Field Pruning
 
+> **As-of status (P7.5, 2026-10-16).** This is a historical save-format plan recorded at its inspection time, retained as evidence; the described save cutover is now implemented as schema v3 in the live runtime. Authority is now the live `src/` runtime and [`phase5_handoff.md`](phase5_handoff.md): the account-only architecture is a runnable **Phase-5 integrated candidate, not a release** — Phase-6 measurements and Phase-7 code cleanup remain open. The "planned, not implemented" framing below describes the earlier session, not current status.
+
 ## Authority and scope
 
 **Target save plan; incremental implementation authorized (ADR-022); no user data has been rewritten by this document.** User explicitly accepts that the refactor may require a new save. Unused/unneeded values may be removed; changed values/types may remain; absent values use new-item/first-launch defaults. This replaces the parent's requirement for equivalent old-plan migrations, mandatory backup/rollback storage and old-card mapping prompts.

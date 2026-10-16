@@ -1,5 +1,7 @@
 # Account-Only Finance Planner — Parallel Implementation Plan
 
+> **As-of status (P7.5, 2026-10-16).** This is the historical consolidated implementation plan recorded at its planning time, retained as evidence. Authority is now the live `src/` runtime and [`phase5_handoff.md`](phase5_handoff.md): the plan's target is implemented as a runnable **Phase-5 integrated candidate, not a release** — Phase-6 measurements and Phase-7 code cleanup remain open. The "work ... are pending" framing below describes the earlier session, not current status.
+
 ## 1. Purpose, authority and current status
 
 This is the consolidated execution plan for the new codebase described in `refactor/`. It turns the specifications, decisions and audits into assignable tasks, dependencies, deliverables and verification gates. **Incremental implementation is explicitly authorized by ADR-022 (2026-10-14); this plan does not claim it has been implemented, tested or released.**
@@ -310,7 +312,7 @@ Use the audit's budgets as **proposed measurement goals**, not proven commitment
 | Existing tests and B01–B09 | Keep useful branch tests and archived evidence | Correct false coverage/titles, independently prove accepted changes and add CA/GUI/parser/scale acceptance; P0–P8 |
 | `perfTools.ts` instrumentation concept | Keep optional development metrics | Bounded logs and separate full-pipeline/browser metrics; P6 |
 
-**Replace rather than preserve:** first-account-in-pool lookup in `financeModel.ts`/App; unposted income reservoirs; duplicated App/storage normalizers; local card/career/planner balance simulations; desired-payment debt reduction; speculative historical mortgage catch-up; old card APR/charges/modes; pool-keyed results and filters; mutable default singletons. Standalone contributions stay removed. Expense Tracking's current placeholder is retained accurately; this refactor does not imply a new full transaction-tracking product.
+**Replace rather than preserve:** first-account-in-pool lookup in `financeModel.ts`/App; unposted income reservoirs; duplicated App/storage normalizers; local card/career/planner balance simulations; desired-payment debt reduction; speculative historical mortgage catch-up; old card APR/charges/modes; pool-keyed results and filters; mutable default singletons. Standalone contributions stay removed. Expense Tracking's current placeholder is retained accurately; this refactor does not imply a new full transaction-tracking product. *(P7.5, 2026-10-16 — audit-era note superseded: the "current placeholder" here described the audit-time Expenses → Tracking / Configure Accounts view. The live runtime mounts `AccountExpensesPlanner` under Tracking ("Expense history", `src/App.tsx:281`) with recorded/imported expenses view-only. This remains a limited Expense-history route, not a complete transaction tracker, and no complete tracker is claimed.)*
 
 ## 6. Coverage and verification requirements
 

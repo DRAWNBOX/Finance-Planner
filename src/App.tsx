@@ -10,6 +10,7 @@ import { AccountManagementEditor } from './components/AccountManagementEditor';
 import { AccountCareerPlanEditor } from './components/AccountCareerPlanEditor';
 import { AccountExpensesPlanner } from './components/AccountExpensesPlanner';
 import { RetirementSpendingEditor } from './components/RetirementSpendingEditor';
+import { RetirementWithdrawalResults } from './components/RetirementWithdrawalResults';
 import { PurchaseEditor } from './components/PurchaseEditor';
 import { PurchaseFundingResults } from './components/PurchaseFundingResults';
 import { LoanEditor } from './components/LoanEditor';
@@ -226,7 +227,7 @@ export default function App() {
     <TimelineManager scenario={scenario} onChange={update} />
     <div className="workspace-grid"><aside className="section-nav" aria-label="Plan sections">{tabs.map(([id,label])=><button key={id} className={sub===id?'selected':''} onClick={()=>setSub(id)}>{label}</button>)}</aside><section className="workspace-content">
     {sub==='profile'&&<><section className="profile-editor"><p className="editor-kicker">STARTING POINT</p><h2>Profile & assumptions</h2><div className="editor-grid"><label>Date of birth<input type="date" value={scenario.options.dateOfBirth} onChange={e=>applyGlobal(draft=>{draft.options.dateOfBirth=e.target.value})}/></label><label>Current age<input type="number" min="18" value={scenario.profile.currentAge} onChange={e=>applyGlobal(draft=>{draft.profile.currentAge=Number(e.target.value)})}/></label><label>Retirement age<input type="number" min="18" value={scenario.profile.retirementAge} onChange={e=>applyGlobal(draft=>{draft.profile.retirementAge=Number(e.target.value)})}/></label><label>Years in retirement<input type="number" min="1" value={scenario.profile.retirementYears} onChange={e=>applyGlobal(draft=>{draft.profile.retirementYears=Number(e.target.value)})}/></label><label>Annual inflation (%)<input type="number" step="0.1" value={scenario.manualReturns.inflationRate} onChange={e=>applyGlobal(draft=>{draft.manualReturns.inflationRate=Number(e.target.value)})}/></label></div></section><section className="managed-item"><header><h2>Other income & expenses</h2><button onClick={()=>{const item=createDefaultCashflowItem('social_security',scenario.profile.currentAge,scenario.profile.retirementAge,scenario.profile.retirementYears);applyGlobal(draft=>{draft.cashflowItems=[...draft.cashflowItems,{...item,id:createCommandId('cashflow'),label:'New cashflow',amount:0,accountId:null}]})}}>＋ Add cashflow</button></header>{scenario.cashflowItems.map(item=><CashflowItemEditor key={item.id} item={item} retirementEndAge={scenario.profile.retirementAge+scenario.profile.retirementYears} dateOfBirth={scenario.options.dateOfBirth} currentAge={scenario.profile.currentAge} accounts={scenario.netWorth.accounts} dateMarkers={scenario.dateMarkers} onChange={next=>applyGlobal(draft=>{draft.cashflowItems=draft.cashflowItems.map(x=>x.id===next.id?next:x)})} onRemove={id=>applyGlobal(draft=>{draft.cashflowItems=draft.cashflowItems.filter(x=>x.id!==id)})}/>)}</section><section className="managed-item"><header><h2>Life events</h2><button onClick={()=>applyGlobal(draft=>{draft.lifeEvents=[...draft.lifeEvents,{id:createCommandId('life-event'),type:'custom_expense',label:'New expense',enabled:true,cadence:'one_time',direction:'outflow',startAge:draft.profile.currentAge,endAge:draft.profile.currentAge,amount:0,newSalary:0,annualSalaryGrowthOverride:0,accountId:null,startYearMonth:draft.netWorth.asOfDate.slice(0,7)}]})}>＋ Add life event</button></header>{scenario.lifeEvents.map(event=><div className="life-event-row" key={event.id}><strong>{event.label}</strong><span>{event.type.replaceAll('_',' ')} · {event.startYearMonth??`Age ${event.startAge}`}</span><button onClick={()=>applyGlobal(draft=>{draft.lifeEvents=draft.lifeEvents.filter(x=>x.id!==event.id)})}>Remove</button></div>)}</section></>}
-    {sub==='retirement'&&<><RetirementSpendingEditor plan={scenario.withdrawal} accounts={scenario.netWorth.accounts} referenceDate={refDate} onChange={plan=>applyGlobal(draft=>{draft.withdrawal=plan})}/><ResultsTable report={report} displayContext={displayContext} inflationRatePercent={scenario.manualReturns.inflationRate} inflationEnabled={realDollar}/></>}
+    {sub==='retirement'&&<><RetirementSpendingEditor plan={scenario.withdrawal} accounts={scenario.netWorth.accounts} referenceDate={refDate} onChange={plan=>applyGlobal(draft=>{draft.withdrawal=plan})}/><RetirementWithdrawalResults outcomes={report.outcomes} sourceLines={scenario.withdrawal.sourceLines ?? []}/><ResultsTable report={report} displayContext={displayContext} inflationRatePercent={scenario.manualReturns.inflationRate} inflationEnabled={realDollar}/></>}
     {(sub==='careers'||tab==='careers')&&<>{local.careerPlan.entries.length===0&&<p className="empty-state">No careers are needed for a valid plan. Add one whenever you want to include pay and deposits.</p>}<AccountCareerPlanEditor value={local.careerPlan} accounts={scenario.netWorth.accounts} onChange={value=>localWrite('careerPlan',value)}/></>}
     {sub==='timeline'&&<><div className="report-controls"><label><input type="checkbox" checked={realDollar} onChange={e=>setRealDollar(e.target.checked)}/> Display values in today’s dollars</label><label>Show<select value={measure} onChange={e=>setMeasure(e.target.value as typeof measure)}><option value="netWorth">Net worth (assets minus debt)</option><option value="accountAssets">Account assets</option></select></label><label>From<input aria-label="Chart range start" type="month" value={range?.[0]?.slice(0,7)??report.months[0]?.yearMonth??''} onChange={e=>setRange([`${e.target.value}-01`,range?.[1]??report.months[report.months.length-1]?.closingDate??`${e.target.value}-01`])}/></label><label>Through<input aria-label="Chart range end" type="month" value={range?.[1]?.slice(0,7)??report.months[report.months.length-1]?.yearMonth??''} onChange={e=>setRange([range?.[0]??report.months[0]?.closingDate??`${e.target.value}-01`,`${e.target.value}-31`])}/></label><button onClick={()=>setRange(undefined)}>Full range</button></div><ChartPanel report={report} displayContext={displayContext} realDollar={realDollar} inflationRatePercent={scenario.manualReturns.inflationRate} measure={measure} range={range} onRangeChange={setRange}/><SavingsStackedChart report={report} accounts={scenario.netWorth.accounts} realDollars={realDollar} annualInflationRatePercent={scenario.manualReturns.inflationRate}/><ResultsTable report={report} displayContext={displayContext} inflationRatePercent={scenario.manualReturns.inflationRate} inflationEnabled={realDollar}/></>}
     {sub==='purchasesExpenses'&&<>
@@ -302,3 +303,42 @@ export default function App() {
     {saveStatus.diagnostics.map((d,i)=><div className="storage-notice" role="status" key={`${d.code}-${i}`}>{d.message}</div>)}
   </div>;
 }
+
+
+// MVC
+// Model: Data
+// View: Presentaion
+// COntroller: Logic
+
+// Prompt: Make a markdown document explaining all the features of this app.
+// Leave out technical details. This will be a handoff doc for another agent to implement this app
+
+// Break this project up, into seperate parts and put it in a markdown document
+// Assemble the project using the Model View Controller Paradigm
+
+
+// Skills:
+// Simple English: Will just have lighter output
+// /grill-me: before the agent implemetns something it will ask you a lot of questions
+// /ponytail: Senior Engineer who doens't to write too much code
+
+// Implement the task
+// Review the code, and clean it up and fix any bugs.
+
+/*
+Model: Data
+View: UI components
+Controller: bridge Model & view
+
+*change this number*
+LoanView: intreacted with input
+
+Controller: input -> model -> LoanView
+
+Tech Stack:
+
+UI (Styling): Tailwind.css
+Main framework: React
+Database: MongoDB
+
+*/

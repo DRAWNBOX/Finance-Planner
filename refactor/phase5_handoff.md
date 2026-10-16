@@ -5,7 +5,7 @@ P5.1–P5.3 integration, save cutover and autosave are implemented. P5.4 real-re
 tests and P5.5 headless cross-feature tests pass. The complete local suite and build pass;
 an independent final invariant review subsequently **passed**. An earlier verifier
 attempt failed for Insufficient Balance; the later independent review ran normally.
-A bounded Chromium browser gate (33 tests) now passes as well (§13), but it is
+A bounded Chromium browser gate (45 tests) now passes as well (§13), but it is
 slice-level, not CI-wired, and does not certify the matrix. The per-G01–G40
 browser ledger is `refactor/gui_browser_coverage.md`.
 The GUI-A01–A10/G01–G40 matrix has not been certified row by row, and Phase-6 browser
@@ -21,17 +21,17 @@ registers `refactor/gui_compatibility_audit.md` (GUI-A01–A10 / G01–G40) and
 (original fixture untouched — §9).
 
 > **Latest independently reproduced gates (October 15, 2026).** `npm run test -- --run --reporter=default`:
-> **55 files / 1073 tests passed, 0 failed** (including `src/App.test.tsx` **43/43**;
+> **57 files / 1084 tests passed, 0 failed** (including `src/App.test.tsx` **44/44**;
 > `HousingEditor.test.tsx` **8/8**, `HousingResults.test.tsx` **1/1**, `phase5Acceptance.test.ts` **6/6** and
 > `phase5CrossFeature.test.ts` **27/27**). `npm run build`: TypeScript and Vite pass,
-> 100 modules transformed; one non-fatal 624.57 kB JS chunk-size advisory (175.06 kB gzip JS / 84.04 kB CSS).
+> 100 modules transformed; one non-fatal 632.58 kB JS chunk-size advisory (177.22 kB gzip JS / 87.67 kB CSS).
 > `git diff --check` passes. A separate bounded Chromium browser gate
-> (`npm run test:e2e -- --project=chromium`) now passes **33/33** (42.7s) — see §13.
+> (`npm run test:e2e -- --project=chromium`) now passes **45/45** (57.1s) — see §13.
 > The per-G01–G40 browser ledger is `refactor/gui_browser_coverage.md`.
 > The Phase-4 baseline (759 pass / 91 fail; 182 TS errors)
-> and earlier 981/1011/1016/1030/1043/1051/1062/1064/1067-test Phase-5 tallies are **superseded**. The independent verifier
-> ran these gates (43.94s suite) and reviewed nullable `sourceSign` round trips,
-> source/import provenance and earlier CA06/planner/D16/CA01/D26/cap invariants;
+> and earlier 981/1011/1016/1030/1043/1051/1062/1064/1067/1073/1078-test Phase-5 tallies are **superseded**. The independent verifier
+> ran these gates (47.22s suite) and reviewed per-source retirement results and lazy
+> report-backed account-cell audit, plus earlier loan/CA06/planner/D16/CA01/D26 invariants;
 > an earlier verifier also checked the preserved fixture SHA-256. This is **not**
 > a production-browser measurement or row-by-row GUI/CA matrix sign-off.
 
@@ -41,11 +41,11 @@ registers `refactor/gui_compatibility_audit.md` (GUI-A01–A10 / G01–G40) and
 
 | `phase5_plan.md` exit criterion | Actual state at write time |
 |---|---|
-| 1. One integrated candidate: App routes through canonical commands and one `projectFeatureScenario`; no independent preview loop or mixed old/new math displayed. | **Met in local tests.** `App.tsx` routes mutations through commands and one selected `projectFeatureScenario`; `App.test.tsx` passes 43/43. |
+| 1. One integrated candidate: App routes through canonical commands and one `projectFeatureScenario`; no independent preview loop or mixed old/new math displayed. | **Met in local tests.** `App.tsx` routes mutations through commands and one selected `projectFeatureScenario`; `App.test.tsx` passes 44/44. |
 | 2. Coverage flags truthful (D23): `processors`/`reporting` true, deferred empty, `complete` true only when fully covered. | **Met at the engine level** (`phase5Acceptance.test.ts`): raw facade stays `false`/deferred; composed call site is `true`/`[]`/`complete`; a partial window stays incomplete. |
 | 3. Save cutover (D24): prune approved obsolete fields (incl. `paycheckInfo`) across all plans; hydration/recovery/reset/autosave/flush and diagnostics correct; no live audit/cache/calculated-balance persisted. | **Met in local tests:** schema version **3**, autosave controller, save/reload/reset/blocked-write/pagehide App slices and grouped housing policy round trips. |
-| 4. GUI-A01–A10 and G01–G40 pass; CA01–CA13 and the B01–B09 before/after table documented with preserved snapshots. | **Partially evidenced:** `phase5CrossFeature` 27/27; App 43/43; career overlap/cap/duplicate, CA06 adaptive 0% payoff, D26 posting reconciliation, planner weekly outcomes/monthly close, partial PI, three-view current dollars, purchase funding and marker precision; B01–B09 table and hash verified independently (§9). GUI/CA gap audits identified unasserted branches; the verifier confirmed invariants but **did not** certify every row. |
-| 5. Remaining whole-suite/build failures and owners recorded honestly; runnable candidate for Phase 6. | **Local and independent gates pass** (1073/1073, build, diff check) and a bounded Chromium gate passes 33/33 (§13); Phase-6 browser/performance measurement and Phase-8 release gates remain. |
+| 4. GUI-A01–A10 and G01–G40 pass; CA01–CA13 and the B01–B09 before/after table documented with preserved snapshots. | **Partially evidenced:** `phase5CrossFeature` 27/27; App 44/44; career overlap/cap/duplicate, CA06 adaptive 0% payoff, D26 posting reconciliation, planner outcomes, loan partial/interest/payoff, retirement-source observed share, lazy account-cell audit, three-view current dollars, purchase funding and marker precision; B01–B09 table and hash verified independently (§9). GUI/CA gap audits identified unasserted branches; the verifier confirmed invariants but **did not** certify every row. |
+| 5. Remaining whole-suite/build failures and owners recorded honestly; runnable candidate for Phase 6. | **Local and independent gates pass** (1084/1084, build, diff check) and a bounded Chromium gate passes 45/45 (§13); Phase-6 browser/performance measurement and Phase-8 release gates remain. |
 
 Phase 5 exit does **not** assert a release (ADR-022).
 
@@ -191,6 +191,14 @@ unpaid 5000¢`). Timeline isolation and a complete no-career/no-income run are a
   are labeled incomplete. Local date-only formatting keeps the selected week aligned with
   report occurrence dates without changing projection inputs. This is not a weekly funded
   balance or per-card schedule-completeness claim.
+- **Observed retirement withdrawals (G05).** `RetirementWithdrawalResults` selects one
+  enabled source at a time by `retirement:<sourceId>`, shows at most its first 12 actual
+  quoted dates with requested/committed paid/unpaid, and expands committed gross/net/tax/
+  penalty allocations only on demand. An uncommitted positive quote posts $0 and retains
+  its full request unpaid; a zero-rate source with no outcome has an honest empty state.
+  The 4% basis is not reconstructed from a post-withdrawal close. Retirement-boundary
+  assets and first-year-expense aggregates (G06) are **not** derivable from current report
+  metadata and remain partial, not invented.
 - **Canonical-cents trajectory save/compare.** The Trajectory tab builds snapshots via
   `createCanonicalTrajectorySnapshot({ id, label, frozenDate, report }, context.metadata)`
   (`formatVersion: 2`, integer-cents annual points mapped from the report's reconciled year-close
@@ -203,7 +211,7 @@ unpaid 5000¢`). Timeline isolation and a complete no-career/no-income run are a
   `measurement === 'assetsMinusLiabilities'`; legacy `assetOnly` history is never reinterpreted as
   signed net worth. `CANONICAL_RUN_MEASUREMENT = 'assetsMinusLiabilities'`.
 
-**Acceptance status:** the App compiles; `App.test.tsx` passes **43/43** with real-render
+**Acceptance status:** the App compiles; `App.test.tsx` passes **44/44** with real-render
 interaction, save/reload and report assertions (§7). This does not certify every GUI-A/G row.
 
 ---
@@ -257,7 +265,7 @@ Executed ahead of the P7 sweep because the P5.2 rewiring made the old modules un
 
 ## 7. P5.4 / P5.5 acceptance status (local gates)
 
-- **P5.4 (`src/App.test.tsx`, Q + U).** **43/43 pass.** Real-render slices cover canonical
+- **P5.4 (`src/App.test.tsx`, Q + U).** **44/44 pass.** Real-render slices cover canonical
   mutations and save/reload/reset, named timelines, ordinary and 0% cards, housing/property-free
   rentals and timeline-local events, canonical signed-cents trajectory save/compare, exact D16
   shortfall/fallback wording, and ordered grouped housing funding (primary + fallback,
@@ -268,6 +276,19 @@ Executed ahead of the P7 sweep because the P5.2 rewiring made the old modules un
   $25 paid across sources/$15 paid from the selected account while occurred history is omitted.
   Career duplication preserves a distinct nested dated plan; editing the clone's cap and
   overflow does not modify its original, even across pagehide/reload.
+- **Loan/report activity display.** Each selected ordinary loan now has read-only
+  `LoanResults` from the SAME report: committed requested/paid/unpaid installment,
+  actual observed payoff, and final linked-liability principal/interest/fees. A
+  $1,000 APR-0 debt with only $100 cash against a $200 request retains $900 debt
+  without a second principal expense; uncommitted quotes do not claim payment.
+  `ResultsTable` row activity detail derives gross/net/tax/spending/growth/debt facts
+  from immutable report flow at the actual close date, supports keyboard focus
+  and honours a caller's tooltip override consistently in its accessible name.
+  Account cells now expose a lazy, focus/hover-only report.byAccount detail: signed gross
+  account delta once, actual posting date/purpose and allocation net/tax/penalty context;
+  old report/basis detail is cleared on selection/display changes. Per-account payroll tax
+  is never invented. Retirement-boundary aggregates and the 960-month tooltip-volume
+  benchmark remain open.
   `HousingEditor.test.tsx` **8/8** covers the per-group control and the nested-label/Start date-source accessibility fix;
   `HousingResults.test.tsx` **1/1** covers sold-after-acquired neutral status and observed payoff.
   An App test is not a substitute for a complete browser GUI matrix.
@@ -321,9 +342,10 @@ Executed ahead of the P7 sweep because the P5.2 rewiring made the old modules un
 
 | Check | Result (this session) |
 |---|---|
-| `src/App.test.tsx` | **43 pass / 0 fail** (included in whole suite) |
+| `src/App.test.tsx` | **44 pass / 0 fail** (included in whole suite) |
 | `src/components/HousingEditor.test.tsx` | **8 pass / 0 fail** (focused checkpoint; included in whole suite) |
 | `src/components/HousingResults.test.tsx` / `src/engine/projection.test.ts` | **1/1** / **42/42** |
+| `src/components/RetirementWithdrawalResults.test.tsx` / `src/components/ResultsTable.test.tsx` | **4/4** / **9/9** |
 | `src/engine/phase5Acceptance.test.ts` / `phase5CrossFeature.test.ts` | **6/6** / **27/27** |
 | `src/engine/taxes.test.ts` / `src/codec.test.ts` / `src/storage.test.ts` | **30/30** / codec and storage pass, including cap absence/zero round-trip (in whole suite) |
 | `BufferedNumberInput.test.tsx` / `DateOrMarkerInput.test.tsx` | **10/10** / **11/11** (new files) |
@@ -331,12 +353,12 @@ Executed ahead of the P7 sweep because the P5.2 rewiring made the old modules un
 | `src/components/AccountExpensesPlanner.test.tsx` | **11/11** (selected month, exact-date week, account/source paid distinction) |
 | `src/components/PurchaseFundingResults.test.tsx` | **3/3** (fallback attribution and uncommitted quote regression) |
 | `src/commands.test.ts` / `src/components/DateMarkersEditor.test.tsx` | **62/62** / **5/5** |
-| `AccountExpensesPlanner.test.tsx` / `AccountCareerPlanEditor.test.tsx` | **9/9** / **13/13** |
-| Whole suite (`npm run test -- --run --reporter=default`) | **55 files / 1073 pass / 0 fail** |
-| Build (`npm run build`, `tsc -b` + `vite build`) | **passes** — 100 modules; one non-fatal 624.57 kB JS chunk advisory (175.06 kB gzip JS / 84.04 kB CSS) |
+| `src/components/LoanResults.test.tsx` | **2/2** (report-backed partial/quote detail) |
+| Whole suite (`npm run test -- --run --reporter=default`) | **57 files / 1084 pass / 0 fail** |
+| Build (`npm run build`, `tsc -b` + `vite build`) | **passes** — 100 modules; one non-fatal 632.58 kB JS chunk advisory (177.22 kB gzip JS / 87.67 kB CSS) |
 | `git diff --check` | **passes** (PowerShell displayed only CRLF conversion notices) |
-| Browser gate (`npm run test:e2e -- --project=chromium`, Playwright 1.64.1 + Chromium) | **33 pass / 0 fail** (42.7s) — bounded local Chromium smoke/flow gate (§13); not CI-wired and not a PS/B-P browser benchmark |
-| Independent `@verifier` invariant review | **PASS:** latest rerun 1073/1073, build and diff check; reviewed nullable planned-copy sign and imported sibling preservation; earlier passes checked CA06/planner/D16/CA01/D26/cap, CA08, v3 recovery and fixture hash. Full GUI/CA matrix and browser benchmarks explicitly out of scope |
+| Browser gate (`npm run test:e2e -- --project=chromium`, Playwright 1.64.1 + Chromium) | **45 pass / 0 fail** (57.1s) — bounded local Chromium smoke/flow gate (§13); not CI-wired and not a PS/B-P browser benchmark |
+| Independent `@verifier` invariant review | **PASS:** latest rerun 1084/1084, build and diff check; reviewed report-only per-source retirement/committed funding and lazy account-cell audit with current-report freshness; earlier passes checked loan/D18, nullable provenance, CA06/planner/D16/CA01/D26/cap, CA08 and fixture hash. Full GUI/CA matrix and browser benchmarks explicitly out of scope |
 
 Earlier Phase-4 failures and in-flight Phase-5 tallies are superseded, not evidence for the
 current candidate. The bounded browser gate is not a production-browser performance benchmark
@@ -369,8 +391,8 @@ preserved. Critically:
 
 - No **GUI-A01–A10** or **CA01–CA13** row is blanket-marked complete from green tests alone;
   each retains its stated evidence and remaining acceptance scope.
-- `P5-scoped (partial)` records the 1073-test independently reproduced gate, App slices, CA fixtures, the
-   33-test local Chromium browser gate and v3 codec/autosave/housing checks without implying
+- `P5-scoped (partial)` records the 1084-test independently reproduced gate, App slices, CA fixtures, the
+   45-test local Chromium browser gate and v3 codec/autosave/housing checks without implying
   independent GUI-matrix certification.
 
 ---
@@ -388,16 +410,17 @@ preserved. Critically:
   Chromium gate (§13) now also covers account-reference cleanup/save guard, ordinary-card
   CRUD, signed-negative net worth, long-term partial purchase, planner move/copy provenance,
   marker propagation, keyboard/`aria-pressed` and legacy-trajectory refusal, but is not a
-  full matrix. Phase-6 reference/optimized equivalence is also open. 1073 green tests do
+  full matrix. Phase-6 reference/optimized equivalence is also open. 1084 green tests do
   not certify every row.
 - **Housing status coverage edge:** the selected panel displays an actual underwater sale
   deficiency in App; acquired-then-sold neutral status is currently pinned with a synthetic
   report unit fixture, not an end-to-end App projection. Do not certify all G18–G22 from that.
 - **Per-G browser coverage ledger:** `refactor/gui_browser_coverage.md` is the 40-row
   G01–G40 ledger (each row's Chromium evidence, status and exact remaining assertion).
-  Its named pending branches are **G10/G19/G33** (`partial`), **G26** (accepted monthly
-  resolution — no weekly funded curve) and **G28** (tracking placeholder); the browser
-  suite is **not** row-by-row certified.
+  Its named pending branches include **G06** (retirement-boundary aggregate unavailable),
+  **G33** (960-month account-detail perf still unmeasured), **G26** (accepted monthly
+  resolution — no weekly funded curve) and **G28** (limited "Expense history" tracking
+  route, browser `unasserted`); the browser suite is **not** row-by-row certified.
 - **Phase 6 needs browser 960-month measurements** (PS01–PS20 / B-P1–B-P8): production-browser
   echo/result/paint latency, audit/transport bytes, worker/peak-heap, load/edit/save size/time and
   rapid-revision cancellation. No browser/transport/audit-deficit benchmark evidence was produced in
@@ -429,7 +452,7 @@ Phase 8 owns release verification. Phase 5 exit does **not** assert a release (A
 A bounded browser gate now drives the real app over the real Vite dev server. This is
 **separate** from the Vitest per-item suites and does not replace them.
 
-- **Harness.** `e2e/**` (seventeen `*.spec.ts` plus `e2e/fixtures.ts`) is driven by `playwright test`
+- **Harness.** `e2e/**` (twenty-six `*.spec.ts` plus `e2e/fixtures.ts`) is driven by `playwright test`
   via the new `npm run test:e2e` script. `playwright.config.ts` uses Chromium only
   (`devices['Desktop Chrome']`), strict port `4173`, a fresh, isolated context per test,
   2 workers, `trace: 'on-first-retry'` and `screenshot: 'only-on-failure'`. `vite.config.ts`
@@ -437,13 +460,16 @@ A bounded browser gate now drives the real app over the real Vite dev server. Th
   ignores `test-results/`, `playwright-report/` and `.playwright/`. `e2e/fixtures.ts` seeds
   canonically through the codec-v3 save path with a pinned clock and per-test blank
   localStorage (no repeating `addInitScript`).
-- **Result.** `npm run test:e2e -- --project=chromium` = **33 passed / 0 failed** (42.7s),
+- **Result.** `npm run test:e2e -- --project=chromium` = **45 passed / 0 failed** (57.1s),
   with Playwright Test 1.64.1 and Chromium installed. Per-file counts: smoke 3,
   accounts-careers 3, trajectory-accessibility 2, obligations-planner 3, cards-d16 2,
   display-consistency 2, housing-outcomes 2, markers-timelines 2, trajectory-legacy 2,
   account-reference-guards 2, cards-crud 1, networth-signed 1, purchases-partial 2,
   planner-editing 2, account-policy-order 1, career-payroll-destinations 1,
-  housing-group-policy 2. The per-G01–G40 ledger is `refactor/gui_browser_coverage.md`.
+  housing-group-policy 2, retirement-controls 2, loan-results 2, loan-interest-payoff 1,
+  funding-order-editor 2, opening-snapshot-history 1, report-activity 1,
+  cards-adaptive-payoff 1, retirement-outcomes 1, report-account-activity 1.
+  The per-G01–G40 ledger is `refactor/gui_browser_coverage.md`.
 - **Coverage slices (hand-computed from fixed inputs, never read back).** A $200 purchase
   splits $100 + $60 + $40 across the global primary and two ordered fallbacks with no
   shortfall or phantom negative; the selected-account planner week shows $25 requested /
@@ -468,6 +494,23 @@ A bounded browser gate now drives the real app over the real Vite dev server. Th
   distinct employer-match destination (`career-payroll-destinations`); and an explicit
   per-group housing override beats the global default while clearing it to explicit empty
   leaves the rent unpaid and persists (`housing-group-policy`).
+- **More targeted browser slices.** Retirement-source 4%/explicit 0%/6% controls,
+  valuation dates and min/max limits survive reload without inventing a monthly numeric
+  preview. An ordinary loan shows $200 requested/$100 paid/$100 unpaid and $900 retained
+  debt; an APR-6% two-month loan shows $5.00 then $2.50 nominal interest and an observed
+  August payoff. The funding editor reorders/deduplicates fallback accounts and the
+  resulting $100 purchase draws in the newly configured order. A captured opening
+  observation retains IDs/date/assets-only measurement, and an observed $0 liability
+  overrides configured $300 debt without relabeling legacy asset-only history.
+  A keyboard-focusable results row shows report-backed gross $2,000/net $1,800/payroll
+  tax $200 for a July payroll within the report horizon.
+- **Later browser slices.** A permanent-0% card's missed August 3_333¢ installment
+  remains owed until a September $66.66 inflow clears the residual once (no duplicate
+  payoff). A selected $100,000 401K source shows its actual July 4%-rule first-share
+  request/paid $333.33 in the report-backed retirement panel, with an explicit note
+  that no balance-at-retirement preview is fabricated. Focusing a Checking account
+  cell shows a committed −$100 signed delta from a July purchase, not unrelated
+  payroll or a per-account share of aggregate payroll tax.
 - **Fix note.** An earlier 21-test run was 20/21 because one spec's own locator regex was malformed
   (it matched `paid $30` incorrectly). It was corrected to the literal `/\bpaid \$30\b/` — a
   test-only locator fix with **no product bug**. The expanded run initially passed 27/29:
@@ -478,7 +521,16 @@ A bounded browser gate now drives the real app over the real Vite dev server. Th
   `AccountManagementEditor` Move up/down issued multiple stale-render updates and lost the
   reorder — fixed at the owner (`src/components/AccountManagementEditor.tsx` + `src/App.tsx`)
   with **one immutable `onReorderAccounts`** routed through `applyGlobal`
-  (`AccountManagementEditor.test.tsx` +1). Focused retest 1/1, then the full gate **33/33**.
+  (`AccountManagementEditor.test.tsx` +1). Focused retest 1/1, then that expansion's full
+  gate **33/33**. Two later test-only selector/fixture corrections made the retirement
+  First withdrawal date locator exact and moved the report-activity payroll from January
+  (before the run horizon) to July; a `$900.00` loan locator was also made exact. No
+  product defect was hidden by these corrections; that expansion's full gate was **42/42**.
+  The three later browser cases initially exposed test-only fixture/locator mistakes:
+  a pre-horizon/incorrect-account purchase seed, a retirement row locator that assumed
+  source text inside each row, and a negative assertion that matched a truthful
+  "does not estimate" footnote. Those fixtures/assertions were corrected without
+  changing financial source code; focused 3/3 then latest full **45/45** passed.
 - **Non-claims.** This is a **bounded local gate**: **no CI wiring**, and **no** Phase-6
   PS/B-P production-browser latency/heap/bytes benchmark. It is **not** a row-by-row
   GUI-A01–A10/G01–G40 or CA01–CA13 certification; Vitest remains the per-item owner.

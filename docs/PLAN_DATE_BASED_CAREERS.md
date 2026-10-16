@@ -1,6 +1,15 @@
 # PLAN — Date-based careers & full age→date migration
 
-Status: Phase 1 complete (date-based career selection + per-month `careerEndSavingsBalances`). Phase 2 not started.
+> **Historical / superseded (P7.5 docs refresh).** This records an earlier
+> date-based-career migration plan. Date-based selection and a date-only engine
+> are now implemented: careers and items resolve by
+> `startYearMonth` / `endYearMonth` (with an explicit date anchor for legacy
+> age-only fields), and the kernel never reads the wall clock. The phase
+> statuses, line numbers and code excerpts below describe the code at the time of
+> writing and are kept as history, not current status.
+
+Status (as recorded when written): Phase 1 complete (date-based career selection
++ per-month `careerEndSavingsBalances`). Phase 2 not started.
 Created from the "income usage budget is wrong" investigation.
 
 ## 0. Confirmed root cause (from the user's saved JSON)

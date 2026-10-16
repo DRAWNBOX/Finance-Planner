@@ -1,5 +1,12 @@
 # Legacy 4-Account Removal — Phases 2 & 3
 
+> **Historical / superseded (P7.5 docs refresh).** This is the original Phase 2/3
+> plan for removing the four-account / pool-era fields. Those removals are now
+> **completed** in `src/`: the runtime is account-only, driven by
+> `state.commitChanges` cents. File names and line numbers below refer to the code
+> **at the time of writing** and no longer match the current tree. The recorded
+> plan and rationale are preserved as history, not as current status.
+
 ## Phase 2 — Remove account-level legacy fields
 
 ### 2a. Remove `accountBalances` from `NetWorthConfig`

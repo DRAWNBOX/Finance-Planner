@@ -40,11 +40,11 @@ This repository supports AI-assisted development. Use this as a fast, practical 
   - Composition + reporting: `configuration.ts` (named-context compiler), `projection.ts` (facade), `featureHandlers.ts` (composition seam), `reporting.ts` (read-only report).
 - `src/paycheck.ts` compiles the granular `CareerEntry.paycheck` into the flat `PaycheckInfo`.
 - Views read the single `ProjectionReport` only:
-  - `src/components/ChartPanel.tsx`, `src/components/SavingsStackedChart.tsx`, `src/components/ResultsTable.tsx`, `src/components/NetWorthHistoryChart.tsx`, `src/components/TrajectoryComparisonChart.tsx`, `src/components/HousingResults.tsx`.
+  - `src/components/ChartPanel.tsx`, `src/components/SavingsStackedChart.tsx`, `src/components/ResultsTable.tsx`, `src/components/NetWorthHistoryChart.tsx`, `src/components/TrajectoryComparisonChart.tsx`, `src/components/HousingResults.tsx`, `src/components/LoanResults.tsx`, `src/components/RetirementWithdrawalResults.tsx`.
 - Standalone editors mount at their tab placements: `AccountManagementEditor`, `AccountCareerPlanEditor`, `AccountExpensesPlanner`, `RetirementSpendingEditor`, `PurchaseEditor`, `LoanEditor`, `HousingEditor`, `CardPlanEditor`, `CashflowItemEditor`, `TimelineManager`, `TrajectoryManager`, `DateMarkersEditor`.
 - Timelines: `Scenario.timelines` + `activeTimelineId` snapshot seven timeline-local domains (`purchases`, `longTermPurchases`, `loans`, `creditCards`, `cardPlans`, `careerPlan`, `housing`); global configuration (accounts/rates/policies/liabilities/properties/markers/withdrawal) lives on the base scenario.
 - Imports/planning: `src/importers/expenseImport.ts` (occurred imports stay view-only); `AccountExpensesPlanner` displays a selected-account, selected-week **monthly-resolution** report close alongside its planned weekly grid, plus exact-date quoted planner-week requested/committed-paid totals from the same report (not a fabricated weekly funded balance).
-- Browser harness: `e2e/**` Playwright specs + `playwright.config.ts` (isolated Chromium, strict port `4173`, 2 workers, trace-on-first-retry) driven by `npm run test:e2e`; Vitest excludes `e2e/**`. Currently **17 specs / 33 tests** pass locally. A bounded smoke/flow gate over the real dev server — not a GUI/CA certification and not wired into CI.
+- Browser harness: `e2e/**` Playwright specs + `playwright.config.ts` (isolated Chromium, strict port `4173`, 2 workers, trace-on-first-retry) driven by `npm run test:e2e`; Vitest excludes `e2e/**`. Currently **26 specs / 45 tests** pass locally. A bounded smoke/flow gate over the real dev server — not a GUI/CA certification and not wired into CI.
 
 ## Commands
 
@@ -112,8 +112,8 @@ For any persisted field addition or shape change:
 
 ## Test Focus Map
 
-- Whole suite: `npm run test -- --run` (the Phase-5 handoff records an independently reproduced **55 files / 1073 tests** pass).
-- Browser end-to-end: `npm run test:e2e -- --project=chromium` (Playwright over the real dev server; `e2e/*.spec.ts`; currently **17 specs / 33 tests** pass locally). Bounded local gate — no CI wiring and not row-by-row GUI/CA certification (see `refactor/gui_browser_coverage.md`).
+- Whole suite: `npm run test -- --run` (the Phase-5 handoff records an independently reproduced **57 files / 1084 tests** pass).
+- Browser end-to-end: `npm run test:e2e -- --project=chromium` (Playwright over the real dev server; `e2e/*.spec.ts`; currently **26 specs / 45 tests** pass locally). Bounded local gate — no CI wiring and not row-by-row GUI/CA certification (see `refactor/gui_browser_coverage.md`).
 - Engine kernel + facade: `src/engine/*.test.ts` (e.g. `projection.test.ts`, `state.test.ts`, `funding.test.ts`, `valuation.test.ts`, `reporting.test.ts`, `housing.test.ts`).
 - Phase-5 integration: `src/engine/phase5Acceptance.test.ts`, `src/engine/phase5CrossFeature.test.ts`.
 - UI integration/regressions: `src/App.test.tsx`.
